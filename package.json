@@ -16,6 +16,7 @@
     "backtest:synthetic": "node -e \"const b=require('./backend/backtest');const r=b.runBacktest(b.buildSyntheticDataset(500),{minScore:80,stake:1});console.log(JSON.stringify({summary:r.summary,byMarket:r.byMarket},null,2));\"",
     "secrets:generate": "node scripts/generate-secrets.js",
     "secrets:render":   "node scripts/generate-secrets.js --render",
+    "test:startup-check": "node scripts/test-startup-check.js",
     "backup:phase1": "node scripts/backup-phase1.js",
     "secrets:apply": "node scripts/apply-secrets-to-env.js",
     "docker:up": "docker compose -f deploy/docker-compose.yml --env-file .env up -d --build",

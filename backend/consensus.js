@@ -36,6 +36,7 @@
 
 const axios = require('axios');
 const apiFootball = require('./services/apiFootball');
+const { logExternalRequest } = require('./services/externalApiGuard');
 
 const ENV = process.env.NODE_ENV || 'development';
 const STRICT_REAL_ONLY = (() => {
@@ -110,7 +111,10 @@ async function withRetry(name, fn, retries = RETRIES, baseDelay = RETRY_DELAY_MS
    Cada um retorna um Map<matchKey, { status, timestamp, raw }>
    ============================================================ */
 async function fetchStatusSource() {
-  if (!API_FOOTBALL_KEY) throw new Error('API_FOOTBALL_KEY ausente (status)');
+  if (!apiFootball.isConfigured()) {
+    console.warn('[CONSENSUS] API_FOOTBALL não configurada — source status vazia (sem HTTP)');
+    return new Map();
+  }
   // Reusa o cache/quota do serviço centralizado (chamada compartilhada
   // com events e com live.js — o dedup in-flight garante 1 round-trip).
   const response = await apiFootball.getLiveFixtures();
@@ -128,7 +132,10 @@ async function fetchStatusSource() {
 }
 
 async function fetchEventsSource() {
-  if (!API_FOOTBALL_KEY) throw new Error('API_FOOTBALL_KEY ausente (events)');
+  if (!apiFootball.isConfigured()) {
+    console.warn('[CONSENSUS] API_FOOTBALL não configurada — source events vazia (sem HTTP)');
+    return new Map();
+  }
   const response = await apiFootball.getLiveFixtures();
   const out = new Map();
   for (const fx of response || []) {
@@ -141,11 +148,15 @@ async function fetchEventsSource() {
 }
 
 async function fetchOddsSource() {
-  if (!ODDS_API_KEY) throw new Error('ODDS_API_KEY ausente');
-  const { data } = await axios.get(
-    `https://api.the-odds-api.com/v4/sports/soccer/odds?apiKey=${ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal`,
-    { timeout: FETCH_TIMEOUT_MS }
-  );
+  if (!ODDS_API_KEY) {
+    console.warn('[CONSENSUS] ODDS_API_KEY ausente — source odds vazia (sem HTTP)');
+    return new Map();
+  }
+  const oddsUrl =
+    'https://api.the-odds-api.com/v4/sports/soccer/odds' +
+    `?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=eu&markets=h2h&oddsFormat=decimal`;
+  logExternalRequest('odds-api', 'GET', oddsUrl.replace(ODDS_API_KEY, '***'));
+  const { data } = await axios.get(oddsUrl, { timeout: FETCH_TIMEOUT_MS });
   const out = new Map();
   const now = Date.now();
   for (const game of data || []) {
@@ -202,6 +213,18 @@ async function confirmMatches(matches, opts = {}) {
   }
   if (!Array.isArray(matches) || matches.length === 0) {
     return { confirmed: [], divergences: [], failedSources: [] };
+  }
+
+  if (!apiFootball.isConfigured()) {
+    console.warn('[CONSENSUS] API_FOOTBALL não configurada — bypass sem HTTP (dados do poller)');
+    return {
+      confirmed: matches.map((m) => ({
+        ...m,
+        consensus: { confirmedAt: Date.now(), sources: ['poller-cache'], apiSkipped: true },
+      })),
+      divergences: [],
+      failedSources: [],
+    };
   }
 
   // SAFE-MODE: o engine de consenso dispara 2-3 chamadas adicionais por ciclo.

@@ -1,0 +1,15 @@
+﻿[90m23:31:58.372[0m [33mWARN [0m API-Football desabilitada (sem chamadas externas) [90m{ app: [32m'robotrend'[39m,
+  module: [32m'api-football'[39m,
+  reason: [32m'getLiveFixtures ÔÇö sem API_FOOTBALL_KEY v├ílida'[39m,
+  keyValid: [33mfalse[39m,
+  host: [32m'v3.football.api-sports.io'[39m,
+  baseURL: [32m'ok'[39m }[0m
+{
+  "ok": true,
+  "configured": false,
+  "keyValid": false,
+  "liveLen": 0,
+  "skipped": true,
+  "socketsBefore": 0,
+  "socketsAfter": 0
+}

@@ -12,7 +12,7 @@ const freshness = require('./freshness');
 const apiFootball = require('./services/apiFootball');
 
 const DEMO = String(process.env.DEMO_MODE || 'false').toLowerCase() === 'true';
-const API_KEY = process.env.API_FOOTBALL_KEY;
+const API_KEY = (process.env.API_FOOTBALL_KEY || '').trim();
 
 const ENV = process.env.NODE_ENV || 'development';
 const STRICT_REAL_ONLY = (() => {
@@ -102,8 +102,8 @@ const PRELIVE_MAX_FIXTURES = Number(process.env.PRELIVE_MAX_FIXTURES || 5);
 
 class ApiPreliveScanner {
   async list() {
-    if (!API_KEY) {
-      console.warn('[prelive] API_FOOTBALL_KEY ausente — retornando [].');
+    if (!apiFootball.isConfigured()) {
+      console.warn('[prelive] API_FOOTBALL não configurada — retornando [].');
       return [];
     }
     // SAFE-MODE: não consome API. Devolve [] e deixa o frontend exibir aviso.

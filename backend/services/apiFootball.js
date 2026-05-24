@@ -40,6 +40,14 @@ const { getStore } = require('./cacheStore');
 const { CircuitBreaker, CircuitBreakerOpenError } = require('./circuitBreaker');
 const events = require('./footballEvents');
 const metrics = require('./metrics');
+const {
+  normalizeHost,
+  buildHttpsBase,
+  buildRequestUrl,
+  maskSecretsInUrl,
+  logExternalRequest,
+  isDnsOrNetworkSkip,
+} = require('./externalApiGuard');
 
 const log = logger.child({ module: 'api-football' });
 
@@ -66,15 +74,65 @@ const g_inflight        = metrics.gauge('apifootball_inflight');
 const g_breaker_state   = metrics.gauge('apifootball_breaker_state', '0=closed,1=half-open,2=open');
 
 /* ============================================================
-   CONFIG
+   CONFIG — lido do process.env a cada checagem (sem fetch no load)
    ============================================================ */
 const DEFAULT_HOST = 'v3.football.api-sports.io';
 
-const API_KEY  = (process.env.API_FOOTBALL_KEY || '').trim();
-const API_HOST = (process.env.API_FOOTBALL_HOST || DEFAULT_HOST).trim();
+const DISABLED_API_KEYS = new Set([
+  '', 'disabled', 'false', 'off', 'none', 'null', 'undefined', 'skip', 'no',
+]);
 
-const IS_RAPIDAPI = /\.rapidapi\.com$/i.test(API_HOST);
-const BASE_URL    = IS_RAPIDAPI ? `https://${API_HOST}/v3` : `https://${API_HOST}`;
+function readApiKey() {
+  return String(process.env.API_FOOTBALL_KEY ?? '').trim();
+}
+
+function isApiKeyValid(key) {
+  const k = String(key ?? '').trim();
+  if (!k || DISABLED_API_KEYS.has(k.toLowerCase())) return false;
+  if (/^(your[-_]|xxx|placeholder|troque|change_me|test[-_]?key)/i.test(k)) return false;
+  return k.length >= 8;
+}
+
+/** Resolve host + baseURL a partir do env atual (nunca dispara HTTP). */
+function readConfig() {
+  const key = readApiKey();
+  const host = normalizeHost(process.env.API_FOOTBALL_HOST || DEFAULT_HOST)
+    || normalizeHost(DEFAULT_HOST);
+  const isRapidApi = /\.rapidapi\.com$/i.test(host);
+  const baseURL = isRapidApi ? buildHttpsBase(host, 'v3') : buildHttpsBase(host);
+  return { key, host, baseURL, isRapidApi };
+}
+
+/** Chave + host + baseURL válidos — único gate antes de qualquer HTTP. */
+function isConfigured() {
+  const c = readConfig();
+  return isApiKeyValid(c.key) && Boolean(c.host && c.baseURL);
+}
+
+let _warnedNotConfigured = false;
+function warnNotConfiguredOnce(reason) {
+  if (_warnedNotConfigured) return;
+  _warnedNotConfigured = true;
+  const c = readConfig();
+  log.warn('API-Football desabilitada (sem chamadas externas)', {
+    reason,
+    keyValid: isApiKeyValid(c.key),
+    host: c.host || '(inválido)',
+    baseURL: c.baseURL ? 'ok' : '(vazio)',
+  });
+}
+
+/** Array vazio padrão para callers (live/prelive/poller). Sem I/O. */
+function emptyFixturesArray(reason = 'not_configured') {
+  const arr = [];
+  Object.defineProperty(arr, '__skipped', { value: true, enumerable: false });
+  Object.defineProperty(arr, '__reason', { value: reason, enumerable: false });
+  return arr;
+}
+
+function emptyApiBody(reason = 'not_configured') {
+  return { response: [], errors: [], __skipped: true, __reason: reason };
+}
 
 const TIMEOUT_MS       = Number(process.env.API_FOOTBALL_TIMEOUT_MS     || 12_000);
 const RETRY_MAX        = Number(process.env.API_FOOTBALL_RETRY_MAX      || 2);
@@ -114,43 +172,50 @@ const TTL_BY_ENDPOINT = {
 };
 
 /* ============================================================
-   AXIOS INSTANCE
+   AXIOS — criado só quando a API está configurada (lazy, sem rede no load)
    ============================================================ */
 const httpAgent  = new http.Agent ({ keepAlive: true, maxSockets: 25 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 25 });
 
-function buildAuthHeaders() {
-  if (IS_RAPIDAPI) {
-    return { 'x-rapidapi-key': API_KEY, 'x-rapidapi-host': API_HOST };
+let _httpClient = null;
+
+function buildAuthHeaders(cfg = readConfig()) {
+  if (cfg.isRapidApi) {
+    return { 'x-rapidapi-key': cfg.key, 'x-rapidapi-host': cfg.host };
   }
-  return { 'x-apisports-key': API_KEY };
+  return { 'x-apisports-key': cfg.key };
 }
 
-const client = axios.create({
-  baseURL: BASE_URL,
-  timeout: TIMEOUT_MS,
-  headers: { Accept: 'application/json' },
-  httpAgent,
-  httpsAgent,
-  decompress: true,
-  validateStatus: (s) => s >= 200 && s < 500,
-});
-
-client.interceptors.request.use((cfg) => {
-  cfg.headers = cfg.headers || {};
-  const drop = ['User-Agent', 'user-agent'];
-  for (const h of drop) {
-    try { delete cfg.headers[h]; } catch (_) {}
-    if (typeof cfg.headers.set === 'function') {
-      try { cfg.headers.set(h, null); } catch (_) {}
+function getHttpClient() {
+  if (!isConfigured()) return null;
+  if (_httpClient) return _httpClient;
+  const cfg = readConfig();
+  _httpClient = axios.create({
+    baseURL: cfg.baseURL,
+    timeout: TIMEOUT_MS,
+    headers: { Accept: 'application/json' },
+    httpAgent,
+    httpsAgent,
+    decompress: true,
+    validateStatus: (s) => s >= 200 && s < 500,
+  });
+  _httpClient.interceptors.request.use((reqCfg) => {
+    reqCfg.headers = reqCfg.headers || {};
+    const drop = ['User-Agent', 'user-agent'];
+    for (const h of drop) {
+      try { delete reqCfg.headers[h]; } catch (_) {}
+      if (typeof reqCfg.headers.set === 'function') {
+        try { reqCfg.headers.set(h, null); } catch (_) {}
+      }
     }
-  }
-  for (const [k, v] of Object.entries(buildAuthHeaders())) {
-    if (typeof cfg.headers.set === 'function') cfg.headers.set(k, v);
-    else cfg.headers[k] = v;
-  }
-  return cfg;
-});
+    for (const [k, v] of Object.entries(buildAuthHeaders(cfg))) {
+      if (typeof reqCfg.headers.set === 'function') reqCfg.headers.set(k, v);
+      else reqCfg.headers[k] = v;
+    }
+    return reqCfg;
+  });
+  return _httpClient;
+}
 
 /* ============================================================
    QUOTA TRACKING
@@ -314,7 +379,12 @@ async function acquireSlot() {
      af:fresh:<endpoint>?<sortedParams>   (TTL curto)
      af:stale:<endpoint>?<sortedParams>   (TTL longo, fallback)
    ============================================================ */
-const store = getStore();
+let _store = null;
+function getCacheStore() {
+  if (!_store) _store = getStore();
+  return _store;
+}
+
 const inflight = new Map();
 
 const KP_FRESH = 'af:fresh:';
@@ -337,6 +407,8 @@ function pickTtl(endpoint, paramsKey) {
 }
 
 async function cacheClear(prefix) {
+  if (!isConfigured()) return 0;
+  const store = getCacheStore();
   const n1 = await store.clear(KP_FRESH + (prefix || ''));
   const n2 = await store.clear(KP_STALE + (prefix || ''));
   return n1 + n2;
@@ -388,6 +460,30 @@ function getForceFail() { return __forceFail; }
    RAW REQUEST (com retry interno por 429/5xx/timeout)
    ============================================================ */
 async function rawGet(endpoint, params, attempt = 1) {
+  if (!isConfigured()) {
+    const err = new Error('API_FOOTBALL não configurada (chave ou host inválido)');
+    err.code = 'API_NOT_CONFIGURED';
+    throw err;
+  }
+
+  const cfg = readConfig();
+  const client = getHttpClient();
+  if (!client) {
+    const err = new Error('HTTP client indisponível — API não configurada');
+    err.code = 'API_NOT_CONFIGURED';
+    throw err;
+  }
+
+  const requestUrl = buildRequestUrl(cfg.baseURL, endpoint, params);
+  if (!requestUrl) {
+    const err = new Error('URL da API-Football inválida (baseURL vazio)');
+    err.code = 'API_URL_INVALID';
+    throw err;
+  }
+  if (attempt === 1) {
+    logExternalRequest('api-football', 'GET', requestUrl, { endpoint });
+  }
+
   // Force-fail (test hook): simula falhas ANTES de bater na rede.
   if (__forceFail) {
     m_calls.inc(1, { endpoint, forced: 'true' });
@@ -426,7 +522,18 @@ async function rawGet(endpoint, params, attempt = 1) {
       m_timeout.inc(1, { endpoint });
       log.warn('timeout API-Football', { endpoint, attempt, ms: Date.now() - t0 });
     } else {
-      log.error('network error API-Football', { endpoint, attempt, err: err.message });
+      log.error('network error API-Football', {
+        endpoint,
+        attempt,
+        err: err.message,
+        code: err.code,
+        url: maskSecretsInUrl(requestUrl),
+      });
+      if (isDnsOrNetworkSkip(err)) {
+        log.warn('API-Football: host não resolvido — verifique API_FOOTBALL_HOST no Environment', {
+          host: cfg.host,
+        });
+      }
     }
     if (attempt < RETRY_MAX) {
       m_retries.inc(1, { endpoint, reason: err.code === 'ECONNABORTED' ? 'timeout' : 'network' });
@@ -508,9 +615,16 @@ function trim(obj, max = 300) {
    GET com cache fresh → cache stale (fallback) → API (circuit breaker)
    ============================================================ */
 async function get(endpoint, params = {}, opts = {}) {
-  if (!API_KEY) {
-    throw new Error('API_FOOTBALL_KEY não configurada — defina no .env');
+  if (!isConfigured()) {
+    const c = readConfig();
+    const reason = !isApiKeyValid(c.key)
+      ? 'API_FOOTBALL_KEY ausente ou inválida'
+      : 'API_FOOTBALL_HOST inválido';
+    warnNotConfiguredOnce(reason);
+    return emptyApiBody('not_configured');
   }
+
+  const store = getCacheStore();
   const key = buildKey(endpoint, params);
 
   // 1) cache fresh
@@ -589,17 +703,22 @@ async function get(endpoint, params = {}, opts = {}) {
    HELPERS DE ALTO NÍVEL
    ============================================================ */
 async function fetchResponse(endpoint, params, opts) {
+  if (!isConfigured()) {
+    warnNotConfiguredOnce('fetchResponse bloqueado — API não configurada');
+    return emptyFixturesArray('not_configured');
+  }
   const body = await get(endpoint, params, opts);
+  if (body.__skipped) return emptyFixturesArray(body.__reason || 'not_configured');
   const arr = Array.isArray(body.response) ? body.response : [];
-  // Anexa flag de stale ao primeiro nível (para o caller)
-  if (body.__stale) Object.defineProperty(arr, '__stale', { value: true });
+  if (body.__stale) Object.defineProperty(arr, '__stale', { value: true, enumerable: false });
   return arr;
 }
 
 async function getLiveFixtures(opts = {}) {
-  // `essential` por default: o poller central é o heartbeat do sistema e
-  // deve sobreviver ao safe-mode (com TTL longo). Callers podem desligar
-  // explicitamente passando { essential: false }.
+  if (!isConfigured()) {
+    warnNotConfiguredOnce('getLiveFixtures — sem API_FOOTBALL_KEY válida');
+    return emptyFixturesArray('not_configured');
+  }
   const merged = { essential: true, ...opts };
   return fetchResponse('fixtures', { live: 'all' }, merged);
 }
@@ -649,11 +768,19 @@ async function getLeagues(params = {}, opts = {}) { return fetchResponse('league
    STATUS / DIAGNÓSTICO
    ============================================================ */
 function status() {
+  const c = readConfig();
+  const configured = isConfigured();
+  const cacheInfo = configured && _store && _store.info
+    ? _store.info()
+    : { backend: configured ? 'not_initialized' : 'disabled' };
   return {
-    configured: !!API_KEY,
-    host: API_HOST,
-    baseURL: BASE_URL,
-    legacyRapidApi: IS_RAPIDAPI,
+    configured,
+    keyValid: isApiKeyValid(c.key),
+    hasKey: Boolean(c.key),
+    host: c.host || null,
+    baseURL: configured ? c.baseURL : null,
+    legacyRapidApi: c.isRapidApi,
+    httpClientReady: Boolean(_httpClient),
     timeoutMs: TIMEOUT_MS,
     retryMax: RETRY_MAX,
     rateLimit: {
@@ -661,7 +788,7 @@ function status() {
       windowUsed: bucket.used, dayUsed: bucket.dayUsed,
     },
     quota: quotaSnapshot(),
-    cacheStore: store.info ? store.info() : { backend: 'unknown' },
+    cacheStore: cacheInfo,
     inflight: inflight.size,
     breaker: breaker.snapshot(),
     safeMode: safeModeSnapshot(),
@@ -672,15 +799,16 @@ module.exports = {
   // baixo nível
   get,
   rawGet,
+  isConfigured,
   status,
   cacheClear,
   quota: quotaSnapshot,
   breaker,           // exposto para painel/telemetria
   setForceFail,      // TEST HOOK
   getForceFail,      // TEST HOOK
-  IS_RAPIDAPI,
-  API_HOST,
-  BASE_URL,
+  readConfig,
+  isApiKeyValid,
+  emptyFixturesArray,
 
   // safe-mode / quota guard
   isSafeMode,

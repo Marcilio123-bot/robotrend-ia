@@ -22,7 +22,7 @@ const fmtRender = args.has('--render');
 
 const secrets = {
   JWT_SECRET:               crypto.randomBytes(64).toString('hex'),       // 128 chars hex
-  SESSION_SECRET:           crypto.randomBytes(48).toString('hex'),       //  96 chars hex
+  SESSION_SECRET:           crypto.randomBytes(64).toString('hex'),       // 128 chars hex
   BOOTSTRAP_ADMIN_PASSWORD: crypto.randomBytes(16).toString('base64url'), //  22 chars base64url
   WEBHOOK_SECRET:           crypto.randomBytes(32).toString('hex'),       //  64 chars hex
   METRICS_TOKEN:            crypto.randomBytes(24).toString('hex'),       //  48 chars hex

@@ -32,7 +32,28 @@ const m_del_total = metrics.counter('cachestore_delete_total');
 const m_op_latency = metrics.histogram('cachestore_op_latency_ms');
 const g_size      = metrics.gauge('cachestore_size');
 
-const REDIS_URL  = (process.env.REDIS_URL || '').trim();
+const { normalizeHost } = require('./externalApiGuard');
+
+const REDIS_URL_RAW = (process.env.REDIS_URL || '').trim();
+
+/** Só usa Redis se a URL tiver hostname resolvível (evita ENOTFOUND no boot). */
+function resolveRedisUrl() {
+  if (!REDIS_URL_RAW) return '';
+  try {
+    const u = new URL(REDIS_URL_RAW);
+    const host = normalizeHost(u.hostname);
+    if (!host) {
+      log.warn('REDIS_URL com host inválido — cache em memória', { url: REDIS_URL_RAW.slice(0, 40) });
+      return '';
+    }
+    return REDIS_URL_RAW;
+  } catch (e) {
+    log.warn('REDIS_URL malformada — cache em memória', { err: e.message });
+    return '';
+  }
+}
+
+const REDIS_URL = resolveRedisUrl();
 const REDIS_PREFIX = (process.env.REDIS_PREFIX || 'robotrend:').trim();
 const DEFAULT_MAX_KEYS = Number(process.env.CACHE_MAX_KEYS || 5_000);
 

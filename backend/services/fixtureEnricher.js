@@ -329,6 +329,10 @@ class FixtureEnricher {
      INTERNAL — executa stats+events, mescla no match cacheado e emite
      ============================================================ */
   async _enrichOne(id) {
+    if (!apiFootball.isConfigured()) {
+      m_skip.inc(1, { reason: 'api-not-configured' });
+      return { ok: false, reason: 'api-not-configured' };
+    }
     this.inflight.add(id);
     const t0 = Date.now();
     try {

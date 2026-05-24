@@ -108,6 +108,10 @@ class LiveFootballPoller {
     this.ticking = true;
     const t0 = Date.now();
     try {
+      if (!apiFootball.isConfigured()) {
+        log.warn('poller tick ignorado — API_FOOTBALL_KEY/host não configurados');
+        return;
+      }
       const raw = await apiFootball.getLiveFixtures();
       const matches = raw
         .map((fx) => {

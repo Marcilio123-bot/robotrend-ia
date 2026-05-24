@@ -1,8 +1,8 @@
 # Robotrend IA v5 — Render.com blueprint
 #
-# Secrets fortes (JWT_SECRET, SESSION_SECRET, WEBHOOK_SECRET, METRICS_TOKEN
-# e BOOTSTRAP_ADMIN_PASSWORD) são gerados AUTOMATICAMENTE pelo Render no
-# primeiro deploy via `generateValue: true`.
+# JWT_SECRET e SESSION_SECRET: sync false — cole valores de `npm run secrets:render`
+# (hex 128 chars). NÃO use placeholders curtos no painel Environment.
+# WEBHOOK_SECRET / METRICS_TOKEN / BOOTSTRAP_ADMIN_PASSWORD: generateValue (~44 chars base64).
 #
 # O Render injeta automaticamente RENDER_EXTERNAL_URL no Web Service.
 # O backend usa essa URL para CORS/APP_URL se ALLOWED_ORIGINS não estiver definido.
@@ -52,12 +52,11 @@ services:
         value: "7d"
       - key: TZ
         value: America/Sao_Paulo
-      # Secrets gerados automaticamente pelo Render no primeiro deploy
-      # (não aparecem nos logs e ficam persistidos no painel "Environment").
+      # Assinatura JWT / sessão — obrigatório colar no primeiro deploy (mín. 32, ideal 128 hex)
       - key: JWT_SECRET
-        generateValue: true
+        sync: false
       - key: SESSION_SECRET
-        generateValue: true
+        sync: false
       - key: WEBHOOK_SECRET
         generateValue: true
       - key: METRICS_TOKEN

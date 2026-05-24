@@ -11,6 +11,11 @@
 
 const APP_VERSION = '5.0.0';
 
+/** Mínimo exigido em produção/staging (bytes de entropia ≈ length/2 em hex). */
+const MIN_SECRET_LENGTH = 32;
+/** Tamanho recomendado: 64 bytes → 128 chars hex (`npm run secrets:generate`). */
+const RECOMMENDED_HEX_CHARS = 128;
+
 const WEAK_JWT_PATTERNS = [
   /change_me/i,
   /change_in_production/i,
@@ -77,11 +82,37 @@ function resolvePublicBaseUrl() {
   return '';
 }
 
-function isWeakJwtSecret(secret) {
-  if (!secret || typeof secret !== 'string') return true;
+/**
+ * Diagnóstico de secret (sem expor valor). null = OK.
+ */
+function secretStrengthIssue(secret) {
+  if (secret == null || typeof secret !== 'string') return 'ausente';
   const s = secret.trim();
-  if (s.length < 32) return true;
-  return WEAK_JWT_PATTERNS.some((re) => re.test(s));
+  if (!s) return 'ausente';
+  if (s.length < MIN_SECRET_LENGTH) {
+    return `curto (${s.length} chars, mínimo ${MIN_SECRET_LENGTH})`;
+  }
+  if (WEAK_JWT_PATTERNS.some((re) => re.test(s))) return 'padrão fraco ou placeholder';
+  return null;
+}
+
+function isWeakJwtSecret(secret) {
+  return secretStrengthIssue(secret) != null;
+}
+
+function formatSecretFixHint(name, issue) {
+  const lines = [
+    `${name} inválido: ${issue}.`,
+    `    → Gere valores fortes: npm run secrets:generate  (JWT/SESSION = hex 128 chars)`,
+    `    → Render: Environment → apague o valor atual → cole o novo → Save → redeploy`,
+  ];
+  if (issue && issue.startsWith('curto')) {
+    lines.push(
+      '    → Valores com ~18–20 chars NÃO vêm do generateValue do Render (~44 chars base64).',
+      '    → Provável placeholder manual ou .env antigo — substitua pelo output do script.'
+    );
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -128,19 +159,15 @@ function assertProductionEnv() {
   }
 
   const jwt = envString('JWT_SECRET');
-  if (isWeakJwtSecret(jwt)) {
-    errors.push(
-      'JWT_SECRET inválido ou fraco (mín. 32 chars aleatórios).\n' +
-      '    → Render: use generateValue: true no blueprint ou cole um secret de 64+ chars'
-    );
+  const jwtIssue = secretStrengthIssue(jwt);
+  if (jwtIssue) {
+    errors.push(formatSecretFixHint('JWT_SECRET', jwtIssue));
   }
 
   const session = envString('SESSION_SECRET');
-  if (!session || session.length < 32) {
-    errors.push(
-      'SESSION_SECRET é obrigatório em produção/staging (mín. 32 chars).\n' +
-      '    → Render: generateValue: true no blueprint'
-    );
+  const sessionIssue = secretStrengthIssue(session);
+  if (sessionIssue) {
+    errors.push(formatSecretFixHint('SESSION_SECRET', sessionIssue));
   }
 
   if (String(envString('DEMO_MODE') || 'false').toLowerCase() === 'true') {
@@ -235,8 +262,23 @@ function buildSocketCors() {
   return { origin: origins, credentials: true };
 }
 
+/**
+ * JWT para assinatura — em produção só retorna valor já validado pelo startup-check.
+ * Em dev, fallback explícito apenas se ausente/fraco.
+ */
+function getJwtSecret() {
+  const fromEnv = envString('JWT_SECRET');
+  if (isProductionLike()) return fromEnv;
+  if (!fromEnv || isWeakJwtSecret(fromEnv)) {
+    return 'robotrend_default_secret_change_me';
+  }
+  return fromEnv;
+}
+
 module.exports = {
   APP_VERSION,
+  MIN_SECRET_LENGTH,
+  RECOMMENDED_HEX_CHARS,
   isProductionLike,
   isOnRender,
   assertProductionEnv,
@@ -245,5 +287,7 @@ module.exports = {
   parseAllowedOrigins,
   resolvePublicBaseUrl,
   envString,
+  secretStrengthIssue,
   isWeakJwtSecret,
+  getJwtSecret,
 };

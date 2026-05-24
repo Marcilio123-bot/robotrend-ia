@@ -19,7 +19,11 @@ try { bcrypt = require('bcryptjs'); } catch (e) { bcrypt = null; }
 let jwt;
 try { jwt = require('jsonwebtoken'); } catch (e) { jwt = null; }
 
-const JWT_SECRET = String(process.env.JWT_SECRET ?? 'robotrend_default_secret_change_me').trim();
+const { getJwtSecret, isProductionLike } = require('./startup-check');
+const JWT_SECRET = getJwtSecret();
+if (!isProductionLike() && JWT_SECRET === 'robotrend_default_secret_change_me') {
+  console.warn('[auth] JWT_SECRET ausente/fraco — usando default apenas em desenvolvimento');
+}
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 10);
 

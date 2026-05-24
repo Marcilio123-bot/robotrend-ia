@@ -11,7 +11,7 @@ const backupDir = 'C:\\sites\\Robotrend_BACKUP_2026-05-21';
 const secrets = {
   generatedAt: new Date().toISOString(),
   JWT_SECRET: crypto.randomBytes(64).toString('hex'),
-  SESSION_SECRET: crypto.randomBytes(32).toString('hex'),
+  SESSION_SECRET: crypto.randomBytes(64).toString('hex'),
   POSTGRES_PASSWORD: crypto.randomBytes(24).toString('base64url').slice(0, 32),
 };
 

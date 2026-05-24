@@ -750,6 +750,18 @@ async function main() {
   try { await footballHistory.init(); }
   catch (e) { log.warn('footballHistory init falhou', { err: e.message }); }
 
+  const af = require('./services/apiFootball');
+  const afStatus = af.status();
+  log.info('API-Football boot', {
+    configured: afStatus.configured,
+    host: afStatus.host,
+    baseURL: afStatus.baseURL ? 'set' : 'missing',
+    oddsOptional: !process.env.ODDS_API_KEY || String(process.env.ODDS_OPTIONAL || '').toLowerCase() === 'true',
+  });
+  if (!afStatus.configured) {
+    log.warn('API_FOOTBALL_KEY/host ausentes — scanners externos desligados (sem ENOTFOUND)');
+  }
+
   attachFootballRealtime(io, { db, auth });
   footballAlerts.start();
   signalsEngine.start();
@@ -809,7 +821,18 @@ function shutdown(signal) {
 }
 ['SIGINT','SIGTERM'].forEach((sig) => process.on(sig, () => shutdown(sig)));
 
-process.on('unhandledRejection', (err) => log.error('unhandledRejection', { err: err?.message || String(err) }));
+process.on('unhandledRejection', (err) => {
+  const msg = err?.message || String(err);
+  const code = err?.code || '';
+  if (/ENOTFOUND|getaddrinfo|EAI_AGAIN/i.test(msg) || code === 'ENOTFOUND') {
+    log.error('unhandledRejection (rede/DNS — verifique DATABASE_URL, API_FOOTBALL_HOST, REDIS_URL)', {
+      err: msg,
+      code,
+    });
+    return;
+  }
+  log.error('unhandledRejection', { err: msg, code });
+});
 process.on('uncaughtException',  (err) => log.fatal('uncaughtException',  { err: err?.message || String(err) }));
 
 main().catch((err) => {

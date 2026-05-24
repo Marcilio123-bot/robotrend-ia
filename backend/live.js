@@ -14,7 +14,7 @@ const consensus = require('./consensus');
 const apiFootball = require('./services/apiFootball');
 
 const DEMO = String(process.env.DEMO_MODE || 'false').toLowerCase() === 'true';
-const API_KEY = process.env.API_FOOTBALL_KEY;
+const API_KEY = (process.env.API_FOOTBALL_KEY || '').trim();
 
 // STRICT_REAL_ONLY: bloqueia 100% qualquer fonte sintética.
 // Default: true em production/staging, false em development.
@@ -265,8 +265,8 @@ class ApiLiveScanner {
   }
 
   async fetchLiveFixtures() {
-    if (!API_KEY) {
-      console.warn('[live] API_FOOTBALL_KEY não configurada — retornando vazio.');
+    if (!apiFootball.isConfigured()) {
+      console.warn('[live] API_FOOTBALL não configurada — retornando vazio.');
       return [];
     }
     // ZERO API CALL aqui — o poller central é o único owner do endpoint
