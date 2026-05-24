@@ -1,0 +1,37 @@
+
+=== T1: Render injeta RENDER_EXTERNAL_URL como fallback CORS ===
+   origins = ["https://robotrend-ia.onrender.com"]
+  PASS    Fallback Render funciona sem ALLOWED_ORIGINS manual
+
+=== T2: Trim DATABASE_URL/JWT_SECRET/SESSION_SECRET ===
+  PASS    Whitespace/newline aceitos após trim
+
+=== T3: Parse ALLOWED_ORIGINS multi com sanitização ===
+   origins = ["https://a.com","https://b.com","https://c.com"]
+  PASS    Parse remove vazias/undefined/null e barras finais
+
+=== T4: DATABASE_URL inválido bloqueia boot ===
+  PASS    Bloqueia URL não-postgres com erro claro
+
+=== T5: JWT_SECRET com padrão fraco ===
+  PASS    Bloqueia placeholders (your-*)
+
+=== T6: Diagnóstico nunca expõe valores secretos ===
+  PASS    Erro NÃO contém valores secretos
+  PASS    Erro mostra diagnóstico
+  PASS    Diagnóstico usa formato set(N chars)
+
+=== T7: Development mode bypassa validação ===
+  PASS    Development pula validação produção
+
+=== T8: buildCorsOptions normaliza origens ===
+  PASS    CORS aceita lista + bloqueia origem desconhecida
+
+=== T9: STRICT_REAL_ONLY=false bloqueia em produção ===
+  PASS    Bloqueia STRICT_REAL_ONLY=false
+
+=== T10: Sem Postgres em produção bloqueia ===
+  PASS    Bloqueia produção sem Postgres
+
+=== RESUMO ===
+ALL TESTS PASSED

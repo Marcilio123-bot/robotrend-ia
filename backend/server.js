@@ -19,7 +19,8 @@ const fs = require('fs');
 const zlib = require('zlib');
 
 const envPath = path.join(__dirname, '..', '.env');
-if (fs.existsSync(envPath)) require('dotenv').config({ path: envPath });
+// override:false — variáveis do Render/host têm prioridade sobre .env local
+if (fs.existsSync(envPath)) require('dotenv').config({ path: envPath, override: false });
 
 const {
   APP_VERSION,

@@ -4,11 +4,14 @@
 # e BOOTSTRAP_ADMIN_PASSWORD) são gerados AUTOMATICAMENTE pelo Render no
 # primeiro deploy via `generateValue: true`.
 #
-# Após o primeiro deploy, preencha no painel Environment:
-#   - BOOTSTRAP_ADMIN_EMAIL  (e-mail do super-admin)
-#   - ALLOWED_ORIGINS        (https://<seu-app>.onrender.com)
-#   - APP_URL                (idem)
-#   - PUBLIC_URL             (idem)
+# O Render injeta automaticamente RENDER_EXTERNAL_URL no Web Service.
+# O backend usa essa URL para CORS/APP_URL se ALLOWED_ORIGINS não estiver definido.
+#
+# Obrigatório preencher manualmente (sync: false):
+#   - BOOTSTRAP_ADMIN_EMAIL
+#
+# Opcional (recomendado; senão usa RENDER_EXTERNAL_URL):
+#   - ALLOWED_ORIGINS, APP_URL, PUBLIC_URL
 # E opcionalmente: API_FOOTBALL_KEY, MP_*, STRIPE_*, TELEGRAM_*.
 
 services:
@@ -63,13 +66,15 @@ services:
         sync: false
       - key: BOOTSTRAP_ADMIN_PASSWORD
         generateValue: true
-      # CORS / URLs públicas — preencher após primeiro deploy (URL do Render)
+      # CORS / URLs — opcionais: startup-check usa RENDER_EXTERNAL_URL como fallback
       - key: ALLOWED_ORIGINS
         sync: false
       - key: APP_URL
         sync: false
       - key: PUBLIC_URL
         sync: false
+      # Render define automaticamente (não declarar aqui):
+      # RENDER_EXTERNAL_URL, RENDER_SERVICE_URL
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID

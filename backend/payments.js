@@ -30,7 +30,19 @@ const stripeClient = Stripe && process.env.STRIPE_SECRET_KEY
    PUBLIC_URL é mantido como fallback (compat com env antigo)
    ============================================================ */
 function appUrl() {
-  return process.env.APP_URL || process.env.PUBLIC_URL || 'http://localhost:3010';
+  try {
+    const { resolvePublicBaseUrl, envString } = require('./startup-check');
+    const resolved = resolvePublicBaseUrl();
+    if (resolved) return resolved;
+    const app = envString('APP_URL');
+    const pub = envString('PUBLIC_URL');
+    if (app) return app;
+    if (pub) return pub;
+  } catch (_) { /* fallback abaixo */ }
+  const app = (process.env.APP_URL || '').trim();
+  const pub = (process.env.PUBLIC_URL || '').trim();
+  const render = (process.env.RENDER_EXTERNAL_URL || '').trim();
+  return app || pub || render || 'http://localhost:3010';
 }
 
 /**

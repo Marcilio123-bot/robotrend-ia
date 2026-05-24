@@ -14,7 +14,18 @@ const crypto = require('crypto');
 let Pool;
 try { ({ Pool } = require('pg')); } catch (e) { Pool = null; }
 
-const useDatabase = Boolean(process.env.DATABASE_URL || process.env.PGHOST) && Pool !== null;
+/** Trim seguro — evita falso "vazio" e connection strings com newline do painel. */
+function envDb(key) {
+  const v = process.env[key];
+  if (v == null) return '';
+  return String(v).trim();
+}
+
+const databaseUrl = envDb('DATABASE_URL');
+const pgHost = envDb('PGHOST');
+const useDatabase = Boolean(
+  (databaseUrl && /^postgres(ql)?:\/\//i.test(databaseUrl)) || pgHost
+) && Pool !== null;
 
 /**
  * Render Managed Postgres exige SSL. Bancos locais geralmente não.
@@ -30,11 +41,11 @@ function shouldUseSsl() {
   if (flag === 'true' || flag === '1' || flag === 'require')  return true;
   if (flag === 'false' || flag === '0' || flag === 'disable') return false;
 
-  const url = process.env.DATABASE_URL || '';
+  const url = databaseUrl || '';
   if (/sslmode=require|sslmode=verify/i.test(url)) return true;
   if (/\.render\.com|\.aws|\.fly\.dev|\.supabase\.|\.neon\.tech|\.cloud\.timescale|\.heroku/i.test(url)) return true;
 
-  const host = (process.env.PGHOST || '').toLowerCase();
+  const host = pgHost.toLowerCase();
   if (host && host !== 'localhost' && !host.startsWith('127.')) {
     if ((process.env.NODE_ENV || '') === 'production' || (process.env.NODE_ENV || '') === 'staging') {
       return true;
@@ -47,14 +58,14 @@ let pool = null;
 if (useDatabase) {
   const ssl = shouldUseSsl() ? { rejectUnauthorized: false } : false;
   pool = new Pool(
-    process.env.DATABASE_URL
-      ? { connectionString: process.env.DATABASE_URL, ssl }
+    databaseUrl
+      ? { connectionString: databaseUrl, ssl }
       : {
-          host: process.env.PGHOST,
-          port: Number(process.env.PGPORT || 5432),
-          user: process.env.PGUSER,
-          password: process.env.PGPASSWORD,
-          database: process.env.PGDATABASE || 'robotrend',
+          host: pgHost,
+          port: Number(envDb('PGPORT') || 5432),
+          user: envDb('PGUSER'),
+          password: envDb('PGPASSWORD'),
+          database: envDb('PGDATABASE') || 'robotrend',
           ssl,
         }
   );
