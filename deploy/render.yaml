@@ -11,7 +11,7 @@ services:
     branch: main
     healthCheckPath: /healthz
     autoDeploy: true
-    buildCommand: npm ci --omit=dev --no-audit --no-fund
+    buildCommand: npm install && npm run tailwind:build
     startCommand: node backend/server.js
     envVars:
       - key: NODE_ENV

@@ -4,8 +4,8 @@
   "description": "Robotrend IA v5 Commercial — Bet365 SaaS · backtest, anti-fake-pressure v2, score adaptativo, watchdog, beta fechado, painel de resultados, qualidade IA, cupons/convites",
   "main": "backend/server.js",
   "scripts": {
-    "start": "cross-env NODE_ENV=production node backend/server.js",
-    "dev": "cross-env NODE_ENV=development nodemon backend/server.js",
+    "start": "node backend/server.js",
+    "dev": "nodemon backend/server.js",
     "start:win": "node backend/server.js",
     "worker": "cross-env NODE_ENV=production node backend/worker.js",
     "worker:dev": "cross-env NODE_ENV=development nodemon backend/worker.js",
@@ -20,10 +20,9 @@
     "pm2:start": "pm2 start deploy/ecosystem.config.js",
     "pm2:stop": "pm2 stop robotrend-ia",
     "smoke": "node scripts/smoke-test.js",
-    "tailwind:build": "tailwindcss -i ./frontend/input.css -o ./frontend/output.css --minify",
-    "tailwind:watch": "tailwindcss -i ./frontend/input.css -o ./frontend/output.css --watch",
+    "tailwind:build": "npx tailwindcss -i ./frontend/input.css -o ./frontend/output.css --minify",
+    "tailwind:watch": "npx tailwindcss -i ./frontend/input.css -o ./frontend/output.css --watch",
     "build": "npm run tailwind:build",
-    "postinstall": "npm run tailwind:build",
     "ws:probe": "node scripts/ws-probe.js",
     "test:source": "node scripts/test-signal-source.js",
     "test:consensus": "node scripts/test-consensus.js",
@@ -64,7 +63,10 @@
     "jsonwebtoken": "^9.0.2",
     "node-telegram-bot-api": "^0.66.0",
     "pg": "^8.13.1",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "autoprefixer": "^10.5.0",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^3.4.19"
   },
   "optionalDependencies": {
     "bullmq": "^5.21.0",
@@ -73,10 +75,7 @@
     "stripe": "^17.3.1"
   },
   "devDependencies": {
-    "autoprefixer": "^10.5.0",
     "nodemon": "^3.1.7",
-    "postcss": "^8.5.15",
-    "socket.io-client": "^4.8.1",
-    "tailwindcss": "^3.4.19"
+    "socket.io-client": "^4.8.1"
   }
 }
