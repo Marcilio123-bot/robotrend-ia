@@ -3,6 +3,9 @@
   "version": "5.0.0",
   "description": "Robotrend IA v5 Commercial — Bet365 SaaS · backtest, anti-fake-pressure v2, score adaptativo, watchdog, beta fechado, painel de resultados, qualidade IA, cupons/convites",
   "main": "backend/server.js",
+  "engines": {
+    "node": ">=20.0.0 <25"
+  },
   "scripts": {
     "start": "node backend/server.js",
     "dev": "nodemon backend/server.js",
@@ -12,6 +15,7 @@
     "metrics": "curl -s -H \"X-Metrics-Token: %METRICS_TOKEN%\" http://localhost:3010/api/metrics | node -e \"let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.stringify(JSON.parse(d),null,2)))\"",
     "backtest:synthetic": "node -e \"const b=require('./backend/backtest');const r=b.runBacktest(b.buildSyntheticDataset(500),{minScore:80,stake:1});console.log(JSON.stringify({summary:r.summary,byMarket:r.byMarket},null,2));\"",
     "secrets:generate": "node scripts/generate-secrets.js",
+    "secrets:render":   "node scripts/generate-secrets.js --render",
     "backup:phase1": "node scripts/backup-phase1.js",
     "secrets:apply": "node scripts/apply-secrets-to-env.js",
     "docker:up": "docker compose -f deploy/docker-compose.yml --env-file .env up -d --build",

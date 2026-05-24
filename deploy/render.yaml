@@ -1,6 +1,15 @@
 # Robotrend IA v5 — Render.com blueprint
-# Configurar JWT_SECRET, SESSION_SECRET, BOOTSTRAP_ADMIN_PASSWORD,
-# ALLOWED_ORIGINS e demais secrets no dashboard antes do primeiro deploy.
+#
+# Secrets fortes (JWT_SECRET, SESSION_SECRET, WEBHOOK_SECRET, METRICS_TOKEN
+# e BOOTSTRAP_ADMIN_PASSWORD) são gerados AUTOMATICAMENTE pelo Render no
+# primeiro deploy via `generateValue: true`.
+#
+# Após o primeiro deploy, preencha no painel Environment:
+#   - BOOTSTRAP_ADMIN_EMAIL  (e-mail do super-admin)
+#   - ALLOWED_ORIGINS        (https://<seu-app>.onrender.com)
+#   - APP_URL                (idem)
+#   - PUBLIC_URL             (idem)
+# E opcionalmente: API_FOOTBALL_KEY, MP_*, STRIPE_*, TELEGRAM_*.
 
 services:
   - type: web
@@ -18,6 +27,8 @@ services:
         value: production
       - key: PORT
         value: 3010
+      - key: PGSSL
+        value: "true"
       - key: DEMO_MODE
         value: "false"
       - key: ANTI_FAKE_PRESSURE
@@ -38,15 +49,24 @@ services:
         value: "7d"
       - key: TZ
         value: America/Sao_Paulo
+      # Secrets gerados automaticamente pelo Render no primeiro deploy
+      # (não aparecem nos logs e ficam persistidos no painel "Environment").
       - key: JWT_SECRET
-        sync: false
+        generateValue: true
       - key: SESSION_SECRET
-        sync: false
+        generateValue: true
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: METRICS_TOKEN
+        generateValue: true
       - key: BOOTSTRAP_ADMIN_EMAIL
         sync: false
       - key: BOOTSTRAP_ADMIN_PASSWORD
-        sync: false
+        generateValue: true
+      # CORS / URLs públicas — preencher após primeiro deploy (URL do Render)
       - key: ALLOWED_ORIGINS
+        sync: false
+      - key: APP_URL
         sync: false
       - key: PUBLIC_URL
         sync: false

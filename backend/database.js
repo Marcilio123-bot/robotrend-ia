@@ -16,19 +16,50 @@ try { ({ Pool } = require('pg')); } catch (e) { Pool = null; }
 
 const useDatabase = Boolean(process.env.DATABASE_URL || process.env.PGHOST) && Pool !== null;
 
+/**
+ * Render Managed Postgres exige SSL. Bancos locais geralmente não.
+ * Estratégia:
+ *   - PGSSL=true|false   → respeita explicitamente
+ *   - DATABASE_URL inclui ?sslmode=require → liga
+ *   - DATABASE_URL aponta para host *.render.com / *.aws / *.fly.dev → liga
+ *   - NODE_ENV=production e PGHOST não localhost → liga (default seguro)
+ *   - caso contrário → desliga (dev local)
+ */
+function shouldUseSsl() {
+  const flag = String(process.env.PGSSL || '').toLowerCase();
+  if (flag === 'true' || flag === '1' || flag === 'require')  return true;
+  if (flag === 'false' || flag === '0' || flag === 'disable') return false;
+
+  const url = process.env.DATABASE_URL || '';
+  if (/sslmode=require|sslmode=verify/i.test(url)) return true;
+  if (/\.render\.com|\.aws|\.fly\.dev|\.supabase\.|\.neon\.tech|\.cloud\.timescale|\.heroku/i.test(url)) return true;
+
+  const host = (process.env.PGHOST || '').toLowerCase();
+  if (host && host !== 'localhost' && !host.startsWith('127.')) {
+    if ((process.env.NODE_ENV || '') === 'production' || (process.env.NODE_ENV || '') === 'staging') {
+      return true;
+    }
+  }
+  return false;
+}
+
 let pool = null;
 if (useDatabase) {
+  const ssl = shouldUseSsl() ? { rejectUnauthorized: false } : false;
   pool = new Pool(
     process.env.DATABASE_URL
-      ? { connectionString: process.env.DATABASE_URL }
+      ? { connectionString: process.env.DATABASE_URL, ssl }
       : {
           host: process.env.PGHOST,
           port: Number(process.env.PGPORT || 5432),
           user: process.env.PGUSER,
           password: process.env.PGPASSWORD,
           database: process.env.PGDATABASE || 'robotrend',
+          ssl,
         }
   );
+  // Log discreto p/ debug de deploy (não vaza senha)
+  console.log('[db] Pool inicializado · ssl=' + (ssl ? 'on' : 'off'));
 }
 
 /* ============================================================

@@ -51,17 +51,28 @@ function assertProductionEnv() {
   const dbUrl = process.env.DATABASE_URL || '';
   const pgHost = process.env.PGHOST || '';
   if (!dbUrl && !pgHost) {
-    errors.push('DATABASE_URL ou PGHOST é obrigatório em produção/staging (sem fallback in-memory).');
+    errors.push(
+      'DATABASE_URL ou PGHOST é obrigatório em produção/staging.\n' +
+      '    → No Render: aba "Environment" do serviço web, vincule o Postgres em DATABASE_URL\n' +
+      '      (clique "Add from Database" → escolha robotrend-pg → property: connectionString).'
+    );
   }
 
-  const jwt = process.env.JWT_SECRET || '';
+  const jwt = (process.env.JWT_SECRET || '').trim();
   if (isWeakJwtSecret(jwt)) {
-    errors.push('JWT_SECRET inválido ou fraco — use >= 32 chars aleatórios (openssl rand -hex 64).');
+    errors.push(
+      'JWT_SECRET inválido ou fraco (mín. 32 chars aleatórios).\n' +
+      '    → Gere com:  node scripts/generate-secrets.js\n' +
+      '    → Ou:        openssl rand -hex 64'
+    );
   }
 
-  const session = process.env.SESSION_SECRET || '';
+  const session = (process.env.SESSION_SECRET || '').trim();
   if (!session || session.length < 32) {
-    errors.push('SESSION_SECRET é obrigatório em produção/staging (>= 32 chars).');
+    errors.push(
+      'SESSION_SECRET é obrigatório em produção/staging (mín. 32 chars).\n' +
+      '    → Gere com:  node scripts/generate-secrets.js'
+    );
   }
 
   if (String(process.env.DEMO_MODE || 'false').toLowerCase() === 'true') {
@@ -80,14 +91,24 @@ function assertProductionEnv() {
 
   const origins = parseAllowedOrigins();
   if (!origins.length) {
-    errors.push('ALLOWED_ORIGINS vazio — defina domínios permitidos separados por vírgula.');
+    errors.push(
+      'ALLOWED_ORIGINS vazio — defina os domínios permitidos separados por vírgula.\n' +
+      '    Ex.: ALLOWED_ORIGINS=https://robotrend.onrender.com,https://www.robotrend.com.br'
+    );
   }
 
   if (errors.length) {
     const msg = [
-      '[startup-check] Ambiente de produção/staging inválido:',
-      ...errors.map((e) => `  - ${e}`),
-      'Corrija .env.production / variáveis do host e reinicie.',
+      '',
+      '╔══════════════════════════════════════════════════════════════════╗',
+      '║  [startup-check] Ambiente de produção/staging INVÁLIDO          ║',
+      '╚══════════════════════════════════════════════════════════════════╝',
+      '',
+      ...errors.map((e, i) => `  ${i + 1}. ${e}`),
+      '',
+      '  Corrija as variáveis no painel do host (Render → Environment) e',
+      '  faça um novo deploy. Em local: edite .env e reinicie.',
+      '',
     ].join('\n');
     throw new Error(msg);
   }
