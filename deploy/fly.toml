@@ -1,0 +1,44 @@
+# Robotrend IA v5 — Fly.io
+# Rode da raiz: fly deploy -c deploy/fly.toml --dockerfile deploy/Dockerfile
+
+app = "robotrend-ia"
+primary_region = "gru"
+
+[build]
+  dockerfile = "deploy/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3010"
+  DEMO_MODE = "false"
+  ANTI_FAKE_PRESSURE = "true"
+  ML_AUTOTUNE = "true"
+  SIGNAL_MIN_SCORE = "80"
+  LIVE_SCAN_INTERVAL_MS = "15000"
+  BCRYPT_ROUNDS = "12"
+  TZ = "America/Sao_Paulo"
+
+[http_service]
+  internal_port = 3010
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 250
+    soft_limit = 200
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "get"
+  path = "/healthz"
+  protocol = "http"
+  timeout = "5s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

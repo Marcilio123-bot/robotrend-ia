@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-br" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robotrend-guard" content="user" />
+<title>Qualidade IA · Robotrend</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><text y=%2250%22 font-size=%2256%22>📈</text></svg>" />
+<link rel="stylesheet" href="/output.css">
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body class="font-display antialiased">
+<div class="bg-aurora"></div>
+<div class="bg-grid"></div>
+
+<div class="saas-shell">
+  <div id="saas-nav" data-active="quality"></div>
+  <main class="saas-content">
+    <header class="saas-page-header">
+      <div>
+        <h1 class="saas-page-title">Qualidade da IA</h1>
+        <p class="saas-page-sub">Assertividade real por liga, mercado, horário e confiança</p>
+      </div>
+      <div class="saas-page-actions">
+        <button id="btn-refresh" class="btn-primary">↻ Atualizar</button>
+      </div>
+    </header>
+
+    <section class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+      <div class="stat-card"><div class="stat-label">Sinais Total</div><div class="stat-value" id="k-total">—</div></div>
+      <div class="stat-card"><div class="stat-label">Resolvidos</div><div class="stat-value" id="k-resolved">—</div></div>
+      <div class="stat-card"><div class="stat-label">Winrate</div><div class="stat-value" id="k-winrate">—</div></div>
+      <div class="stat-card"><div class="stat-label">ROI</div><div class="stat-value" id="k-roi">—</div></div>
+      <div class="stat-card"><div class="stat-label">Pendentes</div><div class="stat-value" id="k-pending">—</div></div>
+    </section>
+
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+      <div class="card">
+        <h3 class="text-lg font-semibold mb-3">🏆 Top Ligas (winrate)</h3>
+        <div id="rank-leagues" class="text-sm">—</div>
+      </div>
+      <div class="card">
+        <h3 class="text-lg font-semibold mb-3">🎯 Top Mercados</h3>
+        <div id="rank-markets" class="text-sm">—</div>
+      </div>
+      <div class="card">
+        <h3 class="text-lg font-semibold mb-3">⏰ Top Horários</h3>
+        <div id="rank-hours" class="text-sm">—</div>
+      </div>
+      <div class="card">
+        <h3 class="text-lg font-semibold mb-3">💡 Bucket de Confiança</h3>
+        <div id="rank-conf" class="text-sm">—</div>
+      </div>
+    </section>
+
+    <section class="card mb-6">
+      <h3 class="text-lg font-semibold mb-3">⚙️ Pesos Adaptativos Aplicados</h3>
+      <p class="text-sm mb-3" style="color: var(--muted);">A IA usa estes pesos para reforçar sinais bons e reduzir os ruins.</p>
+      <pre id="weights" class="text-xs" style="white-space: pre-wrap; background: var(--bg-2); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--card-border);">—</pre>
+    </section>
+  </main>
+</div>
+
+<script src="/js/auth.js"></script>
+<script src="/js/auth-guard.js"></script>
+<script src="/js/user-state.js"></script>
+<script src="/js/upgrade-celebration.js"></script>
+<script src="/js/pwa.js"></script>
+<script src="/js/saas-nav.js"></script>
+<script>
+(async function () {
+  await RobotrendAuth.ensureAuth();
+  async function load() {
+    const r = await RobotrendAuth.api('/api/quality');
+    const data = await r.json();
+    document.getElementById('k-total').textContent    = data.summary.total;
+    document.getElementById('k-resolved').textContent = data.summary.resolved;
+    document.getElementById('k-pending').textContent  = data.summary.pending;
+    document.getElementById('k-winrate').textContent  = data.summary.winrate + '%';
+    document.getElementById('k-roi').textContent      = data.summary.roi + '%';
+
+    renderRank('rank-leagues', data.ranking.leagues);
+    renderRank('rank-markets', data.ranking.markets);
+    renderRank('rank-hours',   data.ranking.hours);
+    renderRank('rank-conf',    data.ranking.confidence);
+
+    document.getElementById('weights').textContent = JSON.stringify({
+      leagues: data.weights.leagues,
+      hours: data.weights.hours,
+      marketMinScore: data.marketMinScore,
+    }, null, 2);
+  }
+  function renderRank(id, list) {
+    const el = document.getElementById(id);
+    if (!list || !list.length) { el.innerHTML = '<span style="color: var(--muted);">Sem dados suficientes ainda.</span>'; return; }
+    el.innerHTML = list.map((r, i) => `
+      <div class="flex items-center justify-between py-2" style="border-bottom: 1px solid var(--card-border);">
+        <span><b>#${i + 1}</b> ${r.key}</span>
+        <span class="text-sm">
+          <span style="color: ${r.winrate >= 60 ? '#22c55e' : r.winrate >= 50 ? '#eab308' : '#ef4444'}; font-weight:700;">${r.winrate}%</span>
+          <span style="color: var(--muted);">· ${r.total} sinais · ROI ${r.roi}%</span>
+        </span>
+      </div>
+    `).join('');
+  }
+  document.getElementById('btn-refresh').onclick = load;
+  load();
+  setInterval(load, 60_000);
+})();
+</script>
+</body>
+</html>

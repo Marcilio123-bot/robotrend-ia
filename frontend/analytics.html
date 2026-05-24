@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="user" />
+  <title>Robotrend IA — Analytics</title>
+  <meta name="theme-color" content="#14b85e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314b85e'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' fill='%23062815' font-family='Arial' font-weight='900' font-size='34'%3ER%3C/text%3E%3C/svg%3E" />
+
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+
+  <style>
+    .chart-card { padding: 22px; }
+    .chart-canvas { width: 100%; height: 240px; }
+    .market-row {
+      display: grid;
+      grid-template-columns: 110px 1fr 90px 70px 70px;
+      gap: 12px;
+      padding: 10px 4px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      align-items: center;
+    }
+    .market-row:last-child { border-bottom: none; }
+    .market-row .name { font-weight: 700; }
+    .market-row .bar {
+      height: 8px; background: var(--surface-2);
+      border-radius: 4px; overflow: hidden;
+    }
+    .market-row .bar > span {
+      display: block; height: 100%;
+      background: linear-gradient(90deg, var(--brand), var(--brand-2));
+    }
+    .market-row .val { font-family: 'JetBrains Mono', monospace; font-weight: 700; text-align: right; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="analytics"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">Analytics</h1>
+          <p class="saas-page-sub">Performance dos sinais · winrate · ROI · histórico</p>
+        </div>
+        <div class="saas-page-actions">
+          <select id="period" class="input-field" style="padding: 6px 10px; font-size: 12px;">
+            <option value="24">Últimas 24h</option>
+            <option value="168" selected>Última semana</option>
+            <option value="720">Último mês</option>
+            <option value="0">Tudo</option>
+          </select>
+        </div>
+      </header>
+
+      <!-- KPIs -->
+      <section class="saas-kpis">
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Total de sinais</div>
+          <div class="saas-kpi-value" id="kpi-total">—</div>
+          <div class="saas-kpi-foot">no período</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Taxa de acerto</div>
+          <div class="saas-kpi-value" id="kpi-winrate">—</div>
+          <div class="saas-kpi-foot good" id="kpi-winloss">— / —</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">ROI estimado</div>
+          <div class="saas-kpi-value" id="kpi-roi">—</div>
+          <div class="saas-kpi-foot">cálculo @ odd média</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Confiança média</div>
+          <div class="saas-kpi-value" id="kpi-conf">—</div>
+          <div class="saas-kpi-foot">IA score</div>
+        </div>
+      </section>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+        <div class="saas-card chart-card">
+          <div class="saas-section-head" style="margin-bottom:8px;">
+            <div>
+              <div class="saas-section-title">Sinais por mercado</div>
+              <div class="saas-section-sub">distribuição no período</div>
+            </div>
+          </div>
+          <div id="markets-list"></div>
+        </div>
+
+        <div class="saas-card chart-card">
+          <div class="saas-section-head" style="margin-bottom:8px;">
+            <div>
+              <div class="saas-section-title">Confiança × resultado</div>
+              <div class="saas-section-sub">faixas de IA% e taxa de acerto</div>
+            </div>
+          </div>
+          <canvas id="chart-conf" class="chart-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Tabela de sinais -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div>
+            <div class="saas-section-title">Histórico detalhado</div>
+            <div class="saas-section-sub">últimos sinais no período</div>
+          </div>
+        </div>
+        <div class="saas-card" style="padding:0; overflow:hidden;">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="table-head">
+                <th class="py-3 px-4 text-left">Data</th>
+                <th class="py-3 px-4 text-left">Partida</th>
+                <th class="py-3 px-4 text-left">Mercado</th>
+                <th class="py-3 px-4 text-left">Entrada</th>
+                <th class="py-3 px-4 text-left">Odd</th>
+                <th class="py-3 px-4 text-left">IA%</th>
+                <th class="py-3 px-4 text-left">Resultado</th>
+              </tr>
+            </thead>
+            <tbody id="history-body">
+              <tr><td colspan="7" class="py-6 text-center" style="color: var(--muted);">Carregando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/upgrade-celebration.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    const $ = (s) => document.querySelector(s);
+
+    const MARKETS = {
+      corners: 'Escanteios',
+      btts:    'Ambas marcam',
+      win:     'Vitória',
+      goals:   'Gols',
+      cards:   'Cartões',
+    };
+
+    async function loadStats(hours) {
+      try {
+        const url = '/api/signals' + (hours ? `?sinceMs=${hours * 3600 * 1000}` : '') + '&limit=500';
+        const headers = {};
+        const t = window.RobotrendAuth?.getToken?.();
+        if (t) headers.Authorization = `Bearer ${t}`;
+        const r = await fetch(url, { headers });
+        if (!r.ok) return [];
+        const data = await r.json();
+        return data.signals || data || [];
+      } catch (_) { return []; }
+    }
+
+    function compute(signals) {
+      const total = signals.length;
+      const wins = signals.filter((s) => s.result === 'win').length;
+      const losses = signals.filter((s) => s.result === 'loss').length;
+      const resolved = wins + losses;
+      const winrate = resolved ? Math.round((wins / resolved) * 100) : null;
+      const odds = signals.map((s) => +(s.payload?.odd || s.odd || s.oddEstimated)).filter(Number.isFinite);
+      const avgOdd = odds.length ? odds.reduce((a, b) => a + b, 0) / odds.length : 1.85;
+      const roi = winrate != null ? Math.round((winrate / 100 * avgOdd - 1) * 100) : null;
+      const confSum = signals.reduce((a, s) => a + (s.confidence || 0), 0);
+      const confAvg = total ? Math.round(confSum / total) : null;
+
+      const byMarket = {};
+      for (const s of signals) {
+        const k = s.market || 'outro';
+        byMarket[k] = (byMarket[k] || 0) + 1;
+      }
+
+      const confBuckets = [
+        { range: '70-74%', min: 70, max: 75, wins: 0, total: 0 },
+        { range: '75-79%', min: 75, max: 80, wins: 0, total: 0 },
+        { range: '80-84%', min: 80, max: 85, wins: 0, total: 0 },
+        { range: '85-89%', min: 85, max: 90, wins: 0, total: 0 },
+        { range: '90%+',   min: 90, max: 101, wins: 0, total: 0 },
+      ];
+      for (const s of signals) {
+        if (s.result !== 'win' && s.result !== 'loss') continue;
+        const c = s.confidence || 0;
+        const b = confBuckets.find((x) => c >= x.min && c < x.max);
+        if (b) { b.total++; if (s.result === 'win') b.wins++; }
+      }
+
+      return { total, wins, losses, winrate, roi, confAvg, byMarket, confBuckets };
+    }
+
+    function renderKpis(m) {
+      $('#kpi-total').textContent = m.total;
+      $('#kpi-winrate').textContent = m.winrate != null ? `${m.winrate}%` : '—';
+      $('#kpi-winloss').textContent = `${m.wins}W / ${m.losses}L`;
+      $('#kpi-roi').textContent = m.roi != null ? `${m.roi > 0 ? '+' : ''}${m.roi}%` : '—';
+      const roiFoot = document.querySelector('#kpi-roi + .saas-kpi-foot');
+      if (roiFoot && m.roi != null) {
+        roiFoot.classList.toggle('good', m.roi >= 0);
+        roiFoot.classList.toggle('bad', m.roi < 0);
+      }
+      $('#kpi-conf').textContent = m.confAvg != null ? `${m.confAvg}%` : '—';
+    }
+
+    function renderMarkets(byMarket) {
+      const entries = Object.entries(byMarket).sort((a, b) => b[1] - a[1]);
+      const total = entries.reduce((s, [, v]) => s + v, 0) || 1;
+      const host = $('#markets-list');
+      if (!entries.length) {
+        host.innerHTML = `<div class="saas-empty">Sem dados.</div>`;
+        return;
+      }
+      host.innerHTML = entries.map(([k, v]) => {
+        const pct = Math.round((v / total) * 100);
+        return `
+          <div class="market-row">
+            <div class="name">${MARKETS[k] || k}</div>
+            <div class="bar"><span style="width:${pct}%"></span></div>
+            <div class="val">${v}</div>
+            <div class="val" style="color: var(--muted);">${pct}%</div>
+            <div></div>
+          </div>`;
+      }).join('');
+    }
+
+    function renderConfChart(buckets) {
+      const cvs = document.getElementById('chart-conf');
+      const ctx = cvs.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const W = cvs.clientWidth, H = cvs.clientHeight || 240;
+      cvs.width = W * dpr; cvs.height = H * dpr;
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, W, H);
+
+      const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+      const muted = css('--muted') || '#7c9486';
+      const text  = css('--text-2') || '#b9d2c4';
+      const brand = css('--brand') || '#14b85e';
+
+      const padL = 36, padB = 28, padT = 16, padR = 8;
+      const cw = W - padL - padR, ch = H - padT - padB;
+      const bw = cw / buckets.length;
+
+      ctx.font = '10px JetBrains Mono';
+      ctx.textAlign = 'center';
+      buckets.forEach((b, i) => {
+        const pct = b.total ? (b.wins / b.total) * 100 : 0;
+        const x = padL + i * bw;
+        const h = (pct / 100) * ch;
+        const grd = ctx.createLinearGradient(0, padT + ch - h, 0, padT + ch);
+        grd.addColorStop(0, brand + 'FF');
+        grd.addColorStop(1, brand + '55');
+        ctx.fillStyle = grd;
+        ctx.fillRect(x + 8, padT + ch - h, bw - 16, h);
+        ctx.fillStyle = text;
+        ctx.fillText(`${Math.round(pct)}%`, x + bw / 2, padT + ch - h - 6);
+        ctx.fillStyle = muted;
+        ctx.fillText(b.range, x + bw / 2, H - 8);
+        ctx.fillStyle = muted;
+        ctx.font = '9px JetBrains Mono';
+        ctx.fillText(`n=${b.total}`, x + bw / 2, H - 18);
+        ctx.font = '10px JetBrains Mono';
+      });
+      // baseline
+      ctx.strokeStyle = muted + '55';
+      ctx.beginPath();
+      ctx.moveTo(padL, padT + ch);
+      ctx.lineTo(W - padR, padT + ch);
+      ctx.stroke();
+    }
+
+    function renderHistory(signals) {
+      const body = $('#history-body');
+      if (!signals.length) {
+        body.innerHTML = `<tr><td colspan="7" class="py-6 text-center" style="color: var(--muted);">Sem sinais no período.</td></tr>`;
+        return;
+      }
+      body.innerHTML = signals.slice(0, 50).map((s) => {
+        const t = s.created_at || s.createdAt;
+        const time = t ? new Date(t).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+        const result = s.result || 'pending';
+        const badge = result === 'win'
+          ? `<span class="badge win">WIN</span>`
+          : result === 'loss'
+          ? `<span class="badge loss">LOSS</span>`
+          : `<span class="badge">aguard.</span>`;
+        const odd = s.payload?.odd || s.odd || s.oddEstimated;
+        const home = s.match?.home || s.home || '';
+        const away = s.match?.away || s.away || '';
+        return `
+          <tr>
+            <td class="py-2 px-4 font-mono text-xs">${time}</td>
+            <td class="py-2 px-4">${home} <span style="color: var(--muted);">×</span> ${away}</td>
+            <td class="py-2 px-4">${MARKETS[s.market] || s.market || '—'}</td>
+            <td class="py-2 px-4 font-semibold">${s.suggestion || s.prediction || '—'}</td>
+            <td class="py-2 px-4 font-mono">${odd ? '~' + odd : '—'}</td>
+            <td class="py-2 px-4 font-mono">${s.confidence ?? 0}%</td>
+            <td class="py-2 px-4">${badge}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    async function refresh() {
+      const hours = Number($('#period')?.value || 0) || 0;
+      const signals = await loadStats(hours);
+      const m = compute(signals);
+      renderKpis(m);
+      renderMarkets(m.byMarket);
+      renderConfChart(m.confBuckets);
+      renderHistory(signals);
+    }
+
+    $('#period').addEventListener('change', refresh);
+    refresh();
+    setInterval(refresh, 120_000);
+  })();
+  </script>
+</body>
+</html>

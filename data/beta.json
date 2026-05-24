@@ -1,0 +1,25 @@
+{
+  "coupons": [
+    {
+      "code": "FE5424",
+      "type": "percent",
+      "value": 10,
+      "plan": "ANY",
+      "maxUses": 100,
+      "used": 0,
+      "expiresAt": "2026-08-22T10:30:11.636Z",
+      "createdAt": "2026-05-24T10:30:11.636Z"
+    }
+  ],
+  "feedback": [
+    {
+      "id": 1,
+      "userId": null,
+      "email": null,
+      "rating": 5,
+      "text": "simplismente  amei",
+      "page": "/index.html",
+      "createdAt": "2026-05-24T12:17:54.880Z"
+    }
+  ]
+}

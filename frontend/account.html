@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="user" />
+  <title>Minha Assinatura · Robotrend IA</title>
+  <meta name="theme-color" content="#14b85e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314b85e'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' fill='%23062815' font-family='Arial' font-weight='900' font-size='34'%3ER%3C/text%3E%3C/svg%3E" />
+
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+
+  <style>
+    .plan-hero {
+      background: linear-gradient(135deg, rgba(20,184,94,.18), rgba(0,217,126,.04));
+      border: 1px solid rgba(20,184,94,.35);
+      border-radius: 22px;
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+    .plan-hero[data-tier="FREE"] {
+      background: linear-gradient(135deg, rgba(124,148,134,.14), rgba(124,148,134,.04));
+      border-color: rgba(124,148,134,.35);
+    }
+    .plan-hero::before {
+      content: "";
+      position: absolute; inset: 0;
+      background: radial-gradient(800px 320px at 100% 0%, rgba(20,184,94,.18), transparent 60%);
+      pointer-events: none;
+    }
+    .plan-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 11px; font-weight: 900; letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 6px 12px; border-radius: 999px;
+      background: rgba(20,184,94,.18); color: #14b85e;
+      border: 1px solid rgba(20,184,94,.4);
+    }
+    .plan-badge.free {
+      background: rgba(124,148,134,.14); color: #9ab1a1;
+      border-color: rgba(124,148,134,.4);
+    }
+    .feat-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+    .feat-row:last-child { border-bottom: none; }
+    .feat-row .ico { font-size: 18px; }
+    .feat-row .label { flex: 1; color: var(--text-2); }
+    .feat-row.on .label { color: var(--text); font-weight: 600; }
+    .feat-row.off .label { opacity: .55; }
+
+    .pay-row {
+      display: grid;
+      grid-template-columns: 1fr 90px 110px 110px;
+      gap: 12px; align-items: center;
+      padding: 12px 4px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .pay-row .status {
+      display: inline-block; padding: 2px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 800; text-transform: uppercase;
+    }
+    .status.paid    { background: rgba(20,184,94,.18); color: #14b85e; }
+    .status.pending { background: rgba(255,181,71,.18); color: #ffb547; }
+    .status.failed  { background: rgba(255,85,102,.18); color: #ff5566; }
+    .status.trialing{ background: rgba(124,148,254,.18); color: #7c94fe; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="account"></div>
+
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">Minha Assinatura</h1>
+          <p class="saas-page-sub">Gerencie seu plano e veja seu histórico de pagamentos</p>
+        </div>
+      </header>
+
+      <div data-promo-banner-mount></div>
+
+      <!-- Plano atual -->
+      <section class="saas-section">
+        <div id="plan-hero" class="plan-hero" data-tier="FREE">
+          <div class="grid md:grid-cols-2 gap-6 items-center">
+            <div>
+              <span id="plan-badge" class="plan-badge free">⚪ Plano Atual</span>
+              <h2 id="plan-title" class="text-3xl font-extrabold mt-4">Carregando…</h2>
+              <p id="plan-desc" class="mt-2 text-sm" style="color: var(--text-2);">Buscando dados da assinatura.</p>
+              <div id="plan-meta" class="mt-4 flex gap-6 text-sm" style="color: var(--text-2);">
+                <div><b style="color: var(--text)">—</b> <span style="opacity:.7">renovação</span></div>
+              </div>
+            </div>
+            <div class="flex md:justify-end">
+              <div id="plan-cta-zone" class="flex flex-col gap-2">
+                <!-- preenchido por JS -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Features do plano -->
+      <section class="saas-section">
+        <div class="grid md:grid-cols-2 gap-6">
+          <div class="saas-card" style="padding: 22px;">
+            <h3 class="text-lg font-extrabold mb-3">Recursos do seu plano</h3>
+            <div id="features-list"></div>
+          </div>
+          <div class="saas-card" style="padding: 22px;">
+            <h3 class="text-lg font-extrabold mb-3">Conta</h3>
+            <div class="text-sm" style="color: var(--text-2);">
+              <div class="feat-row on"><span class="ico">📧</span><span class="label">Email</span><span id="acc-email" style="color: var(--text); font-weight:600">—</span></div>
+              <div class="feat-row on"><span class="ico">👤</span><span class="label">Nome</span><span id="acc-name" style="color: var(--text); font-weight:600">—</span></div>
+              <div class="feat-row on"><span class="ico">🆔</span><span class="label">ID</span><span id="acc-id" style="color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 11px;">—</span></div>
+              <div class="feat-row on"><span class="ico">🎫</span><span class="label">Role</span><span id="acc-role" style="color: var(--text); font-weight:600">—</span></div>
+              <div class="feat-row on"><span class="ico">📅</span><span class="label">Membro desde</span><span id="acc-since" style="color: var(--text); font-weight:600">—</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Histórico de pagamentos -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div>
+            <h3 class="text-lg font-extrabold">Histórico de pagamentos</h3>
+            <p class="text-xs" style="color: var(--muted);">Últimos 10 lançamentos</p>
+          </div>
+        </div>
+        <div class="saas-card" style="padding: 18px 22px;">
+          <div class="pay-row" style="font-weight: 700; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em;">
+            <div>Data / Provedor</div>
+            <div>Plano</div>
+            <div>Valor</div>
+            <div>Status</div>
+          </div>
+          <div id="payments-list">
+            <div class="pay-row" style="opacity:.6"><div colspan="4">carregando…</div></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast-stack" style="position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px;"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/upgrade-celebration.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/payments.js"></script>
+  <script src="/js/promo-banner.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      const $ = (q, p = document) => p.querySelector(q);
+      function escapeHtml(s) { return String(s ?? '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]); }
+      function fmtBRL(n) { return Number(n || 0).toFixed(2).replace('.', ','); }
+      function fmtDate(s) {
+        if (!s) return '—';
+        try { return new Date(s).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }); }
+        catch (_) { return String(s); }
+      }
+
+      const PLAN_DESC = {
+        FREE: 'Acesso ao dashboard com sinais limitados e delay. Faça upgrade pra desbloquear a Melhor Aposta do Momento, sinais em tempo real, análise IA completa e mais.',
+        PREMIUM: 'Acesso completo aos sinais em tempo real, Melhor Aposta do Momento exclusiva, análise IA detalhada e filtros avançados.',
+        VIP: 'Tudo do Premium + suporte prioritário e features experimentais.',
+      };
+
+      const FEAT_LABEL = {
+        live: 'Análise ao vivo',
+        prelive: 'Pré-Live BTTS',
+        over25: 'Over 2.5 automático',
+        telegramAlerts: 'Alertas no Telegram',
+        api: 'Acesso à API REST',
+        historyDays: 'Histórico (dias)',
+      };
+
+      async function loadSubscription() {
+        try {
+          // Fonte canônica: RobotrendUser (já tem cache + polling).
+          // Refresh força hit no /api/me/subscription.
+          const data = await window.RobotrendUser.refresh({ force: true });
+          if (data) render(data);
+        } catch (err) {
+          $('#plan-title').textContent = 'Falha ao carregar';
+          $('#plan-desc').textContent = err.message || 'Erro desconhecido';
+          console.error(err);
+        }
+      }
+
+      function render(d) {
+        const plan = String(d.plan || 'FREE').toUpperCase();
+        const isPrem = !!d.isPremium;
+
+        const hero = $('#plan-hero');
+        hero.setAttribute('data-tier', plan);
+
+        const badge = $('#plan-badge');
+        badge.className = 'plan-badge' + (isPrem ? '' : ' free');
+        badge.innerHTML = isPrem ? '💎 Plano Premium' : '⚪ Plano Free';
+
+        $('#plan-title').textContent = (d.planLabel || plan);
+        $('#plan-desc').textContent = PLAN_DESC[plan] || '';
+
+        const meta = $('#plan-meta');
+        const sub = d.subscription;
+        if (sub && sub.status === 'active') {
+          meta.innerHTML = `
+            <div><b style="color: var(--text)">${escapeHtml(sub.provider)}</b> <span style="opacity:.7">· provedor</span></div>
+            <div><b style="color: var(--text)">${fmtDate(sub.startedAt)}</b> <span style="opacity:.7">· início</span></div>
+          `;
+        } else if (plan === 'FREE') {
+          meta.innerHTML = `<div><span style="opacity:.7">Plano gratuito · sem cobrança recorrente</span></div>`;
+        } else {
+          meta.innerHTML = `<div><span style="opacity:.7">Sem assinatura ativa registrada</span></div>`;
+        }
+
+        // CTA
+        const ctaZone = $('#plan-cta-zone');
+        if (isPrem) {
+          ctaZone.innerHTML = `
+            <a href="/" class="btn-primary justify-center" style="text-align:center; padding: 12px 24px;">Ir para o dashboard →</a>
+            <span class="text-xs" style="color: var(--muted); text-align: center;">Renovação automática mensal</span>
+          `;
+        } else {
+          ctaZone.innerHTML = `
+            <div class="promo-pill" style="margin-bottom:8px;">
+              <span class="promo-pill-badge">OFERTA</span>
+              <span class="promo-pill-text">De <s>R$ ${fmtBRL(499.99)}</s> por <b>R$ ${fmtBRL(199.99)}</b></span>
+            </div>
+            <button type="button" id="cta-upgrade" class="btn-primary justify-center" style="padding: 14px 28px; font-weight: 800;">
+              🚀 Virar Premium — R$ ${fmtBRL(199.99)} (promo)
+            </button>
+            <span class="text-xs" style="color: var(--muted); text-align: center;">PIX ou cartão · liberação imediata</span>
+          `;
+          $('#cta-upgrade').addEventListener('click', () => {
+            window.virarPremium({ button: $('#cta-upgrade') });
+          });
+        }
+
+        // Conta
+        const u = d.user || {};
+        $('#acc-email').textContent = u.email || '—';
+        $('#acc-name').textContent = u.name || '—';
+        $('#acc-id').textContent = u.id || '—';
+        $('#acc-role').textContent = (u.role || 'user').toUpperCase();
+        $('#acc-since').textContent = fmtDate(u.createdAt);
+
+        // Features
+        const featsEl = $('#features-list');
+        const f = d.features || {};
+        const limit = d.dailySignalsLimit;
+        const rows = [];
+        rows.push(featRow('live', '📡', !!f.live));
+        rows.push(featRow('prelive', '🎯', !!f.prelive));
+        rows.push(featRow('over25', '⚽', !!f.over25));
+        rows.push(featRow('telegramAlerts', '🔔', !!f.telegramAlerts));
+        rows.push(featRow('api', '🔌', !!f.api));
+        rows.push(`<div class="feat-row on"><span class="ico">📊</span><span class="label">Sinais por dia</span><span style="color: var(--text); font-weight:600">${limit === 999 ? 'Ilimitados' : limit}</span></div>`);
+        rows.push(`<div class="feat-row on"><span class="ico">📅</span><span class="label">Histórico</span><span style="color: var(--text); font-weight:600">${f.historyDays || 0} dias</span></div>`);
+        featsEl.innerHTML = rows.join('');
+
+        // Histórico de pagamentos
+        const list = $('#payments-list');
+        const history = d.paymentHistory || [];
+        if (!history.length) {
+          list.innerHTML = `<div class="pay-row" style="opacity:.6"><div style="grid-column: 1 / -1; text-align: center; padding: 16px;">Você ainda não tem pagamentos registrados.</div></div>`;
+        } else {
+          list.innerHTML = history.map(p => `
+            <div class="pay-row">
+              <div>
+                <div style="font-weight:600">${fmtDate(p.createdAt)}</div>
+                <div style="font-size:11px;color:var(--muted);text-transform:capitalize">${escapeHtml(p.provider || 'manual')}</div>
+              </div>
+              <div style="font-weight:700">${escapeHtml(p.plan || '—')}</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-weight:700">R$ ${fmtBRL(p.amount)}</div>
+              <div><span class="status ${escapeHtml(p.status || 'pending')}">${escapeHtml((p.status || 'pending').toUpperCase())}</span></div>
+            </div>
+          `).join('');
+        }
+      }
+
+      function featRow(key, ico, on) {
+        const label = FEAT_LABEL[key] || key;
+        const klass = on ? 'on' : 'off';
+        const ind = on ? '<span style="color:#14b85e;font-weight:800">✓</span>' : '<span style="color:#7c9486;font-weight:800">✗</span>';
+        return `<div class="feat-row ${klass}"><span class="ico">${ico}</span><span class="label">${label}</span>${ind}</div>`;
+      }
+
+      function pushToast(title, body, accent = 'success') {
+        const stack = $('#toast-stack'); if (!stack) return;
+        const el = document.createElement('div');
+        el.className = 'toast ' + accent;
+        el.innerHTML = `<div class="toast-title">${title}</div><div class="toast-body">${body || ''}</div>`;
+        stack.appendChild(el);
+        setTimeout(() => { el.style.opacity = 0; setTimeout(() => el.remove(), 400); }, 8000);
+      }
+
+      // ====== ATUALIZAÇÃO EM TEMPO REAL (3 fontes redundantes) ======
+      //   1. Socket: 'user:upgraded' (instantâneo, vem do webhook)
+      //   2. RobotrendUser polling (a cada 10s se houver upgrade pendente)
+      //   3. RobotrendUser onChange (qualquer mudança no plano refletida na UI)
+      try {
+        const socket = io({
+          transports: ['websocket', 'polling'],
+          auth: { token: window.RobotrendAuth?.getToken() || '' },
+        });
+        socket.on('user:upgraded', async (payload) => {
+          pushToast('🎉 Plano atualizado!', `Plano <b>${payload?.plan || 'PREMIUM'}</b> ativo. Atualizando…`);
+          await window.RobotrendUser?.refresh?.({ force: true });
+        });
+      } catch (_) {}
+
+      // Re-render automático quando RobotrendUser detectar mudança
+      // (toast/modal celebratório vem do upgrade-celebration.js globalmente)
+      if (window.RobotrendUser?.onChange) {
+        window.RobotrendUser.onChange((u) => {
+          if (u) render(u);
+        });
+      }
+
+      // Boot
+      if (window.RobotrendGuard?.ready) {
+        window.RobotrendGuard.ready.then(() => loadSubscription());
+      } else {
+        loadSubscription();
+      }
+    })();
+  </script>
+</body>
+</html>

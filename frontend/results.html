@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="pt-br" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robotrend-guard" content="user" />
+<title>Resultados · Robotrend</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><text y=%2250%22 font-size=%2256%22>💰</text></svg>" />
+<link rel="stylesheet" href="/output.css">
+<link rel="stylesheet" href="/style.css" />
+<style>
+  .heatmap { display: grid; grid-template-columns: 50px repeat(24, 1fr); gap: 2px; font-size: 11px; }
+  .heatmap .cell { padding: 4px; text-align: center; border-radius: 3px; background: rgba(20,184,94,0.05); color: var(--muted); }
+  .heatmap .row-label { padding: 4px 0; color: var(--muted); font-weight: 600; }
+  .heatmap .col-label { padding: 4px 0; text-align: center; color: var(--muted); font-size: 10px; }
+  .chart-canvas { width: 100%; height: 320px; }
+</style>
+</head>
+<body class="font-display antialiased">
+<div class="bg-aurora"></div>
+<div class="bg-grid"></div>
+
+<div class="saas-shell">
+  <div id="saas-nav" data-active="results"></div>
+  <main class="saas-content">
+    <header class="saas-page-header">
+      <div>
+        <h1 class="saas-page-title">Resultados</h1>
+        <p class="saas-page-sub">Lucro acumulado · ROI · streaks · heatmap por horário</p>
+      </div>
+      <div class="saas-page-actions">
+        <button id="btn-refresh" class="btn-primary">↻ Atualizar</button>
+      </div>
+    </header>
+
+    <section class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+      <div class="stat-card"><div class="stat-label">Sinais</div><div class="stat-value" id="k-bets">—</div></div>
+      <div class="stat-card"><div class="stat-label">Wins / Losses</div><div class="stat-value" id="k-wl">—</div></div>
+      <div class="stat-card"><div class="stat-label">Winrate</div><div class="stat-value" id="k-winrate">—</div></div>
+      <div class="stat-card"><div class="stat-label">Lucro (un.)</div><div class="stat-value" id="k-pnl">—</div></div>
+      <div class="stat-card"><div class="stat-label">ROI Total</div><div class="stat-value" id="k-roi">—</div></div>
+    </section>
+
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="card">
+        <h3 class="text-lg font-semibold mb-2">🔥 Streak Atual</h3>
+        <div id="cur-streak" class="text-2xl font-bold">—</div>
+      </div>
+      <div class="card">
+        <h3 class="text-lg font-semibold mb-2">🏆 Melhor Streak</h3>
+        <div id="best-streak" class="text-2xl font-bold">—</div>
+      </div>
+      <div class="card">
+        <h3 class="text-lg font-semibold mb-2">📅 ROI Hoje / Semana / Mês</h3>
+        <div id="period-roi" class="text-sm">—</div>
+      </div>
+    </section>
+
+    <section class="card mb-6">
+      <h3 class="text-lg font-semibold mb-3">📈 Lucro Acumulado</h3>
+      <canvas id="chart-cumulative" class="chart-canvas"></canvas>
+    </section>
+
+    <section class="card mb-6">
+      <h3 class="text-lg font-semibold mb-3">🔥 Heatmap (Dia × Hora)</h3>
+      <div id="heatmap" class="heatmap"></div>
+    </section>
+  </main>
+</div>
+
+<script src="/js/auth.js"></script>
+<script src="/js/auth-guard.js"></script>
+<script src="/js/user-state.js"></script>
+<script src="/js/upgrade-celebration.js"></script>
+<script src="/js/pwa.js"></script>
+<script src="/js/saas-nav.js"></script>
+<script>
+(async function () {
+  await RobotrendAuth.ensureAuth();
+
+  function fmtPnl(v) { return (v >= 0 ? '+' : '') + Number(v).toFixed(2); }
+  function color(v) { return v > 0 ? '#22c55e' : v < 0 ? '#ef4444' : 'var(--muted)'; }
+
+  function drawCumulative(canvas, series) {
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = canvas.clientWidth;
+    const h = canvas.height = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    if (!series.length) {
+      ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font='14px sans-serif';
+      ctx.fillText('Sem sinais resolvidos ainda', w/2 - 100, h/2);
+      return;
+    }
+    const min = Math.min(0, ...series.map(p => p.pnl));
+    const max = Math.max(0, ...series.map(p => p.pnl));
+    const pad = 30;
+    const xs = i => pad + (i / Math.max(1, series.length - 1)) * (w - pad * 2);
+    const ys = v => h - pad - ((v - min) / Math.max(1, (max - min))) * (h - pad * 2);
+
+    // zero line
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad, ys(0)); ctx.lineTo(w - pad, ys(0)); ctx.stroke();
+
+    // gradient under line
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, 'rgba(20,184,94,0.45)');
+    grad.addColorStop(1, 'rgba(20,184,94,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(xs(0), ys(0));
+    series.forEach((p, i) => ctx.lineTo(xs(i), ys(p.pnl)));
+    ctx.lineTo(xs(series.length - 1), ys(0));
+    ctx.closePath(); ctx.fill();
+
+    // line
+    ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    series.forEach((p, i) => { const x = xs(i), y = ys(p.pnl); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+    ctx.stroke();
+  }
+
+  function renderHeatmap(matrix) {
+    const el = document.getElementById('heatmap');
+    const days = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+    const max = Math.max(1, ...matrix.flat());
+    const cells = [];
+    cells.push('<div></div>');
+    for (let h = 0; h < 24; h++) cells.push(`<div class="col-label">${h}h</div>`);
+    for (let d = 0; d < 7; d++) {
+      cells.push(`<div class="row-label">${days[d]}</div>`);
+      for (let h = 0; h < 24; h++) {
+        const v = matrix[d][h];
+        const alpha = v ? Math.min(0.85, 0.1 + (v / max) * 0.75) : 0.04;
+        cells.push(`<div class="cell" style="background: rgba(20,184,94,${alpha}); color: ${v ? '#fff' : 'var(--muted)'};">${v || ''}</div>`);
+      }
+    }
+    el.innerHTML = cells.join('');
+  }
+
+  async function load() {
+    const r = await RobotrendAuth.api('/api/results');
+    const d = await r.json();
+    document.getElementById('k-bets').textContent    = d.bets;
+    document.getElementById('k-wl').textContent      = `${d.wins} / ${d.losses}`;
+    document.getElementById('k-winrate').textContent = d.winrate + '%';
+    document.getElementById('k-pnl').textContent     = fmtPnl(d.pnl);
+    document.getElementById('k-pnl').style.color     = color(d.pnl);
+    document.getElementById('k-roi').textContent     = d.roi + '%';
+    document.getElementById('k-roi').style.color     = color(d.roi);
+
+    const cs = d.currentStreak;
+    document.getElementById('cur-streak').innerHTML =
+      `<span style="color: ${cs.type === 'win' ? '#22c55e' : '#ef4444'}">${cs.count}× ${cs.type === 'win' ? 'WIN' : cs.type === 'loss' ? 'LOSS' : '—'}</span>`;
+    const bs = d.bestStreak;
+    document.getElementById('best-streak').innerHTML =
+      `<span style="color: ${bs.type === 'win' ? '#22c55e' : '#ef4444'}">${bs.count}× ${bs.type === 'win' ? 'WIN' : bs.type === 'loss' ? 'LOSS' : '—'}</span>`;
+
+    const today = new Date().toISOString().slice(0,10);
+    const week  = new Date().toISOString().slice(0,4) + '-W' + String(Math.ceil(((new Date() - new Date(new Date().getFullYear(),0,1)) / 86400000 + new Date(new Date().getFullYear(),0,1).getDay()+1)/7)).padStart(2,'0');
+    const month = new Date().toISOString().slice(0,7);
+    const dToday = d.daily[today]   || { pnl: 0, roi: 0, bets: 0 };
+    const dWeek  = d.weekly[week]   || { pnl: 0, roi: 0, bets: 0 };
+    const dMonth = d.monthly[month] || { pnl: 0, roi: 0, bets: 0 };
+    document.getElementById('period-roi').innerHTML = `
+      <div class="flex justify-between py-1"><span>Hoje</span><span style="color:${color(dToday.pnl)}">${fmtPnl(dToday.pnl)} (${dToday.roi}% · ${dToday.bets})</span></div>
+      <div class="flex justify-between py-1"><span>Semana</span><span style="color:${color(dWeek.pnl)}">${fmtPnl(dWeek.pnl)} (${dWeek.roi}% · ${dWeek.bets})</span></div>
+      <div class="flex justify-between py-1"><span>Mês</span><span style="color:${color(dMonth.pnl)}">${fmtPnl(dMonth.pnl)} (${dMonth.roi}% · ${dMonth.bets})</span></div>
+    `;
+
+    drawCumulative(document.getElementById('chart-cumulative'), d.cumulative || []);
+    renderHeatmap(d.heatmap);
+  }
+
+  document.getElementById('btn-refresh').onclick = load;
+  window.addEventListener('resize', () => load());
+  load();
+  setInterval(load, 60_000);
+})();
+</script>
+</body>
+</html>

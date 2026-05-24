@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <title>Robotrend IA — Admin Football Ops</title>
+  <meta name="theme-color" content="#14b85e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314b85e'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' fill='%23062815' font-family='Arial' font-weight='900' font-size='34'%3ER%3C/text%3E%3C/svg%3E" />
+
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+
+  <style>
+    .grid-ops { display: grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
+    .card { background: var(--card-bg); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+    .card h2 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .14em; margin-bottom: 12px; }
+    .col-3 { grid-column: span 3; }
+    .col-4 { grid-column: span 4; }
+    .col-6 { grid-column: span 6; }
+    .col-8 { grid-column: span 8; }
+    .col-12 { grid-column: span 12; }
+    @media (max-width: 1100px) { .col-3, .col-4, .col-6, .col-8 { grid-column: span 12; } }
+
+    .big { font-size: 28px; font-weight: 800; font-family: 'JetBrains Mono', monospace; color: var(--text); }
+    .lbl-mini { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; }
+    .pos { color: #22c55e; } .neg { color: #ef4444; } .warn { color: #facc15; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+      background: var(--surface-2); color: var(--text-2);
+    }
+    .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+    .pill.ok    { background: rgba(34,197,94,.15);   color: #22c55e; } .pill.ok .dot    { background:#22c55e; box-shadow: 0 0 6px #22c55e; }
+    .pill.warn  { background: rgba(250,204,21,.18);  color: #facc15; } .pill.warn .dot  { background:#facc15; }
+    .pill.err   { background: rgba(239,68,68,.18);   color: #ef4444; } .pill.err .dot   { background:#ef4444; }
+    .pill.info  { background: rgba(6,182,212,.15);   color: #06b6d4; } .pill.info .dot  { background:#06b6d4; }
+
+    table.met { width: 100%; font-size: 12px; }
+    table.met th, table.met td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+    table.met th { color: var(--muted); font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .12em; }
+    table.met td { font-family: 'JetBrains Mono', monospace; }
+    table.met td:last-child, table.met th:last-child { text-align: right; }
+
+    .bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+    .bar > .fill { height: 100%; background: linear-gradient(90deg, #22c55e, #facc15, #ef4444); }
+
+    .btn-danger { background: rgba(239,68,68,.15); color: #ef4444; border: 1px solid rgba(239,68,68,.4); }
+    .btn-warn   { background: rgba(250,204,21,.15); color: #facc15; border: 1px solid rgba(250,204,21,.4); }
+    .btn-ok     { background: rgba(34,197,94,.15);  color: #22c55e; border: 1px solid rgba(34,197,94,.4); }
+    .btn-row    { display:flex; flex-wrap: wrap; gap: 6px; }
+    .btn-row button { padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 700; cursor: pointer; transition: opacity .15s; }
+    .btn-row button:hover { opacity: 0.85; }
+
+    .stream { max-height: 220px; overflow: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+    .stream .row { padding: 4px 0; border-bottom: 1px dashed var(--line); display: flex; gap: 8px; }
+    .stream .row .ts { color: var(--muted); }
+    .stream .row .ev { color: var(--text); font-weight: 600; }
+
+    .sparkline { width: 100%; height: 40px; }
+    .miniline { display:flex; justify-content:space-between; font-size:10px; color: var(--muted); font-family:'JetBrains Mono',monospace; margin-top:2px; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="admin-football"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">Sistema · Football Ops</h1>
+          <p class="saas-page-sub">Diagnóstico técnico · poller · cache · circuit breaker</p>
+        </div>
+        <div class="saas-page-actions">
+          <span class="saas-status-pill" id="auto-pill">auto-refresh 10s</span>
+          <button class="btn-ghost" id="btn-pause">⏸ Pausar</button>
+          <button class="btn-ghost" id="btn-refresh">↻ Atualizar</button>
+          <span class="text-xs" id="last-update" style="color: var(--muted);">—</span>
+        </div>
+      </header>
+
+      <section class="grid-ops">
+        <!-- KPIs -->
+        <div class="card col-3">
+          <div class="lbl-mini">Poller</div>
+          <div class="big" id="kpi-poller-state">—</div>
+          <div class="lbl-mini" id="kpi-poller-sub">interval —</div>
+        </div>
+        <div class="card col-3">
+          <div class="lbl-mini">Circuit Breaker</div>
+          <div class="big" id="kpi-cb">—</div>
+          <div class="lbl-mini" id="kpi-cb-sub">—</div>
+        </div>
+        <div class="card col-3">
+          <div class="lbl-mini">Quota API-Sports</div>
+          <div class="big" id="kpi-quota">—</div>
+          <div class="lbl-mini" id="kpi-quota-sub">—</div>
+        </div>
+        <div class="card col-3">
+          <div class="lbl-mini">Sockets ativos</div>
+          <div class="big" id="kpi-sockets">—</div>
+          <div class="lbl-mini" id="kpi-sockets-sub">—</div>
+        </div>
+
+        <!-- Cache + memória -->
+        <div class="card col-4">
+          <h2>Cache Store</h2>
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px">
+            <div><div class="lbl-mini">Backend</div><div class="big" id="cache-backend">—</div></div>
+            <div style="text-align:right"><div class="lbl-mini">Hit ratio</div><div class="big" id="cache-ratio">—</div></div>
+          </div>
+          <div class="bar"><div class="fill" id="cache-bar" style="width:0%"></div></div>
+          <table class="met" style="margin-top:10px">
+            <tr><td>Hits</td><td id="cache-hits">0</td></tr>
+            <tr><td>Misses</td><td id="cache-misses">0</td></tr>
+            <tr><td>Size</td><td id="cache-size">—</td></tr>
+            <tr><td>Latência média (ms)</td><td id="cache-lat">—</td></tr>
+          </table>
+        </div>
+
+        <!-- API-Sports latência -->
+        <div class="card col-4">
+          <h2>API-Sports Latência</h2>
+          <table class="met">
+            <tr><th>endpoint</th><th>count</th><th>avg</th><th>p95</th></tr>
+            <tbody id="lat-rows"><tr><td colspan="4" style="color:var(--muted)">aguardando…</td></tr></tbody>
+          </table>
+        </div>
+
+        <!-- Erros / retries -->
+        <div class="card col-4">
+          <h2>Erros & Retries</h2>
+          <table class="met">
+            <tr><td>Total chamadas</td><td id="err-calls">0</td></tr>
+            <tr><td>4xx</td><td id="err-4xx">0</td></tr>
+            <tr><td>5xx</td><td id="err-5xx">0</td></tr>
+            <tr><td>429 (rate limit)</td><td id="err-429">0</td></tr>
+            <tr><td>Timeouts</td><td id="err-timeout">0</td></tr>
+            <tr><td>Retries</td><td id="err-retries">0</td></tr>
+            <tr><td>Stale-cache servido</td><td id="err-stale">0</td></tr>
+            <tr><td>Dedup in-flight</td><td id="err-dedup">0</td></tr>
+          </table>
+        </div>
+
+        <!-- Throughput -->
+        <div class="card col-6">
+          <h2>Throughput de Eventos (último minuto)</h2>
+          <div style="display:flex;justify-content:space-between;align-items:flex-end">
+            <div><div class="lbl-mini">Eventos publicados</div><div class="big" id="thr-events">0/s</div></div>
+            <div><div class="lbl-mini">Emits socket.io</div><div class="big" id="thr-emits">0/s</div></div>
+            <div><div class="lbl-mini">Calls API</div><div class="big" id="thr-api">0/s</div></div>
+            <div><div class="lbl-mini">Tick poller (avg)</div><div class="big" id="thr-tick">—</div></div>
+          </div>
+        </div>
+
+        <!-- Sockets / rooms -->
+        <div class="card col-6">
+          <h2>Sockets & Rooms</h2>
+          <table class="met">
+            <tr><td>Conectados agora</td><td id="sock-now">0</td></tr>
+            <tr><td>Total opens</td><td id="sock-open">0</td></tr>
+            <tr><td>Total closes</td><td id="sock-close">0</td></tr>
+            <tr><td>Subscribes</td><td id="sock-sub">0</td></tr>
+            <tr><td>Emits dropados (throttle)</td><td id="sock-drop">0</td></tr>
+          </table>
+          <h2 style="margin-top:12px">Rooms ativas</h2>
+          <div id="rooms-list" style="display:flex;flex-wrap:wrap;gap:4px;font-size:11px"><span style="color:var(--muted)">—</span></div>
+        </div>
+
+        <!-- Test hooks -->
+        <div class="card col-6">
+          <h2>Test Hooks (Validation)</h2>
+          <p style="font-size:11px;color:var(--muted);margin-bottom:10px">
+            Use para validar circuit breaker, retry e stale-cache em produção controlada.
+            <strong>Restrito em prod</strong> (precisa ALLOW_TEST_HOOKS=true).
+          </p>
+          <div class="btn-row">
+            <button class="btn-ok" data-mode="">▶ NORMAL</button>
+            <button class="btn-warn" data-mode="timeout">⏱ Forçar TIMEOUT</button>
+            <button class="btn-warn" data-mode="5xx">💥 Forçar 5xx</button>
+            <button class="btn-warn" data-mode="429">🚫 Forçar 429</button>
+            <button class="btn-danger" data-mode="circuit-open">🔴 Abrir CIRCUITO</button>
+          </div>
+          <div style="margin-top:12px;padding:10px;background:var(--surface);border-radius:8px;font-size:11px;font-family:'JetBrains Mono',monospace" id="force-state">
+            mode atual: NORMAL
+          </div>
+        </div>
+
+        <!-- Process -->
+        <div class="card col-6">
+          <h2>Processo</h2>
+          <table class="met">
+            <tr><td>Uptime</td><td id="proc-uptime">—</td></tr>
+            <tr><td>RSS</td><td id="proc-rss">—</td></tr>
+            <tr><td>Heap usado</td><td id="proc-heap">—</td></tr>
+            <tr><td>Heap total</td><td id="proc-heap-total">—</td></tr>
+            <tr><td>External</td><td id="proc-external">—</td></tr>
+            <tr><td>Node</td><td id="proc-node">—</td></tr>
+            <tr><td>Plataforma</td><td id="proc-plat">—</td></tr>
+          </table>
+        </div>
+
+        <!-- Enricher -->
+        <div class="card col-12">
+          <h2>Fixture Enricher</h2>
+          <p style="font-size:11px;color:var(--muted);margin-bottom:10px">
+            Faz enrichment (statistics + events) sob demanda. Subscription-driven via room
+            <code>fixture:&lt;id&gt;</code> no Socket.io. Cooldown configurado via <code>ENRICH_REFRESH_MS</code>.
+          </p>
+          <div style="padding:10px;background:var(--surface);border-radius:8px;font-size:11px;font-family:'JetBrains Mono',monospace;line-height:1.6" id="enricher-state">
+            aguardando dados…
+          </div>
+        </div>
+
+        <!-- Event stream (live) -->
+        <div class="card col-12">
+          <h2>Event Stream (live)</h2>
+          <div class="stream" id="event-stream"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/upgrade-celebration.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/admin-football.js"></script>
+</body>
+</html>

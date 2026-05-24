@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="user" />
+  <title>Robotrend IA — Sinais ao Vivo</title>
+  <meta name="theme-color" content="#14b85e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314b85e'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' fill='%23062815' font-family='Arial' font-weight='900' font-size='34'%3ER%3C/text%3E%3C/svg%3E" />
+
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+
+  <style>
+    .signal-filters {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px;
+    }
+    .signal-filter {
+      padding: 7px 14px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text-2);
+      font-size: 12px; font-weight: 700;
+      cursor: pointer;
+      border: 1px solid var(--line);
+      transition: all .15s ease;
+    }
+    .signal-filter:hover { background: var(--elevated); color: var(--text); }
+    .signal-filter.active {
+      background: var(--brand-soft);
+      border-color: var(--brand);
+      color: var(--brand);
+    }
+    .signal-card {
+      background: var(--card-bg);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      border-left-width: 3px;
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .signal-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
+    .signal-card .pred {
+      font-size: 22px; font-weight: 800;
+      letter-spacing: -0.01em; margin-top: 6px;
+    }
+    .signal-metric-row {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 10px; margin-top: 14px; padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+    .signal-metric { text-align: center; }
+    .signal-metric .l {
+      font-size: 10px; text-transform: uppercase; letter-spacing: .12em;
+      color: var(--muted); margin-bottom: 4px;
+    }
+    .signal-metric .v {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 800; font-size: 16px; color: var(--text);
+    }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="signals"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">Sinais ao vivo</h1>
+          <p class="saas-page-sub">Oportunidades detectadas pela IA em tempo real</p>
+        </div>
+        <div class="saas-page-actions">
+          <span class="saas-status-pill" id="ws-status">conectando</span>
+        </div>
+      </header>
+
+      <!-- KPIs do dia -->
+      <section class="saas-kpis">
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Sinais nas últimas 2h</div>
+          <div class="saas-kpi-value" id="kpi-recent">—</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Confiança média</div>
+          <div class="saas-kpi-value" id="kpi-conf-avg">—</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Odd média estimada</div>
+          <div class="saas-kpi-value" id="kpi-odd-avg">—</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Mercado mais ativo</div>
+          <div class="saas-kpi-value" id="kpi-top-market">—</div>
+        </div>
+      </section>
+
+      <!-- Filtros por mercado -->
+      <div class="signal-filters">
+        <button class="signal-filter active" data-market="">Todos</button>
+        <button class="signal-filter" data-market="corners">Escanteios</button>
+        <button class="signal-filter" data-market="btts">Ambas marcam</button>
+        <button class="signal-filter" data-market="win">Vitória</button>
+        <button class="signal-filter" data-market="goals">Gols</button>
+      </div>
+
+      <!-- Grid de sinais -->
+      <section class="saas-section">
+        <div id="signals-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div class="saas-card saas-empty">Carregando sinais…</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast-stack" class="fixed top-4 right-4 z-50 space-y-3 w-[380px] max-w-[92vw]"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/upgrade-celebration.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    const $ = (s) => document.querySelector(s);
+    const $$ = (s) => document.querySelectorAll(s);
+
+    const MARKETS = {
+      corners: { label: 'Escanteios',   accent: '#facc15' },
+      btts:    { label: 'Ambas marcam', accent: '#06b6d4' },
+      win:     { label: 'Vitória',      accent: '#14b85e' },
+      goals:   { label: 'Gols',         accent: '#a855f7' },
+    };
+
+    let signals = [];
+    let filter = '';
+
+    function setWS(state) {
+      const pill = $('#ws-status'); if (!pill) return;
+      pill.classList.remove('ok','warn','err');
+      pill.classList.add(state === 'online' ? 'ok' : state === 'pending' ? 'warn' : 'err');
+      pill.textContent = state === 'online' ? 'ao vivo' : state === 'pending' ? 'reconectando' : 'offline';
+    }
+
+    function fmtTime(t) {
+      return t ? new Date(t).toLocaleTimeString('pt-BR') : '';
+    }
+
+    function card(s) {
+      const meta = MARKETS[s.market] || { label: s.market || '—', accent: '#14b85e' };
+      const prob = s.probability ?? s.confidence ?? 0;
+      const conf = s.confidence ?? 0;
+      const odd = s.oddEstimated ?? s.odd ?? null;
+      const matchTxt = s.match
+        ? `${s.match.home} × ${s.match.away}`
+        : `${s.home || ''} × ${s.away || ''}`;
+      const league = s.match?.league || s.league || '';
+      const minute = s.match?.minute ?? s.minute ?? 0;
+      return `
+        <article class="signal-card" style="border-left-color:${meta.accent};">
+          <div class="flex items-center justify-between">
+            <span style="font-size:11px; padding:3px 10px; border-radius:999px; background:${meta.accent}22; color:${meta.accent}; font-weight:800; letter-spacing:.06em;">
+              ${meta.label.toUpperCase()}
+            </span>
+            <span class="text-[11px] font-mono" style="color: var(--muted);">${fmtTime(s.createdAt)}</span>
+          </div>
+          <div class="mt-3 text-sm font-bold">${matchTxt}</div>
+          <div class="text-[11px]" style="color: var(--muted);">${league} · ${minute}'</div>
+          <div class="pred" style="color:${meta.accent};">${s.prediction || s.suggestion || '—'}</div>
+          ${s.justification ? `<div class="text-[12px] mt-2" style="color: var(--muted); line-height:1.5;">${s.justification}</div>` : ''}
+          <div class="signal-metric-row">
+            <div class="signal-metric"><div class="l">Prob</div><div class="v">${prob}%</div></div>
+            <div class="signal-metric"><div class="l">Confiança</div><div class="v">${conf}%</div></div>
+            <div class="signal-metric"><div class="l">Odd ~</div><div class="v">${odd ?? '—'}</div></div>
+          </div>
+        </article>`;
+    }
+
+    function render() {
+      const grid = $('#signals-grid');
+      const filtered = filter ? signals.filter((s) => s.market === filter) : signals;
+      if (!filtered.length) {
+        grid.innerHTML = `<div class="col-span-full saas-card saas-empty">Sem sinais para esse mercado ainda.</div>`;
+      } else {
+        grid.innerHTML = filtered.map(card).join('');
+      }
+      renderKpis(filtered);
+    }
+
+    function renderKpis(arr) {
+      $('#kpi-recent').textContent = arr.length;
+      if (arr.length) {
+        const avgConf = Math.round(arr.reduce((s, x) => s + (x.confidence || 0), 0) / arr.length);
+        const odds = arr.map((x) => x.oddEstimated || x.odd).filter((v) => Number.isFinite(+v));
+        const avgOdd = odds.length ? (odds.reduce((s, v) => s + +v, 0) / odds.length).toFixed(2) : '—';
+        $('#kpi-conf-avg').textContent = `${avgConf}%`;
+        $('#kpi-odd-avg').textContent = avgOdd;
+        const tally = {};
+        for (const s of arr) tally[s.market] = (tally[s.market] || 0) + 1;
+        const top = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+        $('#kpi-top-market').textContent = top ? (MARKETS[top[0]]?.label || top[0]) : '—';
+      } else {
+        $('#kpi-conf-avg').textContent = '—';
+        $('#kpi-odd-avg').textContent = '—';
+        $('#kpi-top-market').textContent = '—';
+      }
+    }
+
+    async function load() {
+      try {
+        const r = await fetch('/api/football/bet-signals?limit=50&minConfidence=70');
+        if (!r.ok) return;
+        const data = await r.json();
+        signals = data.signals || [];
+        render();
+      } catch (_) {}
+    }
+
+    $$('.signal-filter').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        $$('.signal-filter').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        filter = btn.dataset.market || '';
+        render();
+      });
+    });
+
+    setWS('pending');
+    load();
+    setInterval(load, 60_000);
+
+    const socket = io({
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      auth: { token: window.RobotrendAuth?.getToken() || '' },
+    });
+    socket.on('connect', () => setWS('online'));
+    socket.on('disconnect', () => setWS('err'));
+    socket.io.on('reconnect_attempt', () => setWS('pending'));
+    socket.on('signal:new', (signal) => {
+      if (signal?.type !== 'bet:opportunity') return;
+      signals.unshift(signal);
+      if (signals.length > 200) signals.length = 200;
+      render();
+    });
+
+    // Destrava UI quando upgrade for detectado em qualquer fonte
+    // (socket, polling, outra aba via BroadcastChannel)
+    window.addEventListener('robotrend:upgrade-detected', () => {
+      load(); // refaz fetch para pegar sinais sem stripping de premium
+    });
+    if (window.RobotrendUser?.onChange) {
+      window.RobotrendUser.onChange((u, prev) => {
+        if (u?.isPremium !== prev?.isPremium) render();
+      });
+    }
+  })();
+  </script>
+</body>
+</html>

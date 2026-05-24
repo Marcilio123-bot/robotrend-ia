@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Planos · Robotrend IA</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="font-display antialiased min-h-screen px-4 py-8">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="max-w-6xl mx-auto relative">
+    <header class="flex items-center justify-between mb-10">
+      <a href="/" class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl grid place-items-center font-extrabold" style="background: linear-gradient(135deg,#00d97e,#14b85e); color:#03110b; box-shadow: 0 0 24px var(--brand-glow);">R</div>
+        <div>
+          <div class="font-extrabold tracking-tight">Robotrend <span style="color: var(--brand);">IA</span></div>
+          <div class="text-[11px] uppercase tracking-widest" style="color: var(--muted);">Plataforma de Sinais</div>
+        </div>
+      </a>
+      <div class="flex items-center gap-2">
+        <a href="/" class="btn-ghost">← Painel</a>
+        <a href="/login.html" class="btn-primary">Entrar</a>
+      </div>
+    </header>
+
+    <div class="text-center mb-6">
+      <div class="text-xs font-extrabold uppercase tracking-[0.35em]" style="color: var(--brand);">Planos & Preços</div>
+      <h1 class="text-4xl lg:text-5xl font-extrabold tracking-tight mt-2">Escolha seu plano</h1>
+      <p class="mt-2 text-sm" style="color: var(--muted);">Cancele quando quiser. Sem fidelidade.</p>
+      <div id="upgrade-notice" class="hidden mt-4 inline-block px-4 py-2 rounded-lg text-sm" style="background: rgba(255, 181, 71, .12); color: var(--warn); border: 1px solid rgba(255, 181, 71, .3);">
+        ⚠️ Esta funcionalidade é exclusiva para assinantes Premium. Atualize seu plano abaixo.
+      </div>
+    </div>
+
+    <div data-promo-banner-mount></div>
+    <script>
+      (function () {
+        const u = new URLSearchParams(location.search).get('upgrade');
+        if (u) document.getElementById('upgrade-notice')?.classList.remove('hidden');
+      })();
+    </script>
+
+    <div id="plans-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div class="card-skeleton"></div><div class="card-skeleton"></div><div class="card-skeleton"></div>
+    </div>
+
+    <div id="payment-modal" class="hidden fixed inset-0 z-50 grid place-items-center px-4" style="background: rgba(3,8,5,0.85); backdrop-filter: blur(6px);">
+      <div class="w-full max-w-md rounded-2xl p-6 border" style="background: var(--card-bg); border-color: var(--card-border);">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-extrabold">Forma de pagamento</h2>
+          <button onclick="document.getElementById('payment-modal').classList.add('hidden')" class="btn-icon">✕</button>
+        </div>
+        <div class="mb-3">
+          <label class="text-xs" style="color: var(--muted);">Cupom de desconto (opcional)</label>
+          <div class="flex gap-2 mt-1">
+            <input id="coupon-input" type="text" class="input-field flex-1" placeholder="Ex: ROBOT10" style="text-transform: uppercase;" />
+            <button id="coupon-apply" class="btn-ghost">Aplicar</button>
+          </div>
+          <div id="coupon-status" class="text-xs mt-1"></div>
+        </div>
+        <div class="mb-3">
+          <button id="btn-virar-premium" class="btn-primary w-full justify-center py-3" style="font-weight:800;font-size:15px">
+            🚀 Pagar com Mercado Pago — <span id="btn-mp-price">R$ 199,99</span> (promo)
+          </button>
+          <div class="text-xs mt-2 text-center" style="color: var(--muted);">
+            Aprovação automática · Premium liberado em segundos · PIX ou cartão
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 mb-4 text-xs">
+          <button class="btn-ghost provider-btn" data-provider="stripe">💳 Stripe</button>
+          <button class="btn-ghost provider-btn" data-provider="pix">⚡ PIX direto</button>
+        </div>
+        <div id="checkout-result" class="text-sm" style="color: var(--text-2);"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/upgrade-celebration.js"></script>
+  <script src="/js/payments.js"></script>
+  <script src="/js/promo-banner.js"></script>
+  <script>
+    let currentPlan = null;
+    let appliedCoupon = null;
+    let basePriceByPlan = {};
+
+    document.getElementById('coupon-apply').addEventListener('click', async () => {
+      const code = (document.getElementById('coupon-input')?.value || '').trim().toUpperCase();
+      const status = document.getElementById('coupon-status');
+      if (!code || !currentPlan) return;
+      const basePrice = basePriceByPlan[currentPlan] || 0;
+      try {
+        const r = await fetch('/api/beta/coupons/apply', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, plan: currentPlan, basePrice }),
+        });
+        const data = await r.json();
+        if (!data.ok) {
+          status.textContent = '❌ ' + data.error;
+          status.style.color = 'var(--danger)';
+          appliedCoupon = null;
+        } else {
+          status.innerHTML = `✅ Cupom aplicado! Desconto: R$ ${data.discount.toFixed(2)} · Total: <b>R$ ${data.finalPrice.toFixed(2)}</b>`;
+          status.style.color = 'var(--brand)';
+          appliedCoupon = data.coupon.code;
+        }
+      } catch (e) {
+        status.textContent = 'Erro: ' + e.message;
+      }
+    });
+
+    function fmtBRL(n) {
+      return Number(n).toFixed(2).replace('.', ',');
+    }
+
+    async function loadPlans() {
+      const grid = document.getElementById('plans-grid');
+      try {
+        const r = await fetch('/api/plans');
+        const { plans } = await r.json();
+        plans.forEach(p => { basePriceByPlan[p.id] = p.priceBRL; });
+        grid.innerHTML = plans.map((p, i) => {
+          const isPremium = p.id === 'PREMIUM';
+          const isPromo = !!p.isPromo && Number(p.fullPriceBRL) > Number(p.priceBRL);
+          const featured = isPremium || p.id === 'VIP';
+          const features = [
+            p.features.live ? '✅ Análise ao vivo' : '❌ Análise ao vivo',
+            p.features.prelive ? '✅ Pré-Live BTTS' : '🔒 Pré-Live BTTS',
+            p.features.over25 ? '✅ Over 2.5 automático' : '🔒 Over 2.5 automático',
+            p.features.telegramAlerts ? '✅ Alertas no Telegram' : '🔒 Alertas Telegram',
+            `📊 ${p.dailySignals === 999 ? 'Sinais ilimitados' : p.dailySignals + ' sinais/dia'}`,
+            `📅 Histórico ${p.features.historyDays} dias`,
+            p.features.api ? '✅ Acesso à API REST' : '🔒 API REST',
+          ];
+          const priceBlock = p.priceBRL === 0
+            ? `<div class="text-4xl font-extrabold mt-1">Grátis</div>`
+            : isPromo
+              ? `
+                <div class="flex items-baseline gap-2 mt-1">
+                  <span class="text-base font-bold line-through" style="color: var(--muted); opacity:.7;">R$ ${fmtBRL(p.fullPriceBRL)}</span>
+                  <span class="badge hot" style="background:#fde047; color:#7c2d12;">-${Math.round((1 - p.priceBRL/p.fullPriceBRL)*100)}%</span>
+                </div>
+                <div class="text-4xl font-extrabold mt-1" style="color: var(--brand);">R$ ${fmtBRL(p.priceBRL)}</div>
+                <div class="text-xs" style="color: var(--muted);">/ mês · oferta limitada</div>
+              `
+              : `
+                <div class="text-4xl font-extrabold mt-1">R$ ${fmtBRL(p.priceBRL)}</div>
+                <div class="text-xs" style="color: var(--muted);">/ mês</div>
+              `;
+          const ctaLabel = p.id === 'FREE'
+            ? 'Começar grátis'
+            : isPromo
+              ? `Assinar por R$ ${fmtBRL(p.priceBRL)} (promo) →`
+              : `Assinar ${p.label} →`;
+          return `
+            <div class="rounded-2xl p-6 border ${featured ? 'pricing-featured' : ''}" style="background: var(--card-bg); border-color: ${featured ? 'var(--brand)' : 'var(--line)'}; ${featured ? 'box-shadow: var(--shadow-glow); transform: scale(1.02);' : ''}">
+              ${isPromo ? '<div class="badge hot mb-2" style="background:#dc2626; color:#fff;">💥 OFERTA LIMITADA</div>' : (featured ? '<div class="badge hot mb-2">⭐ MAIS POPULAR</div>' : '')}
+              <div class="text-xs uppercase tracking-widest" style="color: var(--muted);">${p.label}</div>
+              ${priceBlock}
+              <ul class="mt-4 space-y-2 text-sm" style="color: var(--text-2);">
+                ${features.map(f => `<li>${f}</li>`).join('')}
+              </ul>
+              <button data-plan="${p.id}" class="btn-${featured ? 'primary' : 'ghost'} w-full justify-center mt-5 py-3 plan-btn">
+                ${ctaLabel}
+              </button>
+            </div>
+          `;
+        }).join('');
+
+        document.querySelectorAll('.plan-btn').forEach(btn => {
+          btn.addEventListener('click', () => onPickPlan(btn.dataset.plan));
+        });
+      } catch (e) {
+        grid.innerHTML = `<div class="col-span-full text-center py-12" style="color: var(--danger);">${e.message}</div>`;
+      }
+    }
+
+    async function onPickPlan(plan) {
+      if (plan === 'FREE') {
+        if (!RobotrendAuth.getToken()) location.href = '/register.html';
+        else location.href = '/';
+        return;
+      }
+      if (!RobotrendAuth.getToken()) {
+        location.href = '/login.html?next=/pricing.html';
+        return;
+      }
+      currentPlan = plan;
+      const price = basePriceByPlan[plan] || 199.99;
+      const priceEl = document.getElementById('btn-mp-price');
+      if (priceEl) priceEl.textContent = 'R$ ' + fmtBRL(price);
+      document.getElementById('payment-modal').classList.remove('hidden');
+      document.getElementById('checkout-result').innerHTML = '';
+    }
+
+    document.getElementById('btn-virar-premium').addEventListener('click', () => {
+      const btn = document.getElementById('btn-virar-premium');
+      window.virarPremium({
+        plan: currentPlan || 'PREMIUM',
+        coupon: appliedCoupon,
+        button: btn,
+      });
+    });
+
+    document.querySelectorAll('.provider-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const provider = btn.dataset.provider;
+        const result = document.getElementById('checkout-result');
+        result.innerHTML = '⏳ gerando link...';
+        try {
+          const r = await RobotrendAuth.api('/api/payments/checkout', {
+            method: 'POST',
+            body: JSON.stringify({ plan: currentPlan, provider, coupon: appliedCoupon }),
+          });
+          if (provider === 'pix' && r.qrUrl) {
+            result.innerHTML = `
+              <div class="text-center">
+                <div class="text-sm" style="color: var(--muted);">PIX · R$ ${r.amount}</div>
+                <img src="${r.qrUrl}" alt="QR Code PIX" class="mx-auto my-3 rounded-lg border" style="border-color: var(--line);" />
+                <textarea readonly class="w-full text-xs font-mono p-2 rounded border" style="background: var(--surface-2); border-color: var(--line); color: var(--text);">${r.code}</textarea>
+              </div>
+            `;
+          } else if (r.url) {
+            result.innerHTML = `<a href="${r.url}" class="btn-primary w-full justify-center">${r.mock ? '🧪 Ativar (mock)' : 'Ir para checkout →'}</a>`;
+            if (!r.mock) location.href = r.url;
+          } else {
+            result.textContent = r.message || JSON.stringify(r);
+          }
+        } catch (ex) {
+          result.innerHTML = `<div style="color: var(--danger);">${ex.message}</div>`;
+        }
+      });
+    });
+
+    loadPlans();
+  </script>
+</body>
+</html>

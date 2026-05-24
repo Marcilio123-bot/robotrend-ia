@@ -1,0 +1,31 @@
+node_modules
+.git
+.gitignore
+
+# Secrets — NUNCA copiar para a imagem
+.env
+.env.*
+!.env.example
+secrets.generated.json
+**/secrets.generated.json
+
+# TLS / certificados
+deploy/certs/*.pem
+deploy/certs/*.key
+*.pem
+*.key
+
+# Logs / temporários
+*.log
+logs/
+*.bak
+*.tmp
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Backups
+**/Robotrend_BACKUP*

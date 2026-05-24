@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="user" />
+  <title>Robotrend IA — Dashboard</title>
+  <meta name="theme-color" content="#14b85e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314b85e'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' fill='%23062815' font-family='Arial' font-weight='900' font-size='34'%3ER%3C/text%3E%3C/svg%3E" />
+
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body class="font-display antialiased">
+
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="dashboard"></div>
+    <main class="saas-content">
+
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">Dashboard</h1>
+          <p class="saas-page-sub">Jogos ao vivo e oportunidades em tempo real</p>
+        </div>
+        <div class="saas-page-actions">
+          <span class="saas-status-pill" id="ws-status">conectando</span>
+        </div>
+      </header>
+
+      <div data-promo-banner-mount></div>
+
+      <!-- KPIs essenciais (decisão, não diagnóstico) -->
+      <section class="saas-kpis">
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Jogos ao Vivo</div>
+          <div class="saas-kpi-value" id="kpi-live">—</div>
+          <div class="saas-kpi-foot">monitorados agora</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Sinais hoje</div>
+          <div class="saas-kpi-value" id="kpi-signals">—</div>
+          <div class="saas-kpi-foot">emitidos nas últimas 24h</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Taxa de acerto</div>
+          <div class="saas-kpi-value" id="kpi-winrate">—</div>
+          <div class="saas-kpi-foot good" id="kpi-winloss">— / —</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">ROI</div>
+          <div class="saas-kpi-value" id="kpi-roi">—</div>
+          <div class="saas-kpi-foot">cálculo @ odd média</div>
+        </div>
+      </section>
+
+      <!-- MELHOR APOSTA DO MOMENTO (PREMIUM only) -->
+      <section class="saas-section" id="best-bet-section">
+        <div class="saas-section-head">
+          <div>
+            <div class="saas-section-title">💎 Melhor aposta do momento</div>
+            <div class="saas-section-sub">Sinal de maior valor agora · análise IA premium</div>
+          </div>
+          <span class="best-bet-tag" id="best-bet-tag">PREMIUM</span>
+        </div>
+        <div id="best-bet-container">
+          <!-- Estado: aguardando -->
+          <div class="best-bet-card best-bet-loading" id="best-bet-loading">
+            <div class="best-bet-glow"></div>
+            <div class="best-bet-loading-content">
+              <div class="best-bet-pulse"></div>
+              <div>
+                <div class="best-bet-loading-title">Procurando a melhor oportunidade…</div>
+                <div class="best-bet-loading-sub">IA analisando momento + valor + risco em todos os jogos ao vivo</div>
+              </div>
+            </div>
+          </div>
+          <!-- Card real (preenchido por JS quando recebe signal:best) -->
+          <div class="best-bet-card best-bet-active" id="best-bet-card" style="display:none;"></div>
+          <!-- Estado: cliente FREE — upgrade CTA -->
+          <div class="best-bet-card best-bet-locked" id="best-bet-locked" style="display:none;">
+            <div class="best-bet-glow"></div>
+            <div class="best-bet-locked-content">
+              <div class="best-bet-locked-icon">🔒</div>
+              <div class="best-bet-locked-text">
+                <div class="best-bet-locked-title">Desbloqueie a Melhor Aposta do Momento</div>
+                <div class="best-bet-locked-sub">
+                  Análise inteligente da IA com maior confiança, melhor valor (odd vs. probabilidade)
+                  e menor risco — exclusiva para assinantes Premium.
+                </div>
+                <div class="best-bet-locked-perks">
+                  <span>⚡ Sinais sem delay</span>
+                  <span>🎯 Filtro de qualidade ≥ 75%</span>
+                  <span>🧠 Justificativa IA completa</span>
+                </div>
+                <button type="button" onclick="window.virarPremium({ button: this })" class="best-bet-upgrade-btn">🚀 Virar Premium — R$ 199,99 (promo) →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sinais ao vivo (centro do produto) -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div>
+            <div class="saas-section-title">Sinais em tempo real</div>
+            <div class="saas-section-sub">Oportunidades detectadas pela IA · escanteios · BTTS · vitória</div>
+          </div>
+          <a href="/signals.html" class="saas-status-pill ok">ver todos →</a>
+        </div>
+
+        <div id="live-signals" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div class="saas-card saas-empty">Aguardando o próximo sinal…</div>
+        </div>
+      </section>
+
+      <!-- Partidas ao vivo -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div>
+            <div class="saas-section-title">Partidas ao vivo</div>
+            <div class="saas-section-sub">acompanhe os jogos monitorados pela IA</div>
+          </div>
+          <a href="/football.html" class="saas-status-pill">painel completo →</a>
+        </div>
+
+        <div id="matches-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div class="card-skeleton"></div>
+          <div class="card-skeleton"></div>
+          <div class="card-skeleton"></div>
+        </div>
+      </section>
+
+      <!-- Histórico recente compacto -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div>
+            <div class="saas-section-title">Histórico recente</div>
+            <div class="saas-section-sub">últimos sinais com resultado</div>
+          </div>
+          <a href="/analytics.html" class="saas-status-pill">analytics →</a>
+        </div>
+
+        <div class="saas-card" style="padding:0; overflow:hidden;">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="table-head">
+                <th class="py-3 px-4 text-left">Hora</th>
+                <th class="py-3 px-4 text-left">Partida</th>
+                <th class="py-3 px-4 text-left">Mercado</th>
+                <th class="py-3 px-4 text-left">Entrada</th>
+                <th class="py-3 px-4 text-left">Odd</th>
+                <th class="py-3 px-4 text-left">IA%</th>
+                <th class="py-3 px-4 text-left">Resultado</th>
+              </tr>
+            </thead>
+            <tbody id="signals-body">
+              <tr><td colspan="7" class="py-6 text-center" style="color: var(--muted);">Aguardando sinais…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="mt-12 py-6 text-center text-xs" style="color: var(--muted); border-top: 1px solid var(--line);">
+        Robotrend IA · Plataforma de sinais inteligentes para apostas esportivas
+      </footer>
+    </main>
+  </div>
+
+  <div id="toast-stack" class="fixed top-4 right-4 z-50 space-y-3 w-[380px] max-w-[92vw]"></div>
+
+  <!-- Feedback widget (mantido) -->
+  <button id="fb-open" class="btn-primary" style="position:fixed; bottom:20px; right:20px; z-index:60; border-radius:999px; padding:10px 16px; box-shadow: 0 8px 24px rgba(20,184,94,0.35);" title="Enviar feedback">💬 Feedback</button>
+  <div id="fb-modal" class="hidden fixed inset-0 z-[70] grid place-items-center px-4" style="background: rgba(3,8,5,0.85); backdrop-filter: blur(6px);">
+    <div class="w-full max-w-md rounded-2xl p-6 border" style="background: var(--card-bg); border-color: var(--card-border);">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-lg font-bold">Seu feedback ajuda a evoluir a IA</h3>
+        <button class="btn-icon" onclick="document.getElementById('fb-modal').classList.add('hidden')">✕</button>
+      </div>
+      <div class="mb-3">
+        <div class="text-xs mb-1" style="color: var(--muted);">Nota</div>
+        <div id="fb-stars" class="flex gap-1 text-2xl">
+          <span data-v="1" class="cursor-pointer">☆</span>
+          <span data-v="2" class="cursor-pointer">☆</span>
+          <span data-v="3" class="cursor-pointer">☆</span>
+          <span data-v="4" class="cursor-pointer">☆</span>
+          <span data-v="5" class="cursor-pointer">☆</span>
+        </div>
+      </div>
+      <textarea id="fb-text" rows="4" class="input-field w-full" placeholder="O que você achou? Sugestões, bugs, ideias..."></textarea>
+      <button id="fb-send" class="btn-primary w-full mt-3">Enviar feedback</button>
+      <div id="fb-status" class="text-xs mt-2 text-center"></div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      let rating = 5;
+      const stars = document.querySelectorAll('#fb-stars span');
+      function paint() {
+        stars.forEach((s) => { const v = +s.dataset.v; s.textContent = v <= rating ? '★' : '☆'; s.style.color = v <= rating ? '#22c55e' : 'var(--muted)'; });
+      }
+      stars.forEach((s) => s.addEventListener('click', () => { rating = +s.dataset.v; paint(); }));
+      paint();
+      document.getElementById('fb-open').onclick = () => document.getElementById('fb-modal').classList.remove('hidden');
+      document.getElementById('fb-send').onclick = async () => {
+        const text = (document.getElementById('fb-text')?.value || '').trim();
+        const status = document.getElementById('fb-status');
+        if (!text) { status.textContent = 'Escreva algo antes de enviar.'; status.style.color = 'var(--danger)'; return; }
+        try {
+          const headers = { 'Content-Type': 'application/json' };
+          const tk = window.RobotrendAuth && RobotrendAuth.getToken && RobotrendAuth.getToken();
+          if (tk) headers.Authorization = 'Bearer ' + tk;
+          const r = await fetch('/api/beta/feedback', {
+            method: 'POST', headers,
+            body: JSON.stringify({ rating, text, page: location.pathname }),
+          });
+          if (r.ok) {
+            status.textContent = 'Obrigado pelo feedback!'; status.style.color = 'var(--brand)';
+            const fbTextEl = document.getElementById('fb-text');
+            if (fbTextEl) fbTextEl.value = '';
+            setTimeout(() => document.getElementById('fb-modal')?.classList.add('hidden'), 1200);
+          } else {
+            status.textContent = 'Erro: ' + r.status; status.style.color = 'var(--danger)';
+          }
+        } catch (e) { status.textContent = 'Erro: ' + e.message; }
+      };
+    })();
+  </script>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/upgrade-celebration.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/payments.js"></script>
+  <script src="/js/promo-banner.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

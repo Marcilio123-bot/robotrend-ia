@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <title>Robotrend IA — Admin</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="admin"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">Painel administrativo</h1>
+          <p class="saas-page-sub">Gestão de usuários, pagamentos e operação</p>
+        </div>
+        <div class="saas-page-actions">
+          <span id="me" class="saas-status-pill"></span>
+        </div>
+      </header>
+
+      <section class="saas-kpis">
+        <div class="saas-kpi"><div class="saas-kpi-label">Total usuários</div><div class="saas-kpi-value" id="kpi-users">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">🆓 Clientes FREE</div><div class="saas-kpi-value" id="kpi-free" style="color:#94a3b8;">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">💎 Clientes PREMIUM</div><div class="saas-kpi-value" id="kpi-premium" style="color:#fbbf24;">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Conversão</div><div class="saas-kpi-value" id="kpi-conversion" style="color:#22c55e;">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Receita estimada</div><div class="saas-kpi-value" id="kpi-revenue">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Sinais</div><div class="saas-kpi-value" id="kpi-signals">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Winrate</div><div class="saas-kpi-value" id="kpi-winrate">—</div></div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Criar novo cliente</div>
+          <div style="color: var(--muted); font-size: 12px;">SaaS multi-tenant</div>
+        </div>
+        <div class="saas-card">
+          <form id="form-create-user" class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+            <div class="md:col-span-2">
+              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">E-mail</label>
+              <input id="cu-email" type="email" required class="input-field w-full mt-1" placeholder="cliente@email.com" />
+            </div>
+            <div>
+              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Senha</label>
+              <input id="cu-password" type="text" required minlength="6" class="input-field w-full mt-1" placeholder="mín. 6 chars" />
+            </div>
+            <div>
+              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Plano</label>
+              <select id="cu-plan" class="input-field w-full mt-1">
+                <option value="FREE">FREE</option>
+                <option value="VIP">VIP</option>
+                <option value="PREMIUM" selected>PREMIUM</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Role</label>
+              <select id="cu-role" class="input-field w-full mt-1">
+                <option value="user">user</option>
+                <option value="premium" selected>premium</option>
+                <option value="admin">admin</option>
+              </select>
+            </div>
+            <div class="md:col-span-3">
+              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Nome (opcional)</label>
+              <input id="cu-name" type="text" class="input-field w-full mt-1" placeholder="Nome de exibição" />
+            </div>
+            <div class="md:col-span-2">
+              <button type="submit" class="btn-primary w-full justify-center py-3">+ Criar cliente</button>
+            </div>
+          </form>
+          <div id="cu-feedback" class="mt-3 text-sm" style="display:none;"></div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           CLIENTES PREMIUM
+           ============================================================ -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">💎 Clientes PREMIUM</div>
+          <div style="color: var(--muted); font-size: 12px;">
+            <span id="premium-count">0</span> assinantes ativos
+            · <span id="premium-revenue" style="color: var(--brand); font-weight: 700;">R$ 0,00</span> em receita estimada/mês
+          </div>
+        </div>
+        <div class="saas-card" style="padding:0; overflow:hidden;">
+          <table class="w-full text-sm">
+            <thead><tr class="table-head">
+              <th class="py-3 px-4 text-left">E-mail</th>
+              <th class="py-3 px-4 text-left">Nome</th>
+              <th class="py-3 px-4 text-left">Plano</th>
+              <th class="py-3 px-4 text-left">Role</th>
+              <th class="py-3 px-4 text-left">Criado em</th>
+              <th class="py-3 px-4 text-left">Status</th>
+              <th class="py-3 px-4 text-left">Ações</th>
+            </tr></thead>
+            <tbody id="premium-body"><tr><td colspan="7" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           CLIENTES FREE
+           ============================================================ -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">🆓 Clientes FREE</div>
+          <div style="color: var(--muted); font-size: 12px;">
+            <span id="free-count">0</span> usuários gratuitos
+            · <span id="free-conversion" style="color: var(--warn); font-weight: 700;">0%</span> conversão atual
+          </div>
+        </div>
+        <div class="saas-card" style="padding:0; overflow:hidden;">
+          <table class="w-full text-sm">
+            <thead><tr class="table-head">
+              <th class="py-3 px-4 text-left">E-mail</th>
+              <th class="py-3 px-4 text-left">Nome</th>
+              <th class="py-3 px-4 text-left">Criado em</th>
+              <th class="py-3 px-4 text-left">Última atividade</th>
+              <th class="py-3 px-4 text-left">Converter</th>
+              <th class="py-3 px-4 text-left">Ações</th>
+            </tr></thead>
+            <tbody id="free-body"><tr><td colspan="6" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           ADMINS (compacto)
+           ============================================================ -->
+      <section class="saas-section" id="admins-section" style="display:none;">
+        <div class="saas-section-head">
+          <div class="saas-section-title">🛡️ Administradores</div>
+          <div style="color: var(--muted); font-size: 12px;">
+            <span id="admin-count">0</span> com acesso ao painel master
+          </div>
+        </div>
+        <div class="saas-card" style="padding:0; overflow:hidden;">
+          <table class="w-full text-sm">
+            <thead><tr class="table-head">
+              <th class="py-3 px-4 text-left">E-mail</th>
+              <th class="py-3 px-4 text-left">Nome</th>
+              <th class="py-3 px-4 text-left">Role</th>
+              <th class="py-3 px-4 text-left">Criado em</th>
+              <th class="py-3 px-4 text-left">Ações</th>
+            </tr></thead>
+            <tbody id="admin-body"><tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">—</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Pagamentos</div>
+        </div>
+        <div class="saas-card" style="padding:0; overflow:hidden;">
+          <table class="w-full text-sm">
+            <thead><tr class="table-head">
+              <th class="py-3 px-4 text-left">Data</th>
+              <th class="py-3 px-4 text-left">Provedor</th>
+              <th class="py-3 px-4 text-left">Plano</th>
+              <th class="py-3 px-4 text-left">Valor</th>
+              <th class="py-3 px-4 text-left">Status</th>
+            </tr></thead>
+            <tbody id="payments-body"><tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Sinais recentes</div>
+        </div>
+        <div class="saas-card" style="padding:0; overflow:hidden;">
+          <table class="w-full text-sm">
+            <thead><tr class="table-head">
+              <th class="py-3 px-4 text-left">Hora</th>
+              <th class="py-3 px-4 text-left">Partida</th>
+              <th class="py-3 px-4 text-left">Mercado</th>
+              <th class="py-3 px-4 text-left">Entrada</th>
+              <th class="py-3 px-4 text-left">IA</th>
+              <th class="py-3 px-4 text-left">Resultado</th>
+            </tr></thead>
+            <tbody id="signals-body"><tr><td colspan="6" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+        <div class="saas-card">
+          <div class="saas-section-title mb-3">Cupons</div>
+          <div class="grid grid-cols-3 gap-2 mb-3">
+            <input id="coup-code" class="input-field" placeholder="CODE (opcional)" />
+            <input id="coup-percent" class="input-field" placeholder="% off" type="number" value="10" />
+            <button id="btn-create-coupon" class="btn-primary">+ Criar</button>
+          </div>
+          <div id="coupons-list" class="text-sm space-y-1" style="max-height:300px; overflow-y:auto;">—</div>
+        </div>
+        <div class="saas-card">
+          <div class="saas-section-title mb-3">Feedback dos usuários</div>
+          <div id="feedback-stats" class="text-sm mb-3" style="color: var(--muted);">—</div>
+          <div id="feedback-list" class="text-sm space-y-2" style="max-height:400px; overflow-y:auto;">—</div>
+        </div>
+        <div class="saas-card lg:col-span-2">
+          <div class="saas-section-title mb-3">Backtest e Qualidade</div>
+          <div class="flex gap-2 flex-wrap">
+            <a href="/backtest.html" class="btn-primary">Rodar Backtest</a>
+            <a href="/quality.html" class="btn-ghost">Painel Qualidade IA</a>
+            <a href="/results.html" class="btn-ghost">Resultados (lucro/ROI)</a>
+            <a href="/admin-football.html" class="btn-ghost">Sistema (operação técnica)</a>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/upgrade-celebration.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/admin.js"></script>
+</body>
+</html>

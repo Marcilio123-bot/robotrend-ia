@@ -1,0 +1,14 @@
+/**
+ * Robotrend IA — Tailwind input
+ *
+ * Fonte do build de produção do Tailwind. Resultado compilado em
+ * /frontend/output.css, servido estaticamente pelo express (substitui
+ * o antigo script CDN). Build:
+ *
+ *   npm run tailwind:build       (produção, minificado)
+ *   npm run tailwind:watch       (modo watch, dev)
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

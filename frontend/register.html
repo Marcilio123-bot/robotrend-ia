@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Criar conta · Robotrend IA</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314b85e'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="font-display antialiased min-h-screen grid place-items-center px-4">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="w-full max-w-md relative">
+    <a href="/login.html" class="absolute -top-12 left-0 text-xs" style="color: var(--muted);">← voltar ao login</a>
+    <div class="rounded-2xl p-8 border" style="background: var(--card-bg); border-color: var(--card-border); box-shadow: var(--shadow-card);">
+
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-12 h-12 rounded-xl grid place-items-center font-extrabold text-xl" style="background: linear-gradient(135deg,#00d97e,#14b85e); color:#03110b; box-shadow: 0 0 24px var(--brand-glow);">R</div>
+        <div>
+          <div class="text-xl font-extrabold tracking-tight">Robotrend <span style="color: var(--brand);">IA</span></div>
+          <div class="text-[11px] uppercase tracking-widest" style="color: var(--muted);">Cadastro Grátis</div>
+        </div>
+      </div>
+
+      <h1 class="text-2xl font-extrabold mb-1">Crie sua conta</h1>
+      <p class="text-sm mb-6" style="color: var(--muted);">Plano Free com 3 sinais por dia. Sem cartão.</p>
+
+      <form id="register-form" class="space-y-3">
+        <div>
+          <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Nome</label>
+          <input id="name" required class="w-full mt-1 px-4 py-3 rounded-lg border text-sm" style="background: var(--surface-2); border-color: var(--line); color: var(--text);" placeholder="Seu nome" />
+        </div>
+        <div>
+          <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">E-mail</label>
+          <input id="email" type="email" required class="w-full mt-1 px-4 py-3 rounded-lg border text-sm" style="background: var(--surface-2); border-color: var(--line); color: var(--text);" placeholder="voce@email.com" />
+        </div>
+        <div>
+          <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Senha (mín. 6)</label>
+          <input id="password" type="password" required minlength="6" class="w-full mt-1 px-4 py-3 rounded-lg border text-sm" style="background: var(--surface-2); border-color: var(--line); color: var(--text);" placeholder="••••••••" />
+        </div>
+        <button type="submit" class="btn-primary w-full justify-center py-3 mt-2">Criar conta grátis →</button>
+      </form>
+
+      <div id="err" class="mt-3 text-sm hidden p-3 rounded-lg" style="background: rgba(255,85,102,0.1); color: #ffd1d6; border: 1px solid rgba(255,85,102,0.4);"></div>
+
+      <p class="text-xs text-center mt-6" style="color: var(--muted);">
+        Já tem conta? <a href="/login.html" style="color: var(--brand);">Faça login</a>
+      </p>
+    </div>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script>
+    const form  = document.getElementById('register-form');
+    const errEl = document.getElementById('err');
+    const btn   = form.querySelector('button[type="submit"]');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errEl.classList.add('hidden');
+
+      // Defensivo: cada campo pode estar ausente, então protegemos com optional chaining
+      const nameEl = document.getElementById('name');
+      const emailEl = document.getElementById('email');
+      const passEl = document.getElementById('password');
+
+      const name     = (nameEl?.value || '').trim();
+      const email    = (emailEl?.value || '').trim().toLowerCase();
+      const password = (passEl?.value || '').trim();
+
+      if (!email || !password) {
+        errEl.textContent = 'Informe email e senha para continuar.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      if (password.length < 6) {
+        errEl.textContent = 'A senha precisa ter pelo menos 6 caracteres.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      btn.disabled = true;
+      const originalLabel = btn.innerHTML;
+      btn.innerHTML = 'Criando conta…';
+
+      try {
+        await RobotrendAuth.register(email, password, name);
+        location.href = '/';
+      } catch (ex) {
+        const code = ex?.payload?.error || ex?.message || '';
+        let msg = 'Erro ao cadastrar.';
+        if      (/EMAIL_PASSWORD_REQUIRED/i.test(code)) msg = 'Informe email e senha.';
+        else if (/EMAIL_ALREADY_EXISTS/i.test(code))    msg = 'Esse email já está cadastrado. Faça login.';
+        else if (/PASSWORD_TOO_SHORT/i.test(code))      msg = 'A senha precisa ter pelo menos 6 caracteres.';
+        else if (/INVALID_EMAIL/i.test(code))           msg = 'Email inválido. Verifique o formato.';
+        else if (/SERVER_ERROR/i.test(code))            msg = 'Erro interno. Tente novamente em instantes.';
+        else if (code) msg = code;
+        errEl.textContent = msg;
+        errEl.classList.remove('hidden');
+        btn.disabled = false;
+        btn.innerHTML = originalLabel;
+      }
+    });
+  </script>
+</body>
+</html>

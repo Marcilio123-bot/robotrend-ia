@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="user" />
+  <title>Robotrend IA — Football Live (API-Sports)</title>
+  <meta name="theme-color" content="#14b85e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314b85e'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' fill='%23062815' font-family='Arial' font-weight='900' font-size='34'%3ER%3C/text%3E%3C/svg%3E" />
+
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+
+  <style>
+    :root {
+      --rt-green: #22c55e;
+      --rt-red: #ef4444;
+      --rt-yellow: #facc15;
+      --rt-cyan: #06b6d4;
+    }
+
+    .fb-shell {
+      display: grid; gap: 14px;
+      grid-template-columns: 260px 1fr 380px;
+      align-items: start;
+    }
+    @media (max-width: 1400px) {
+      .fb-shell { grid-template-columns: 220px 1fr 340px; }
+    }
+    @media (max-width: 1100px) {
+      .fb-shell { grid-template-columns: 1fr; }
+      .fb-side, .fb-detail { display: none; }
+      .fb-shell.has-detail .fb-detail { display: block; }
+    }
+
+    .fb-panel {
+      background: var(--card-bg); border: 1px solid var(--line);
+      border-radius: 16px; padding: 14px;
+    }
+    .fb-panel-h {
+      font-size: 11px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .14em; margin-bottom: 10px;
+      display:flex; align-items:center; gap:8px;
+    }
+    .fb-panel-h .pulse {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--rt-green); box-shadow: 0 0 12px var(--rt-green);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.5); opacity: .4; }
+    }
+
+    /* === Sidebar === */
+    .fb-league-list { display: flex; flex-direction: column; gap: 4px; max-height: 70vh; overflow:auto; }
+    .fb-league-item {
+      display:flex; align-items:center; justify-content:space-between;
+      padding: 8px 10px; border-radius: 10px; cursor: pointer;
+      font-size: 13px; color: var(--text-2);
+      transition: background .15s ease, color .15s ease;
+    }
+    .fb-league-item:hover { background: var(--surface-2); color: var(--text); }
+    .fb-league-item.active { background: var(--brand-soft); color: var(--text); }
+    .fb-league-item .badge {
+      background: var(--surface-2); color: var(--muted);
+      font-size: 10px; padding: 2px 7px; border-radius: 999px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .fb-league-item.active .badge { background: var(--brand); color: #062815; }
+
+    /* === Match list === */
+    .fb-matches { display: flex; flex-direction: column; gap: 6px; }
+    .fb-match {
+      background: var(--surface); border: 1px solid var(--line);
+      border-left: 3px solid transparent;
+      border-radius: 12px; padding: 10px 12px; cursor: pointer;
+      transition: border-color .15s ease, background .15s ease;
+      display: grid; grid-template-columns: 70px 1fr 80px 40px; gap: 10px;
+      align-items: center;
+    }
+    .fb-match:hover { background: var(--surface-2); }
+    .fb-match.active { border-left-color: var(--brand); background: var(--brand-soft); }
+    .fb-match .min { font-family: 'JetBrains Mono', monospace; font-weight: 800; color: var(--brand); font-size: 14px; }
+    .fb-match .min.live { color: var(--rt-green); }
+    .fb-match .teams { display:flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .fb-match .teams .row { display:flex; align-items:center; justify-content:space-between; gap: 6px; font-size: 13px; }
+    .fb-match .teams .row .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color: var(--text); font-weight: 600; }
+    .fb-match .teams .row .name.winning { color: var(--rt-green); }
+    .fb-match .teams .row .score { font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 16px; color: var(--text); }
+    .fb-match .stats { display:flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
+    .fb-match .stats span { font-family: 'JetBrains Mono', monospace; }
+    .fb-match .fav { font-size: 16px; cursor: pointer; color: var(--muted); text-align:center; user-select: none; }
+    .fb-match .fav.on { color: var(--rt-yellow); }
+
+    /* event flash highlight */
+    .fb-match.flash-goal   { animation: flashGreen .8s ease; }
+    .fb-match.flash-corner { animation: flashYellow .6s ease; }
+    .fb-match.flash-card   { animation: flashRed .6s ease; }
+    .fb-match.flash-update { animation: flashCyan .4s ease; }
+    @keyframes flashGreen  { from { background: rgba(34,197,94,.35); } to {} }
+    @keyframes flashYellow { from { background: rgba(250,204,21,.30); } to {} }
+    @keyframes flashRed    { from { background: rgba(239,68,68,.30); } to {} }
+    @keyframes flashCyan   { from { background: rgba(6,182,212,.20); } to {} }
+
+    /* === Detail panel === */
+    .fb-detail-h {
+      display:flex; align-items:center; justify-content: space-between;
+      gap: 8px; margin-bottom: 10px;
+    }
+    .fb-trend-chart {
+      width: 100%; height: 60px;
+      background: var(--surface); border-radius: 8px;
+    }
+    .fb-stat-row { display:grid; grid-template-columns: 1fr 60px 1fr; gap: 8px; align-items: center; font-size: 12px; padding: 4px 0; }
+    .fb-stat-row .l { text-align:right; color: var(--text); font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+    .fb-stat-row .lbl { text-align:center; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+    .fb-stat-row .r { text-align:left; color: var(--text); font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+    .fb-stat-bar { display:grid; grid-template-columns: 1fr 1fr; gap: 0; height: 4px; border-radius: 2px; overflow:hidden; margin-bottom: 6px; }
+    .fb-stat-bar .lhalf, .fb-stat-bar .rhalf { background: var(--surface-2); position: relative; }
+    .fb-stat-bar .lhalf .fill { position:absolute; right:0; top:0; bottom:0; background: var(--brand); }
+    .fb-stat-bar .rhalf .fill { position:absolute; left:0; top:0; bottom:0; background: var(--rt-cyan); }
+
+    .fb-timeline {
+      max-height: 220px; overflow:auto;
+      display:flex; flex-direction: column; gap: 4px;
+      padding: 4px 0;
+    }
+    .fb-tl-row {
+      display:grid; grid-template-columns: 36px 16px 1fr;
+      gap: 6px; font-size: 12px; padding: 4px 0;
+      align-items: center;
+    }
+    .fb-tl-row .min { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--muted); }
+    .fb-tl-row .icon { text-align:center; }
+    .fb-tl-row .desc { color: var(--text-2); }
+
+    .fb-tabs { display:flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+    .fb-tab {
+      background: transparent; border: none; color: var(--muted);
+      padding: 8px 12px; cursor: pointer; font-size: 12px;
+      border-bottom: 2px solid transparent; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .1em;
+    }
+    .fb-tab.active { color: var(--text); border-bottom-color: var(--brand); }
+
+    /* === Toolbar / filters === */
+    .fb-toolbar {
+      display:flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;
+      align-items: center;
+    }
+    .fb-toolbar input, .fb-toolbar select {
+      background: var(--surface); border: 1px solid var(--line);
+      color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 12px;
+    }
+    .fb-chip {
+      background: var(--surface-2); border: 1px solid var(--line);
+      color: var(--muted); padding: 4px 10px; border-radius: 999px;
+      font-size: 11px; cursor: pointer; user-select: none;
+      transition: all .15s ease;
+    }
+    .fb-chip.on { background: var(--brand); color: #062815; border-color: var(--brand); }
+
+    /* === KPIs === */
+    .fb-kpis { display:grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+    .fb-kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+    .fb-kpi .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; }
+    .fb-kpi .val { font-size: 22px; font-weight: 800; color: var(--text); font-family: 'JetBrains Mono', monospace; line-height: 1.1; margin-top: 2px; }
+    .fb-kpi .sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+    /* === Status pill === */
+    .fb-status {
+      display:inline-flex; align-items:center; gap:6px;
+      padding: 4px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 600;
+      background: var(--surface-2); color: var(--text-2);
+    }
+    .fb-status .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+    .fb-status.live .dot { background: var(--rt-green); box-shadow: 0 0 8px var(--rt-green); animation: rt-pulse 1.8s ease-in-out infinite; }
+    .fb-status.stale .dot { background: var(--rt-yellow); }
+    .fb-status.off .dot { background: var(--rt-red); }
+    .fb-status.connecting .dot,
+    .fb-status.reconnecting .dot { background: var(--rt-yellow); animation: rt-blink 1s linear infinite; }
+    @keyframes rt-pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+    @keyframes rt-blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+    /* === Refresh spinner === */
+    #btn-refresh.loading { pointer-events: none; opacity: .6; }
+    #btn-refresh.loading::after {
+      content: ''; display: inline-block; width: 10px; height: 10px;
+      border: 1.5px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; margin-left: 6px; vertical-align: middle;
+      animation: rt-spin .7s linear infinite;
+    }
+    @keyframes rt-spin { to { transform: rotate(360deg); } }
+    #last-updated { font-size: 10px; color: var(--muted); margin-left: 8px; font-family: 'JetBrains Mono', monospace; }
+
+    /* === Debug panel PERMANENTE (sempre visível) === */
+    .fb-debug {
+      position: fixed; bottom: 12px; right: 12px; width: 340px; max-height: 70vh;
+      background: rgba(15,23,42,.97); color: #e2e8f0; font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; padding: 0; border-radius: 10px;
+      border: 1px solid var(--border); z-index: 50;
+      box-shadow: 0 8px 28px rgba(0,0,0,.45);
+      display: flex; flex-direction: column;
+    }
+    .fb-debug .dh {
+      padding: 8px 12px; display: flex; align-items: center; gap: 8px;
+      background: rgba(20,184,94,.10); border-bottom: 1px solid var(--border);
+      font-weight: 700; border-radius: 10px 10px 0 0;
+    }
+    .fb-debug .dh::before { content: '⚙'; }
+    .fb-debug .pipeline-block {
+      padding: 8px 12px; background: rgba(0,0,0,.25);
+      border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+    .fb-debug .pipeline-block .head {
+      display: flex; justify-content: space-between; font-weight: 700; font-size: 12px;
+    }
+    .fb-debug .pipeline-block .msg {
+      margin-top: 4px; color: #cbd5e1; font-size: 10px; line-height: 1.4;
+    }
+    .fb-debug .dbody { padding: 8px 12px; overflow-y: auto; flex: 1; }
+    .fb-debug .group-title {
+      font-size: 9px; font-weight: 800; color: #64748b; text-transform: uppercase;
+      letter-spacing: .08em; margin: 8px 0 4px;
+    }
+    .fb-debug .group-title:first-child { margin-top: 0; }
+    .fb-debug .row { display: flex; justify-content: space-between; padding: 2px 0; gap: 8px; }
+    .fb-debug .row .k { color: #94a3b8; }
+    .fb-debug .row .v { color: #22c55e; text-align: right; word-break: break-all; max-width: 200px; font-weight: 600; }
+    .fb-debug .ev { padding: 2px 0; color: #cbd5e1; font-size: 10px; }
+    .fb-debug .ev .ts { color: #64748b; margin-right: 4px; }
+    .fb-debug .ev .name { color: #facc15; font-weight: 700; }
+    @media (max-width: 768px) {
+      .fb-debug { width: calc(100vw - 24px); max-height: 40vh; }
+    }
+
+    /* === Toast === */
+    .fb-toast-wrap {
+      position: fixed; bottom: 20px; right: 20px; z-index: 999;
+      display:flex; flex-direction: column; gap: 8px; pointer-events: none;
+    }
+    .fb-toast {
+      background: var(--card-bg); border: 1px solid var(--line);
+      border-left: 4px solid var(--brand);
+      padding: 10px 14px; border-radius: 10px;
+      min-width: 240px; max-width: 360px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.4);
+      animation: toastIn .3s ease;
+      pointer-events: auto;
+    }
+    .fb-toast.goal   { border-left-color: var(--rt-green); }
+    .fb-toast.corner { border-left-color: var(--rt-yellow); }
+    .fb-toast.card   { border-left-color: var(--rt-red); }
+    .fb-toast.btts   { border-left-color: var(--rt-cyan); }
+    .fb-toast .t-title { font-weight: 700; font-size: 13px; color: var(--text); }
+    .fb-toast .t-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    @keyframes toastIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    /* === Empty / loading === */
+    .fb-empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px; }
+    .fb-spinner {
+      display:inline-block; width: 16px; height: 16px;
+      border: 2px solid var(--surface-2); border-top-color: var(--brand);
+      border-radius: 50%; animation: spin .8s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* === RADAR / MARKET BAR === */
+    .fb-radar-bar {
+      display: grid; grid-template-columns: auto 1fr auto; gap: 12px;
+      align-items: center; padding: 10px 14px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; margin: 0 0 12px 0;
+    }
+    .fb-radar-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .fb-radar-label { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+    .fb-mode-btn, .fb-mkt-chip, .fb-prof-btn {
+      background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+      padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+      cursor: pointer; transition: all .15s ease; user-select: none;
+    }
+    .fb-mode-btn:hover, .fb-mkt-chip:hover, .fb-prof-btn:hover { background: var(--surface); border-color: var(--brand); }
+    .fb-mode-btn.active { background: var(--brand); color: white; border-color: var(--brand); }
+    .fb-mkt-chip.active { background: var(--brand-soft); color: var(--brand); border-color: var(--brand); }
+    .fb-prof-btn.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .fb-mode-pill {
+      padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 800;
+      background: var(--surface-2); color: var(--muted);
+    }
+    .fb-mode-pill.radar { background: var(--brand-soft); color: var(--brand); }
+    #conf-slider { width: 130px; accent-color: var(--brand); cursor: pointer; }
+    #conf-val { color: var(--brand); font-family: 'JetBrains Mono', monospace; }
+
+    /* === Match card: signal overlay (radar) === */
+    .fb-match.has-signal { box-shadow: inset 3px 0 0 var(--brand); }
+    .fb-match.hot { box-shadow: inset 3px 0 0 var(--rt-red); background: linear-gradient(90deg, rgba(239,68,68,.06), transparent 60%); }
+    .fb-sig-badge {
+      position: absolute; top: 6px; right: 32px; font-size: 10px; font-weight: 800;
+      padding: 2px 6px; border-radius: 4px; background: var(--brand-soft); color: var(--brand);
+      letter-spacing: .04em; pointer-events: none;
+    }
+    .fb-match { position: relative; }
+
+    /* === IA INSIGHT (tab + cards) === */
+    .ia-summary {
+      padding: 12px 14px; background: linear-gradient(135deg, var(--brand-soft) 0%, transparent 100%);
+      border-left: 3px solid var(--brand); border-radius: 8px; margin-bottom: 14px;
+      font-size: 13px; color: var(--text); line-height: 1.45;
+    }
+    .ia-trends { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+    .ia-trend {
+      padding: 10px 12px; background: var(--surface); border-radius: 8px;
+      border: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;
+    }
+    .ia-trend .lbl { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .ia-trend .val { font-size: 12px; font-weight: 800; padding: 3px 9px; border-radius: 999px; }
+    .ia-trend .val.low,
+    .ia-trend .val.weak,
+    .ia-trend .val.control { background: rgba(148,163,184,.18); color: #94a3b8; }
+    .ia-trend .val.mid,
+    .ia-trend .val.balanced { background: rgba(250,204,21,.18); color: #facc15; }
+    .ia-trend .val.high,
+    .ia-trend .val.attack { background: rgba(34,197,94,.20); color: #22c55e; }
+    .ia-trend .val.final-pressure { background: rgba(239,68,68,.22); color: #ef4444; }
+
+    .ia-reads { margin-bottom: 14px; }
+    .ia-read {
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 8px 10px; margin-bottom: 6px;
+      background: var(--surface); border-radius: 8px; font-size: 12px; color: var(--text); line-height: 1.5;
+    }
+    .ia-read .ic { font-size: 16px; flex-shrink: 0; }
+
+    .ia-picks-h {
+      font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; margin: 14px 0 8px;
+    }
+    .ia-pick {
+      padding: 10px 12px; margin-bottom: 8px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--surface);
+      display: grid; grid-template-columns: auto 1fr auto; gap: 8px 10px; align-items: center;
+    }
+    .ia-pick.best        { border-color: var(--brand); background: linear-gradient(90deg, var(--brand-soft) 0%, var(--surface) 60%); }
+    .ia-pick.aggressive  { border-color: rgba(239,68,68,.4); }
+    .ia-pick.conservative{ border-color: rgba(148,163,184,.4); }
+    .ia-pick .kind {
+      font-size: 9px; font-weight: 800; padding: 3px 7px; border-radius: 4px;
+      letter-spacing: .08em; text-transform: uppercase;
+    }
+    .ia-pick.best .kind        { background: var(--brand); color: white; }
+    .ia-pick.alt .kind         { background: rgba(34,197,94,.22); color: #22c55e; }
+    .ia-pick.aggressive .kind  { background: rgba(239,68,68,.22); color: #ef4444; }
+    .ia-pick.conservative .kind{ background: rgba(148,163,184,.22); color: #94a3b8; }
+    .ia-pick .body { display:flex; flex-direction:column; gap:2px; }
+    .ia-pick .lbl  { font-size: 13px; font-weight: 700; color: var(--text); }
+    .ia-pick .rsn  { font-size: 11px; color: var(--muted); line-height: 1.4; }
+    .ia-pick .meta { text-align: right; display:flex; flex-direction:column; gap:2px; font-family: 'JetBrains Mono', monospace; }
+    .ia-pick .conf { font-size: 14px; font-weight: 800; color: var(--brand); }
+    .ia-pick .risk { font-size: 10px; color: var(--muted); }
+    .ia-disclaimer { font-size: 10px; color: var(--muted); text-align: center; margin-top: 10px; opacity: .7; }
+
+    /* === SIGNAL CARD (decision board) === */
+    .sig-empty { padding: 60px 20px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .sig-empty strong { color: var(--text); }
+    .sig-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; padding: 4px; }
+    .sig-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px 16px; position: relative;
+      transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+      cursor: pointer;
+    }
+    .sig-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,.2); border-color: var(--brand); }
+    .sig-card.market-corners { border-left: 4px solid #facc15; }
+    .sig-card.market-goals   { border-left: 4px solid #22c55e; }
+    .sig-card.market-btts    { border-left: 4px solid #06b6d4; }
+    .sig-card.market-cards   { border-left: 4px solid #ef4444; }
+
+    .sig-h { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .sig-h .mkt {
+      font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 4px;
+      letter-spacing: .08em; text-transform: uppercase;
+    }
+    .sig-card.market-corners .mkt { background: rgba(250,204,21,.18); color: #facc15; }
+    .sig-card.market-goals .mkt   { background: rgba(34,197,94,.18); color: #22c55e; }
+    .sig-card.market-btts .mkt    { background: rgba(6,182,212,.18); color: #06b6d4; }
+    .sig-card.market-cards .mkt   { background: rgba(239,68,68,.18); color: #ef4444; }
+    .sig-h .conf {
+      margin-left: auto; font-family: 'JetBrains Mono', monospace;
+      font-weight: 800; font-size: 16px; color: var(--brand);
+    }
+    .sig-h .risk {
+      font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: .06em;
+    }
+    .sig-h .risk.low    { background: rgba(34,197,94,.18); color: #22c55e; }
+    .sig-h .risk.medium { background: rgba(250,204,21,.20); color: #facc15; }
+    .sig-h .risk.high   { background: rgba(239,68,68,.20); color: #ef4444; }
+
+    .sig-signal {
+      font-size: 18px; font-weight: 800; color: var(--text);
+      margin: 2px 0 6px; letter-spacing: -.01em;
+    }
+    .sig-match {
+      font-size: 13px; color: var(--text); font-weight: 600;
+      display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+    }
+    .sig-match .score {
+      font-family: 'JetBrains Mono', monospace; font-weight: 800;
+      padding: 2px 8px; border-radius: 4px; background: var(--surface-2); color: var(--brand);
+    }
+    .sig-match .min { font-size: 11px; color: var(--muted); margin-left: auto; }
+    .sig-league { font-size: 10px; color: var(--muted); margin-bottom: 8px; }
+
+    .sig-proj {
+      display: flex; gap: 12px; padding: 8px 10px; margin: 8px 0;
+      background: var(--surface-2); border-radius: 6px; font-size: 11px;
+    }
+    .sig-proj .item { display: flex; flex-direction: column; gap: 2px; }
+    .sig-proj .lbl { color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+    .sig-proj .val { color: var(--text); font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 13px; }
+
+    .sig-reason { font-size: 11px; color: var(--muted); line-height: 1.5; }
+    .sig-conf-bar {
+      height: 3px; background: var(--surface-2); border-radius: 2px; overflow: hidden;
+      margin-top: 10px;
+    }
+    .sig-conf-bar > div { height: 100%; background: var(--brand); transition: width .3s ease; }
+
+    /* Card list: badge IA pequeno */
+    .fb-ia-tag {
+      display: inline-block; font-size: 9px; font-weight: 800;
+      padding: 1px 5px; border-radius: 3px; margin-left: 6px;
+      background: var(--brand-soft); color: var(--brand); letter-spacing: .04em;
+    }
+
+    /* === Skeleton vs Enriched === */
+    .fb-match.skeleton .stats { opacity: .55; }
+    .fb-match.skeleton .stats .muted { font-style: italic; }
+    .fb-match.enriched .stats { opacity: 1; }
+    .fb-match.enriched .stats span { transition: background-color .25s ease; }
+    .fb-match .stats span { display:inline-block; padding: 1px 4px; border-radius: 4px; }
+    .fb-skeleton { display: block; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="football"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">Jogos ao vivo</h1>
+          <p class="saas-page-sub">
+            <span class="fb-status off" id="rt-pill"><span class="dot"></span><span id="rt-pill-label">conectando…</span></span>
+            <span id="poller-meta" style="margin-left:8px;">—</span>
+            · <span id="last-updated">aguardando…</span>
+          </p>
+        </div>
+        <div class="saas-page-actions">
+          <button class="btn-ghost" id="btn-refresh" title="Sincronizar painel">↻ Sincronizar</button>
+        </div>
+      </header>
+
+      <!-- KPIs -->
+      <section class="fb-kpis">
+        <div class="fb-kpi"><div class="lbl">Jogos ao vivo</div><div class="val" id="kpi-live">0</div><div class="sub" id="kpi-live-sub">ligas: 0</div></div>
+        <div class="fb-kpi"><div class="lbl">Média escanteios</div><div class="val" id="kpi-corners">0</div><div class="sub">por jogo</div></div>
+        <div class="fb-kpi"><div class="lbl">Média de gols</div><div class="val" id="kpi-goals">0</div><div class="sub">por jogo</div></div>
+        <div class="fb-kpi"><div class="lbl">BTTS atual</div><div class="val" id="kpi-btts">0%</div><div class="sub">dos jogos</div></div>
+      </section>
+
+      <!-- RADAR / MARKET BAR — controle operacional do painel -->
+      <section class="fb-radar-bar" id="radar-bar">
+        <div class="fb-radar-group">
+          <span class="fb-radar-label">📡 Modo</span>
+          <button class="fb-mode-btn active" data-mode="signals">🎯 Sinais</button>
+          <button class="fb-mode-btn" data-mode="live">Ao vivo</button>
+          <button class="fb-mode-btn" data-mode="radar">📈 Radar</button>
+          <span class="fb-mode-pill" id="radar-status">—</span>
+        </div>
+        <div class="fb-radar-group">
+          <span class="fb-radar-label">Mercados</span>
+          <button class="fb-mkt-chip" data-mkt="all">🌐 Todos</button>
+          <button class="fb-mkt-chip" data-mkt="corners">🚩 Escanteios</button>
+          <button class="fb-mkt-chip" data-mkt="goals">⚽ Gols</button>
+          <button class="fb-mkt-chip" data-mkt="btts">🤝 BTTS</button>
+          <button class="fb-mkt-chip" data-mkt="cards">🟨 Cartões</button>
+          <button class="fb-mkt-chip" data-mkt="pressure">🔥 Pressão</button>
+        </div>
+        <div class="fb-radar-group">
+          <span class="fb-radar-label">Perfil</span>
+          <button class="fb-prof-btn" data-prof="conservative">🛡 Conservador</button>
+          <button class="fb-prof-btn active" data-prof="balanced">⚖ Equilibrado</button>
+          <button class="fb-prof-btn" data-prof="aggressive">⚡ Agressivo</button>
+        </div>
+        <div class="fb-radar-group">
+          <label class="fb-radar-label" for="conf-slider">Confiança ≥ <strong id="conf-val">70</strong>%</label>
+          <input type="range" id="conf-slider" min="50" max="98" step="1" value="70" />
+        </div>
+      </section>
+
+      <!-- 3-PAINEL: ligas | partidas | detalhe -->
+      <section class="fb-shell" id="fb-shell">
+        <!-- LEFT: Leagues -->
+        <aside class="fb-panel fb-side">
+          <div class="fb-panel-h"><span class="pulse"></span> Ligas ao vivo</div>
+          <input type="search" placeholder="Filtrar liga…" id="league-search" class="w-full mb-2" />
+          <div class="fb-league-list" id="league-list">
+            <div class="fb-empty">aguardando…</div>
+          </div>
+        </aside>
+
+        <!-- CENTER: Match list -->
+        <section class="fb-panel">
+          <div class="fb-toolbar">
+            <input type="search" id="search" placeholder="🔍 Time…" />
+            <select id="filter-scored">
+              <option value="">Todos</option>
+              <option value="btts">BTTS já</option>
+              <option value="noBtts">Sem BTTS ainda</option>
+            </select>
+            <select id="filter-minute">
+              <option value="">Qualquer minuto</option>
+              <option value="0-15">0-15'</option>
+              <option value="15-45">15-45'</option>
+              <option value="45-60">45-60'</option>
+              <option value="60-90">60-90'</option>
+              <option value="80-99">80'+</option>
+            </select>
+            <span class="fb-chip" data-chip="pressure">🔥 Alta pressão</span>
+            <span class="fb-chip" data-chip="favorites">⭐ Favoritos</span>
+            <span class="fb-chip" data-chip="goal-near">🎯 BTTS iminente</span>
+          </div>
+
+          <div class="fb-matches" id="matches">
+            <div class="fb-empty">
+              <span class="fb-spinner"></span> Carregando partidas ao vivo…
+            </div>
+          </div>
+        </section>
+
+        <!-- RIGHT: Detail -->
+        <aside class="fb-panel fb-detail" id="detail">
+          <div class="fb-empty">
+            Selecione uma partida<br><span style="font-size:11px">stats em tempo real, timeline, trends e predictions</span>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="fb-toast-wrap" id="toasts"></div>
+
+  <!-- DEBUG PANEL — apenas para admins (debug técnico do poller) -->
+  <aside class="fb-debug" id="fb-debug" style="display:none;">
+    <div class="dh">Pipeline runtime <span style="margin-left:auto;font-weight:400;font-size:10px;color:#94a3b8">debug · permanente</span></div>
+
+    <div class="pipeline-block">
+      <div class="head">
+        <span style="color:#94a3b8">Status</span>
+        <span id="dbg-pipeline">⏳ boot</span>
+      </div>
+      <div class="msg" id="dbg-pipeline-msg">inicializando…</div>
+    </div>
+
+    <div class="dbody">
+      <div class="group-title">Conexão</div>
+      <div class="row"><span class="k">Socket</span><span class="v" id="dbg-socket">–</span></div>
+      <div class="row"><span class="k">Transport</span><span class="v" id="dbg-transport">–</span></div>
+      <div class="row"><span class="k">Reconnects</span><span class="v" id="dbg-recon">0</span></div>
+
+      <div class="group-title">Timestamps (idade)</div>
+      <div class="row"><span class="k">Último poll</span><span class="v" id="dbg-last-poll">nunca</span></div>
+      <div class="row"><span class="k">Último socket</span><span class="v" id="dbg-last-socket">nunca</span></div>
+      <div class="row"><span class="k">Último enriched</span><span class="v" id="dbg-last-enriched">nunca</span></div>
+      <div class="row"><span class="k">Último signal</span><span class="v" id="dbg-last-signal">nunca</span></div>
+
+      <div class="group-title">Contadores reais</div>
+      <div class="row"><span class="k">Matches raw</span><span class="v" id="dbg-raw">0</span></div>
+      <div class="row"><span class="k">Enriched</span><span class="v" id="dbg-enriched">0</span></div>
+      <div class="row"><span class="k">Filtrados</span><span class="v" id="dbg-filtered">0</span></div>
+      <div class="row"><span class="k">Signals (todos)</span><span class="v" id="dbg-sig-all">0</span></div>
+      <div class="row"><span class="k">Signals visíveis</span><span class="v" id="dbg-sig-vis">0</span></div>
+      <div class="row"><span class="k">Subs fixtures</span><span class="v" id="dbg-subs">0</span></div>
+      <div class="row"><span class="k">Poller interval</span><span class="v" id="dbg-poll-ms">–</span></div>
+
+      <div class="group-title">Últimos eventos socket</div>
+      <div id="dbg-events"><div style="color:#64748b;font-style:italic">aguardando…</div></div>
+    </div>
+  </aside>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/upgrade-celebration.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script>
+    // Mostra o painel de debug técnico apenas para admins (separação CLIENT/ADMIN)
+    (function () {
+      try {
+        const u = window.RobotrendAuth?.getUser?.();
+        const isAdmin = u && (u.role === 'admin' || u.role === 'owner' || u.isAdmin === true);
+        const dbg = document.getElementById('fb-debug');
+        if (dbg && isAdmin) dbg.style.display = '';
+      } catch (_) { /* silent */ }
+    })();
+  </script>
+  <script src="/js/football.js" defer></script>
+</body>
+</html>
