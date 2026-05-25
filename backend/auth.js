@@ -50,8 +50,18 @@ function signToken(payload, opts = {}) {
 
 function verifyToken(token) {
   ok();
-  try { return jwt.verify(token, JWT_SECRET); }
-  catch (e) { return null; }
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (process.env.AUTH_VERBOSE === 'true') {
+      console.log(`[AUTH] JWT validated sub=${payload.sub} role=${payload.role || '?'}`);
+    }
+    return payload;
+  } catch (e) {
+    if (process.env.AUTH_VERBOSE === 'true') {
+      console.log(`[AUTH] JWT invalid (${e.name}: ${e.message})`);
+    }
+    return null;
+  }
 }
 
 function randomToken(len = 32) {
@@ -128,11 +138,27 @@ function optionalAuth(db) {
   };
 }
 
+/** Roles com acesso de admin no painel — master inclui admin + owner + super_admin. */
+const ADMIN_ROLES = new Set(['admin', 'owner', 'master', 'super_admin']);
+
+function isMasterRole(role) {
+  return ADMIN_ROLES.has(String(role || '').toLowerCase());
+}
+
 function requireAdmin(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
-  const role = String(req.user.role || '').toLowerCase();
-  if (role !== 'admin' && role !== 'owner') {
+  if (!isMasterRole(req.user.role)) {
     return res.status(403).json({ error: 'Acesso negado: apenas administradores', code: 'ADMIN_REQUIRED' });
+  }
+  next();
+}
+
+/** Exige role master/super_admin — restrito a operações destrutivas. */
+function requireMaster(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
+  const role = String(req.user.role || '').toLowerCase();
+  if (role !== 'master' && role !== 'super_admin' && role !== 'owner') {
+    return res.status(403).json({ error: 'Acesso negado: apenas master admin', code: 'MASTER_REQUIRED' });
   }
   next();
 }
@@ -146,7 +172,7 @@ function requirePremium(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
   const role = String(req.user.role || '').toLowerCase();
   const plan = String(req.user.plan || '').toUpperCase();
-  const ok = role === 'admin' || role === 'owner' || role === 'premium'
+  const ok = isMasterRole(role) || role === 'premium'
           || plan === 'PREMIUM' || plan === 'PRO' || plan === 'VIP';
   if (!ok) {
     return res.status(403).json({
@@ -204,7 +230,7 @@ function requireSystemToggle(db) {
       return res.status(401).json({ error: 'Usuário não encontrado', code: 'USER_NOT_FOUND' });
     }
     req.user = sanitizeUser(user);
-    if (req.user.role !== 'admin') {
+    if (!isMasterRole(req.user.role)) {
       return res.status(403).json({
         error: 'Apenas administradores podem alternar LIVE/PRE-LIVE',
         code: 'ADMIN_REQUIRED',
@@ -347,8 +373,8 @@ function buildAuthRoutes(app, db) {
 
       const token = signToken({ sub: user.id, role: user.role, plan: user.plan });
       setAuthCookie(res, token);
-      console.log(`[AUTH LOGIN] OK email="${email}" id=${user.id} role=${user.role} plan=${user.plan}`);
-      logger.info('user login', { email: user.email, userId: user.id });
+      console.log(`[AUTH] login success email="${email}" id=${user.id} role=${user.role} plan=${user.plan}`);
+      logger.info('user login', { email: user.email, userId: user.id, role: user.role });
       res.json({ ok: true, token, user: sanitizeUser(user) });
     } catch (e) {
       console.log(`[AUTH LOGIN] ERRO motivo=${e.message}`);
@@ -457,9 +483,12 @@ module.exports = {
   requireAuth,
   optionalAuth,
   requireAdmin,
+  requireMaster,
   requirePremium,
   requireSystemToggle,
   isDevToggleBypass,
+  isMasterRole,
+  ADMIN_ROLES,
   sanitizeUser,
   randomToken,
   setAuthCookie,

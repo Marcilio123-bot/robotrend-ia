@@ -64,7 +64,9 @@ services:
       - key: BOOTSTRAP_ADMIN_EMAIL
         sync: false
       - key: BOOTSTRAP_ADMIN_PASSWORD
-        generateValue: true
+        sync: false
+      - key: BOOTSTRAP_ADMIN_FORCE_RESET
+        value: "false"
       # CORS / URLs — opcionais: startup-check usa RENDER_EXTERNAL_URL como fallback
       - key: ALLOWED_ORIGINS
         sync: false
@@ -85,7 +87,13 @@ services:
       # NÃO defina PGHOST=postgres — causa getaddrinfo ENOTFOUND no Render.
       # DATABASE_URL vem do bloco fromDatabase abaixo.
       - key: FOOTBALL_PROVIDER_PRIORITY
-        value: sofascore,thesportsdb,football-data,apisports,demo
+        value: bet365data,thesportsdb,football-data,apisports,demo
+      # Bet365Data RapidAPI (provider primário em produção).
+      # Cole RAPIDAPI_KEY no painel Environment do Web Service.
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: RAPIDAPI_HOST
+        value: bet365data.p.rapidapi.com
       - key: FOOTBALL_DATA_KEY
         sync: false
       - key: DEMO_PROVIDER_ENABLED

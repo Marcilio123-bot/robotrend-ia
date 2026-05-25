@@ -16,12 +16,14 @@
  *      para o frontend mostrar de quantas fontes veio.
  *
  * Ordem default (FOOTBALL_PROVIDER_PRIORITY):
- *   sofascore → apisports → thesportsdb → football-data → demo
+ *   bet365data → thesportsdb → football-data → apisports → demo
  *
- *   - SofaScore é primary: mais ligas live, mais stats, refresh rápido
- *   - API-Sports é secundário quando há quota paga
+ *   - Bet365Data (RapidAPI) é PRIMARY: live + odds + stats com contrato comercial
  *   - TheSportsDB e football-data como fallback gratuito
+ *   - API-Sports só se houver chave paga
  *   - demo só como último recurso (mantém painel vivo)
+ *   - SofaScore REMOVIDO do default (Cloudflare bloqueia com HTTP 403)
+ *     Para reabilitar manualmente: FOOTBALL_PROVIDER_PRIORITY=bet365data,sofascore,…
  *
  * Cada provider mantém SUA própria instância (imports lazy) e expõe a
  * mesma interface (apiFootball.js).
@@ -30,6 +32,8 @@
 'use strict';
 
 const REGISTRY = {
+  'bet365data':    () => require('./bet365dataProvider'),
+  bet365:          () => require('./bet365dataProvider'),
   'football-data': () => require('./footballDataProvider'),
   footballdata:    () => require('./footballDataProvider'),
   thesportsdb:     () => require('./thesportsdbProvider'),
@@ -41,8 +45,10 @@ const REGISTRY = {
 function parsePriority() {
   // Compat: FOOTBALL_PROVIDER (singular) seleciona um único; PRIORITY define a lista.
   const single = String(process.env.FOOTBALL_PROVIDER || '').toLowerCase().trim();
-  // Nova ordem default: SofaScore primário (melhor cobertura live), demais como fallback.
-  const list   = String(process.env.FOOTBALL_PROVIDER_PRIORITY || 'sofascore,apisports,thesportsdb,football-data,demo')
+  // Nova ordem default: Bet365Data primário (RapidAPI, odds + live + stats).
+  // SofaScore foi REMOVIDO do default — Cloudflare bloqueia com HTTP 403 em produção.
+  // Para reabilitar, defina FOOTBALL_PROVIDER_PRIORITY manualmente.
+  const list   = String(process.env.FOOTBALL_PROVIDER_PRIORITY || 'bet365data,thesportsdb,football-data,apisports,demo')
     .toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
 
   if (single && REGISTRY[single]) {

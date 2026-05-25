@@ -65,6 +65,7 @@ const { logger, httpMiddleware } = require('./logger');
 const metrics = require('./metrics');
 const quality = require('./quality');
 const onboarding = require('./onboarding');
+const { bootstrapMasterAdmin: bootstrapMaster, resetMasterAdmin } = require('./services/bootstrapAdmin');
 const backtest = require('./backtest');
 const results = require('./results');
 const beta = require('./beta');
@@ -855,6 +856,15 @@ async function main() {
     });
     throw e;
   }
+
+  // Master admin (idempotente — cria se não existir, promove se role < master,
+  // reseta senha se BOOTSTRAP_ADMIN_FORCE_RESET=true).
+  try {
+    await bootstrapMaster(db);
+  } catch (e) {
+    log.error('[AUTH] bootstrap master falhou', { err: e.message });
+  }
+  // Legacy bootstrapAdmin (mantido p/ compat — sem-op se já existe)
   await bootstrapAdmin();
 
   /* ============================================================
