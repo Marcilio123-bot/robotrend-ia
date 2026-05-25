@@ -234,21 +234,27 @@ class ApiLiveScanner {
       console.log(`[LIVE FILTER] ${removed} jogos removidos por não serem reais`);
     }
 
-    // Multi-API Consensus Engine — só em STRICT.
-    // As 3 fontes externas devem concordar antes do analyzer rodar.
+    // Multi-API Consensus Engine — agora roda em TODOS os modos
+    // (strict/relaxed/off, resolvido por consensus.CONSENSUS_MODE).
+    //   - strict  : descarta matches que divergem ou se uma source falhar
+    //   - relaxed : aceita TUDO, anota sourceQuality (verified/partial/single-source)
+    //   - off     : pass-through anotado como single-source (sem HTTP extra)
+    // Em qualquer modo, `match.consensus` + `match.sourceQuality` ficam disponíveis
+    // para o pipeline e para o frontend.
     let toAnalyze = valid;
-    if (STRICT_REAL_ONLY) {
-      try {
-        const { confirmed, failedSources } = await consensus.confirmMatches(valid);
-        if (failedSources.length) {
-          console.error(`[CONSENSUS BLOCK] ${failedSources.length} source(s) falharam: ${failedSources.join(',')} — 0 matches emitidos.`);
-          return [];
-        }
-        toAnalyze = confirmed;
-      } catch (e) {
-        console.error(`[CONSENSUS BLOCK] erro inesperado: ${e.message} — 0 matches emitidos.`);
+    try {
+      const { confirmed, failedSources, mode } = await consensus.confirmMatches(valid);
+      if (mode === 'strict' && failedSources.length) {
+        console.error(
+          `[CONSENSUS BLOCK] strict — ${failedSources.length} source(s) falharam: ${failedSources.join(',')} — 0 matches emitidos.`
+        );
         return [];
       }
+      toAnalyze = confirmed;
+    } catch (e) {
+      // RELAXED/OFF não devem falhar nunca aqui; STRICT degrada para zero matches.
+      console.error(`[CONSENSUS BLOCK] erro inesperado: ${e.message} — degradando para feed bruto.`);
+      toAnalyze = STRICT_REAL_ONLY ? [] : valid.map((m) => consensus.annotateSourceQuality(m, { reason: 'consensus-error' }));
     }
 
     toAnalyze.forEach((m) => {
@@ -362,23 +368,56 @@ class ApiLiveScanner {
   }
 }
 
+/**
+ * Scanner inerte — devolve lista vazia. Usado quando nenhum provider real
+ * está disponível E o usuário NÃO pediu explicitamente DEMO_MODE=true.
+ * Previne o gargalo histórico onde a ausência de API_FOOTBALL_KEY fazia
+ * o sistema cair em DemoLiveScanner e emitir signals FAKE de "Chelsea x
+ * Arsenal" como se fossem reais.
+ */
+class EmptyLiveScanner {
+  constructor() { this.history = new Map(); this.acceptedOnce = new Set(); }
+  list() { return []; }
+  async tick() { return []; }
+}
+
 function createLiveScanner() {
+  // 1) STRICT_REAL_ONLY — só ApiLiveScanner com proteção API
   if (STRICT_REAL_ONLY) {
-    if (!API_KEY) {
-      console.warn('[live] STRICT_REAL_ONLY=true e API_FOOTBALL_KEY ausente — scanner retornará [] sempre.');
-    }
     if (DEMO) {
       console.warn('[live] STRICT_REAL_ONLY=true sobrepõe DEMO_MODE — fonte sintética desabilitada.');
     }
-    console.log('[live] API-Football scanner ativo (STRICT real-only).');
+    if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
+      console.warn('[live] STRICT_REAL_ONLY=true + nenhum provider na chain — scanner inerte (retorna []).');
+      return new EmptyLiveScanner();
+    }
+    console.log('[live] ApiLiveScanner ativo (STRICT) — provider: ' + (apiFootball.providerName || '?') +
+                ' · chain: ' + (apiFootball.priority?.join('→') || '?'));
     return new ApiLiveScanner();
   }
-  if (DEMO || !API_KEY) {
-    console.log('[live] Demo scanner ativo (somente desenvolvimento).');
+
+  // 2) Dev com DEMO_MODE EXPLICITAMENTE solicitado pelo usuário
+  if (DEMO) {
+    console.warn('[live] DemoLiveScanner ativo (DEMO_MODE=true) — emitindo dados SINTÉTICOS, ' +
+                 'signals NÃO são reais e devem ser ignorados em produção.');
     return new DemoLiveScanner();
   }
-  console.log('[live] API-Football scanner ativo.');
-  return new ApiLiveScanner();
+
+  // 3) Dev sem DEMO mas com algum provider real (sofascore/tsdb/apisports/etc.)
+  //    O orchestrator footballProvider.isConfigured() retorna true para qualquer
+  //    provider disponível — incluindo sofascore que NÃO precisa de chave.
+  if (apiFootball.hasAnyConfiguredProvider?.() || apiFootball.isConfigured?.()) {
+    console.log('[live] ApiLiveScanner ativo via orchestrator — provider: ' +
+                (apiFootball.providerName || '?') +
+                ' (priority: ' + (apiFootball.priority?.join('→') || '?') + ')');
+    return new ApiLiveScanner();
+  }
+
+  // 4) Último recurso: nenhum provider real E sem DEMO_MODE explícito.
+  //    NÃO devolvemos DemoLiveScanner — seria fonte de signals fake.
+  console.warn('[live] Nenhum provider real configurado e DEMO_MODE!=true. ' +
+               'Scanner inerte — bot.js NÃO emitirá signals até você ajustar o .env.');
+  return new EmptyLiveScanner();
 }
 
 module.exports = { createLiveScanner };

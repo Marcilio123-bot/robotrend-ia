@@ -16,6 +16,29 @@
 
   // === Estado ===
   const ALL_MARKETS = ['corners', 'goals', 'btts', 'cards', 'pressure'];
+  /** Tempo que um jogo pode sumir do feed antes de ser removido da UI (evita flicker no restart). */
+  const MATCH_VANISH_GRACE_MS = 90_000;
+  /** Após disconnect do socket, não remove jogos por N ms (servidor reiniciando). */
+  const RECONNECT_GRACE_MS = 120_000;
+
+  function isLocalDev() {
+    try {
+      const h = location.hostname;
+      return h === 'localhost' || h === '127.0.0.1' || h === '';
+    } catch { return false; }
+  }
+
+  /** Modos legados 'live' / 'ao-vivo' → scanner (lista completa ao vivo). */
+  function normalizeMode(mode) {
+    const m = mode || 'scanner';
+    if (m === 'live' || m === 'ao-vivo') return 'scanner';
+    return m;
+  }
+
+  function effectiveMode() {
+    return normalizeMode(state.mode);
+  }
+
   const state = {
     matches: new Map(),     // id -> match
     leagues: new Map(),     // id|name -> { name, count, country, flag }
@@ -28,8 +51,19 @@
     sseFallback: null,
     detailTab: 'ia', // default: leitura IA
     // --- RADAR / MERCADOS ---
-    // mode: 'signals' (SignalCards filtrados, default) | 'live' (lista de partidas) | 'radar' (jogos quentes)
-    mode: loadJSON('rt:fb:mode', 'signals'),
+    // mode: 'signals' (SignalCards filtrados, default)
+    //     | 'scanner' (TODOS os jogos ao vivo, zero filtro IA)
+    //     | 'radar'   (apenas jogos quentes — com signal acima do threshold)
+    // Compat: legado 'live' é migrado para 'scanner' na inicialização.
+    mode: (() => {
+      const defaultMode = isLocalDev() ? 'scanner' : 'signals';
+      const saved = loadJSON('rt:fb:mode', defaultMode);
+      const migrated = normalizeMode(saved);
+      if (migrated !== saved) {
+        try { localStorage.setItem('rt:fb:mode', JSON.stringify(migrated)); } catch {}
+      }
+      return migrated;
+    })(),
     // mercados ativos. Set de strings: 'corners','goals','btts','cards','pressure'.
     // 'all' = vazio (sem filtro). Persiste em localStorage.
     markets: new Set(loadJSON('rt:fb:markets', [])),
@@ -65,6 +99,23 @@
       subsFixtures: new Set(),       // fixtures que assinamos (re-emit on reconnect)
       lastEvents: [],                // [{ ts, name, info }] — últimos 20
       reason: null,                  // motivo técnico se contadores=0
+
+      // Grace após disconnect — evita sumir jogos um-a-um quando npm run dev reinicia o backend
+      reconnectAt: 0,
+      lastTickAt: 0,
+      stableTicks: 0,
+
+      // META do feed atual (vem do backend em /live e /scanner)
+      // Usado pela barra "📡 87 recebidos · 75 exibidos · 12 filtrados · provider: sofascore"
+      feedMeta: {
+        totalReceived: 0,
+        totalAfterFilter: 0,
+        filteredOut: 0,
+        provider: '—',
+        safeMode: false,
+        bySource: {},
+        topLeagues: [],
+      },
 
       // Pipeline health (computado por checkPipelineHealth)
       // status: 'ok' | 'no-poller' | 'no-socket' | 'no-enricher' | 'no-signals' | 'boot'
@@ -120,6 +171,7 @@
     const sock = io('/football', {
       transports: ['websocket', 'polling'],
       reconnection: true,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 800,
       reconnectionDelayMax: 5000,
       timeout: 8000,
@@ -150,8 +202,11 @@
     });
     sock.io.on('reconnect', () => { logEvent('reconnect_ok'); });
     sock.on('disconnect', (reason) => {
+      state.runtime.reconnectAt = Date.now();
+      state.runtime.stableTicks = 0;
       updateConn('offline', `desconectado: ${reason}`);
       logEvent('disconnect', { reason });
+      console.log('[LIVE] socket disconnect — grace de remoção ativo por', RECONNECT_GRACE_MS / 1000, 's');
     });
     sock.on('connect_error', (err) => {
       updateConn('offline', `erro de conexão: ${err?.message || 'unknown'}`);
@@ -161,7 +216,16 @@
     sock.on('hello', (h) => { logEvent('hello', h); bumpRuntime({ socket: true }); });
     sock.on('tick', (p) => {
       state.poller = p.poller || state.poller;
+      const n = (p.matches || []).length;
+      if (n > 0) {
+        state.runtime.stableTicks = (state.runtime.stableTicks || 0) + 1;
+        if (state.runtime.stableTicks >= 2) state.runtime.reconnectAt = 0;
+      }
+      state.runtime.lastTickAt = Date.now();
       replaceMatches(p.matches || [], p.generatedAt);
+      // O tick socket NÃO carrega meta completa — sintetiza a partir do que
+      // chegou para manter o painel SCANNER em sync (senão fica em 0/0/0).
+      syncFeedMetaFromState({ source: 'socket-tick', generatedAt: p.generatedAt });
       const isStale = p.source === 'stale-cache';
       updateConn(isStale ? 'stale' : 'online',
         isStale ? '🟡 cache (API instável)' : `🟢 conectado · ${state.runtime.transport}`);
@@ -189,9 +253,17 @@
       render();
     });
     sock.on('match:remove', ({ matchId }) => {
-      state.matches.delete(String(matchId));
-      if (state.activeMatchId === String(matchId)) state.activeMatchId = null;
-      logEvent('match:remove', { id: matchId });
+      const id = String(matchId);
+      const m = state.matches.get(id);
+      if (!m) return;
+      if (shouldHoldVanishedMatch(m)) {
+        m._vanishedAt = m._vanishedAt || Date.now();
+        logEvent('match:remove-deferred', { id, graceMs: MATCH_VANISH_GRACE_MS });
+        return;
+      }
+      state.matches.delete(id);
+      if (state.activeMatchId === id) state.activeMatchId = null;
+      logEvent('match:remove', { id });
       bumpRuntime({});
       render();
     });
@@ -222,7 +294,7 @@
       patchSignalBadge(String(match.id));
       logEvent('match:enriched', { id: match.id, signals: match.signals?.length || 0 });
       bumpRuntime({ enriched: true });
-      if (state.mode === 'signals') {
+      if (effectiveMode() === 'signals') {
         renderMatches();
         updateRadarStatus();
       }
@@ -364,11 +436,21 @@
     rt.enrichedMatchesCount = enriched;
     rt.signalsCount = sigs;
     rt.visibleSignalsCount = typeof collectSignals === 'function' ? collectSignals().length : 0;
-    rt.filteredMatchesCount = state.mode === 'signals'
+    rt.filteredMatchesCount = effectiveMode() === 'signals'
       ? rt.visibleSignalsCount
       : (typeof getFiltered === 'function' ? getFiltered().length : rt.rawMatchesCount);
+    // Mantém feedMeta.totalReceived sincronizado com state.matches mesmo
+    // quando socket events (match:upsert / match:remove) entram entre fetches.
+    // Sem isso, scanner mostra "0 recebidos" embora state tenha N matches.
+    if (typeof syncFeedMetaFromState === 'function' && state.matches.size > 0) {
+      const cur = state.runtime.feedMeta || {};
+      if ((cur.totalReceived || 0) < state.matches.size) {
+        syncFeedMetaFromState({ source: 'bumpRuntime' });
+      }
+    }
     checkPipelineHealth();
     renderDebugPanel();
+    if (typeof renderModeMeta === 'function') renderModeMeta();
   }
 
   function logEvent(name, info = {}) {
@@ -667,17 +749,21 @@
                    : state.profile === 'aggressive'    ? '⚡'
                    :                                     '⚖';
     const mk = state.markets.size === 0 ? 'todos' : Array.from(state.markets).join('+');
-    if (state.mode === 'signals') {
+    if (effectiveMode() === 'signals') {
       const count = collectSignals().length;
       el.textContent = `🎯 ${count} sinais · ${mk} · ${profIcon} · ≥${state.minConfidence}%`;
       el.classList.add('radar');
-    } else if (state.mode === 'radar') {
+    } else if (effectiveMode() === 'radar') {
       const visibleSignals = Array.from(state.signalsByMatch.values())
         .flat().filter(signalAllowed).length;
       el.textContent = `📈 ${visibleSignals} eventos · ${mk} · ${profIcon} · ≥${state.minConfidence}%`;
       el.classList.add('radar');
+    } else if (effectiveMode() === 'scanner') {
+      const total = Math.max(state.runtime.feedMeta?.totalReceived || 0, state.matches.size);
+      el.textContent = `📡 SCANNER · ${total} jogos ao vivo · zero filtro IA`;
+      el.classList.remove('radar');
     } else {
-      el.textContent = `Ao vivo · ${mk} · ${profIcon} ${state.profile}`;
+      el.textContent = `📡 Ao vivo · ${mk} · ${profIcon} ${state.profile}`;
       el.classList.remove('radar');
     }
   }
@@ -783,7 +869,23 @@
    *   clock local saber a partir de qual minute incrementar.
    * - Mantém matches em "encerrando" (>=120') por até 60s antes de remover.
    */
+  /** Mantém jogo na UI durante grace (restart do backend / tick instável). */
+  function shouldHoldVanishedMatch(m) {
+    if (!m) return false;
+    const now = Date.now();
+    if (state.runtime.reconnectAt && (now - state.runtime.reconnectAt) < RECONNECT_GRACE_MS) {
+      return true;
+    }
+    if (m._vanishedAt && (now - m._vanishedAt) < MATCH_VANISH_GRACE_MS) {
+      return true;
+    }
+    return false;
+  }
+
   function replaceMatches(list, generatedAt) {
+    if (window.__ROBOTREND_DEBUG) {
+      console.log('[LIVE MATCHES RECEIVED]', list?.length || 0, 'matches @', generatedAt);
+    }
     const now = Date.now();
     const incoming = new Set();
     for (const m of list) {
@@ -792,21 +894,26 @@
       const prev = state.matches.get(id);
       m._serverMinute = Number(m.minute || 0);
       m._serverMinuteAt = now;
-      // Preserva flag de "encerrando" se já estava marcado e ainda na grace
+      m._vanishedAt = 0;
       if (prev?._finishingAt) m._finishingAt = prev._finishingAt;
       state.matches.set(id, m);
     }
-    // Para matches que sumiram do feed: se já estavam em grace, mantém;
-    // senão removem na próxima limpeza padrão.
+    // Sumiu do tick: marca _vanishedAt em vez de apagar na hora (evita lista
+    // esvaziar um-a-um após npm run dev / provider instável).
     for (const [id, m] of state.matches) {
-      if (!incoming.has(id) && !m._finishingAt) {
-        state.matches.delete(id);
+      if (incoming.has(id)) continue;
+      if (m._finishingAt) continue;
+      if (shouldHoldVanishedMatch(m)) {
+        if (!m._vanishedAt) m._vanishedAt = now;
+        continue;
       }
+      state.matches.delete(id);
     }
     const anyEnriched = list.some((m) => m.enriched);
     rebuildLeagues();
     bumpLastUpdated(generatedAt);
     if (anyEnriched) state.runtime.lastEnrichedAt = Date.now();
+    syncFeedMetaFromState({ source: 'replaceMatches', generatedAt });
   }
 
   /**
@@ -836,6 +943,15 @@
   function localClockEngine() {
     const now = Date.now();
     let needsRender = false;
+
+    // Remove jogos que ficaram "vanished" além do grace
+    for (const [id, m] of state.matches) {
+      if (m._vanishedAt && !shouldHoldVanishedMatch(m)) {
+        state.matches.delete(id);
+        if (state.activeMatchId === id) state.activeMatchId = null;
+        needsRender = true;
+      }
+    }
 
     for (const [id, m] of state.matches) {
       const status = String(m.status || '').toUpperCase();
@@ -919,35 +1035,51 @@
       const s = state.filters.search.toLowerCase();
       arr = arr.filter((m) => (`${m.home} ${m.away}`).toLowerCase().includes(s));
     }
-    if (state.filters.scored === 'btts') {
+    // SCANNER MODE: pula filtros que dependem de enrichment ou de heurística IA.
+    // Mantém só os filtros de NAVEGAÇÃO (search + league já aplicados acima).
+    // O propósito do Scanner é mostrar TODOS os jogos reais.
+    const isScanner = effectiveMode() === 'scanner';
+
+    if (!isScanner && state.filters.scored === 'btts') {
       arr = arr.filter((m) => (m.score.home > 0) && (m.score.away > 0));
     }
-    if (state.filters.scored === 'noBtts') {
+    if (!isScanner && state.filters.scored === 'noBtts') {
       arr = arr.filter((m) => !((m.score.home > 0) && (m.score.away > 0)));
     }
-    if (state.filters.minute) {
+    if (!isScanner && state.filters.minute) {
       const [a, b] = state.filters.minute.split('-').map(Number);
       arr = arr.filter((m) => (m.minute >= a) && (m.minute <= b));
     }
-    if (state.filters.pressureOnly) {
+    if (!isScanner && state.filters.pressureOnly) {
       arr = arr.filter((m) => m.enriched && (m.perMinute?.pressureIndex || 0) >= 50);
     }
-    if (state.filters.onlyFavorites) {
+    if (!isScanner && state.filters.onlyFavorites) {
       arr = arr.filter((m) => state.favorites.has(String(m.id)));
     }
-    if (state.filters.bttsNear) {
+    if (!isScanner && state.filters.bttsNear) {
       arr = arr.filter((m) => m.enriched && isBttsNear(m));
     }
 
     // === RADAR MODE: só matches com signal permitido pelos filtros de mercado ===
-    if (state.mode === 'radar') {
+    if (effectiveMode() === 'radar') {
       arr = arr.filter((m) => !!topSignalFor(m.id));
       // ordena por confiança do top signal desc
       arr.sort((a, b) => (topSignalFor(b.id)?.confidence || 0) - (topSignalFor(a.id)?.confidence || 0));
       return arr;
     }
 
-    // === LIVE MODE: ordenação padrão (favoritos > signal forte > pressão) ===
+    // === SCANNER MODE: zero ranking por IA. Apenas ordena por
+    // liga > minuto desc para o usuário enxergar os jogos mais "ativos" primeiro.
+    if (isScanner) {
+      arr.sort((a, b) => {
+        const la = String(a.league?.name || '').localeCompare(String(b.league?.name || ''));
+        if (la !== 0) return la;
+        return (b.minute || 0) - (a.minute || 0);
+      });
+      return arr;
+    }
+
+    // === LIVE MODE (legado): ordenação padrão (favoritos > signal forte > pressão) ===
     arr.sort((a, b) => {
       const fa = state.favorites.has(String(a.id)) ? 1 : 0;
       const fb = state.favorites.has(String(b.id)) ? 1 : 0;
@@ -975,9 +1107,124 @@
     renderMatches();
     renderPollerMeta();
     updateRadarStatus();
+    renderModeMeta();
     // Esconde toolbar de filtros antigos no modo signals (radar usa só barra superior)
     const tb = document.querySelector('.fb-toolbar');
     if (tb) tb.style.display = state.mode === 'signals' ? 'none' : '';
+    // Esconde controles IA da radar-bar quando estamos em SCANNER
+    const bar = document.getElementById('radar-bar');
+    if (bar) bar.classList.toggle('scanner-mode', effectiveMode() === 'scanner');
+  }
+
+  /**
+   * Atualiza a barra de meta logo abaixo dos botões de modo:
+   *   📡 SCANNER · 87 recebidos · 87 exibidos · 0 filtrados · provider: sofascore
+   *   🎯 SINAIS  · 87 recebidos · 12 exibidos · 75 filtrados pela IA · provider: sofascore
+   *
+   * Lê `state.runtime.feedMeta` (vem do backend) e dos contadores locais.
+   */
+  function renderModeMeta() {
+    const bar = document.getElementById('fb-mode-meta');
+    if (!bar) return;
+    syncFeedMetaFromState({ source: 'renderModeMeta' });
+    const meta = state.runtime.feedMeta || {};
+    const rt = state.runtime;
+
+    // TEMP DEBUG (remove após validação): mostra estado real no console
+    if (window.__ROBOTREND_DEBUG) {
+      console.log('FEED META', meta);
+      console.log('MODE', state.mode, '· rawMatches=', rt.rawMatchesCount);
+    }
+
+    // Totais: o backend manda totalReceived (raw do poller, antes de qualquer
+    // filtro UI). Se chegou em zero/null OU o state local tem mais matches
+    // (caso do socket que não traz meta), usamos o tamanho do state.matches.
+    const totalReceived = Math.max(
+      Number(meta.totalReceived) || 0,
+      rt.rawMatchesCount || 0,
+    );
+    let shown, filteredLabel;
+    if (effectiveMode() === 'signals') {
+      shown = rt.visibleSignalsCount;
+      filteredLabel = `${Math.max(0, rt.rawMatchesCount - shown)} filtrados pela IA`;
+    } else if (effectiveMode() === 'radar') {
+      shown = rt.filteredMatchesCount;
+      filteredLabel = `${Math.max(0, totalReceived - shown)} filtrados`;
+    } else {
+      // scanner: shown = total exibido após filtros de navegação (search/league)
+      shown = typeof getFiltered === 'function' ? getFiltered().length : totalReceived;
+      filteredLabel = `${Math.max(0, totalReceived - shown)} ocultos`;
+    }
+
+    const label = effectiveMode() === 'scanner' ? `📡 SCANNER · ${totalReceived} jogo${totalReceived === 1 ? '' : 's'} ao vivo`
+                : effectiveMode() === 'signals' ? '🎯 SINAIS IA · apenas operáveis'
+                : '📈 RADAR · jogos quentes';
+
+    const provider = meta.provider || '—';
+    const filteredOut = Math.max(0, totalReceived - shown);
+    document.getElementById('meta-mode-label').textContent = label;
+    document.getElementById('meta-total').textContent = String(totalReceived);
+    document.getElementById('meta-shown').textContent = String(shown);
+    document.getElementById('meta-filtered').textContent = String(filteredOut);
+    document.getElementById('meta-provider').textContent = provider;
+
+    // Tooltips ricos com breakdown por source
+    const breakdownEl = document.getElementById('meta-source-breakdown');
+    const breakdownSep = document.getElementById('meta-source-sep');
+    if (meta.bySource && Object.keys(meta.bySource).length > 1) {
+      // Mais de 1 provider = mostrar breakdown inline (modo agregado ou múltiplas fontes)
+      const sourceText = Object.entries(meta.bySource)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k}: ${v}`).join(' · ');
+      document.getElementById('meta-provider').title = `Fontes ativas — ${sourceText}`;
+      if (breakdownEl) {
+        breakdownEl.innerHTML = Object.entries(meta.bySource)
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, v]) => `<span class="fb-src-chip" data-src="${escapeHtml(k)}">${escapeHtml(k)} <strong>${v}</strong></span>`)
+          .join(' ');
+        breakdownEl.hidden = false;
+        if (breakdownSep) breakdownSep.hidden = false;
+      }
+    } else {
+      if (breakdownEl) breakdownEl.hidden = true;
+      if (breakdownSep) breakdownSep.hidden = true;
+    }
+
+    // Top ligas com mais jogos ao vivo (vem do backend em meta.topLeagues)
+    const leaguesEl = document.getElementById('meta-top-leagues');
+    const leaguesSep = document.getElementById('meta-leagues-sep');
+    if (Array.isArray(meta.topLeagues) && meta.topLeagues.length && effectiveMode() === 'scanner') {
+      const top5 = meta.topLeagues.slice(0, 5);
+      if (leaguesEl) {
+        leaguesEl.innerHTML = '🏆 ' + top5
+          .map((l) => `<span class="fb-league-chip" title="${escapeHtml(l.name)} — ${l.count} ao vivo">${escapeHtml((l.name || '').slice(0, 18))} <strong>${l.count}</strong></span>`)
+          .join(' ');
+        leaguesEl.hidden = false;
+        if (leaguesSep) leaguesSep.hidden = false;
+      }
+    } else {
+      if (leaguesEl) leaguesEl.hidden = true;
+      if (leaguesSep) leaguesSep.hidden = true;
+    }
+
+    // Aviso de safe-mode (provider em modo cacheado / breaker aberto)
+    const warn = document.getElementById('meta-warn');
+    if (meta.safeMode) {
+      warn.hidden = false;
+      warn.textContent = '⚠ safe-mode (dados cacheados)';
+    } else if (effectiveMode() === 'signals' && rt.signalsCount === 0 && rt.enrichedMatchesCount > 0) {
+      warn.hidden = false;
+      warn.textContent = '⚠ nenhum sinal acima do threshold — tente reduzir confiança';
+    } else {
+      warn.hidden = true;
+    }
+
+    bar.hidden = false;
+    bar.classList.toggle('scanner', effectiveMode() === 'scanner');
+
+    // Tooltip rico explicando o número de filtrados conforme o modo
+    const filteredEl = document.getElementById('meta-filtered');
+    if (filteredEl?.parentElement) filteredEl.parentElement.title = filteredLabel;
   }
 
   function renderKpis() {
@@ -1040,12 +1287,16 @@
     const root = $('#matches');
 
     // ============ MODO SIGNALS: SignalCards (decision board) ============
-    if (state.mode === 'signals') {
+    if (effectiveMode() === 'signals') {
       return renderSignalBoard(root);
     }
 
     // ============ MODO LIVE/RADAR: lista tradicional de matches ============
     const arr = getFiltered();
+    if (window.__ROBOTREND_DEBUG) {
+      console.log('[NORMALIZED MATCHES]', state.matches.size, 'no state ·', state.mode, 'mode');
+      console.log('[RENDERED MATCHES]', arr.length, 'após filtros');
+    }
     if (!arr.length) {
       const totalLive = state.matches.size;
       const totalEnriched = Array.from(state.matches.values()).filter((m) => m.enriched).length;
@@ -1274,6 +1525,35 @@
     return `<div class="sig-proj" data-projection-kind="${ftSuffix}">${items.join('')}</div>`;
   }
 
+  /**
+   * Badge de qualidade da fonte (consensus engine).
+   *   - verified      → 3 fontes concordam, alta certeza
+   *   - partial       → ≥2 fontes concordam (pequena divergência ok)
+   *   - single-source → apenas 1 fonte tem o jogo (poller só, ou scanner mode)
+   *
+   * Vem do backend em `match.sourceQuality`. Tooltip mostra detalhes do
+   * `match.consensus` (sources que confirmaram, score, missing, modo).
+   */
+  function sourceQualityBadgeHTML(m) {
+    const q = m.sourceQuality;
+    if (!q) return '';
+    const c = m.consensus || {};
+    const srcList = Array.isArray(c.sources) ? c.sources.join(', ') : '-';
+    const missing = Array.isArray(c.missingSources) && c.missingSources.length
+      ? ` · faltou: ${c.missingSources.join(', ')}` : '';
+    const score = (typeof c.score === 'number') ? ` · score ${c.score}/100` : '';
+    const mode = c.mode ? ` · modo: ${c.mode}` : '';
+    const tip = `Fontes confirmadas: ${srcList}${missing}${score}${mode}`;
+
+    if (q === 'verified') {
+      return `<span class="fb-src-badge verified" title="${escapeHtml(tip)}">🟢 verified</span>`;
+    }
+    if (q === 'partial') {
+      return `<span class="fb-src-badge partial" title="${escapeHtml(tip)}">🟡 partial</span>`;
+    }
+    return `<span class="fb-src-badge single" title="${escapeHtml(tip)}">⚪ single-source</span>`;
+  }
+
   function matchCardHTML(m) {
     const id = String(m.id);
     const isFav = state.favorites.has(id);
@@ -1289,6 +1569,7 @@
     const partialBadge = (m.dataQuality === 'partial')
       ? `<span class="fb-data-partial" title="Provider gratuito (${escapeHtml(m.provider || '')}) — sem stats avançadas (corners, posse, finalizações)">🟡 Dados limitados</span>`
       : '';
+    const sourceBadge = sourceQualityBadgeHTML(m);
     return `
       <div class="fb-match ${isActive ? 'active' : ''} ${m.enriched ? 'enriched' : 'skeleton'} ${m.dataQuality === 'partial' ? 'partial-data' : ''} ${sigClass}" data-mid="${id}">
         ${sigBadge}
@@ -1296,7 +1577,7 @@
         <div class="teams">
           <div class="row"><span class="name ${winHome ? 'winning' : ''}">${escapeHtml(m.home)}</span><span class="score">${m.score.home}</span></div>
           <div class="row"><span class="name ${winAway ? 'winning' : ''}">${escapeHtml(m.away)}</span><span class="score">${m.score.away}</span></div>
-          <div style="font-size:10px;color:var(--muted);margin-top:2px">${escapeHtml(m.league?.name || '')} ${partialBadge}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${escapeHtml(m.league?.name || '')} ${sourceBadge} ${partialBadge}</div>
         </div>
         <div class="stats" data-stats="${id}" title="🚩 escanteios · ⚡ ataques perigosos · 🔥 pressão · 🎯 BTTS likelihood">
           ${cardStatsHTML(m)}
@@ -1837,6 +2118,102 @@
     }
   }
 
+  /**
+   * Sintetiza `feedMeta` a partir do estado canônico (`state.matches`).
+   * Usado por eventos socket (tick/upsert) que NÃO trazem o bloco meta.
+   * Preserva campos já vindos do backend (provider, safeMode, bySource)
+   * e só atualiza contadores. Sem isso a barra "📡 SCANNER · X recebidos"
+   * fica congelada em 0 mesmo recebendo matches via WebSocket.
+   */
+  function syncFeedMetaFromState({ source, generatedAt } = {}) {
+    const all = Array.from(state.matches.values());
+    const bySource = {};
+    for (const m of all) {
+      const src = m.provider || m.flags?.source || 'unknown';
+      bySource[src] = (bySource[src] || 0) + 1;
+    }
+    const prev = state.runtime.feedMeta || {};
+    state.runtime.feedMeta = {
+      ...prev,
+      totalReceived: all.length,
+      // totalAfterFilter é recalculado por renderModeMeta; manter consistência
+      totalAfterFilter: prev.totalAfterFilter ?? all.length,
+      filteredOut: prev.filteredOut ?? 0,
+      // Atualiza bySource sempre que o socket emite (provider pode trocar entre ticks)
+      bySource: Object.keys(bySource).length ? bySource : prev.bySource || {},
+      provider: prev.provider || Object.keys(bySource)[0] || '—',
+      lastUpdate: generatedAt || new Date().toISOString(),
+      lastSource: source || 'unknown',
+    };
+    if (window.__ROBOTREND_DEBUG) {
+      console.log('[FEED META synced]', source, state.runtime.feedMeta);
+    }
+  }
+
+  /**
+   * Refetch do feed em MODO SCANNER — bate em /api/football/scanner que
+   * devolve TODOS os jogos ao vivo sem nenhum filtro IA + bloco meta com
+   * provider e contadores. Usado ao alternar para o modo scanner e em
+   * boot (quando o modo persistido for scanner).
+   *
+   * TEMP DEBUG: loga a resposta crua para facilitar diagnóstico do feed.
+   */
+  async function refreshScannerFeed() {
+    try {
+      const r = await api('/api/football/scanner');
+      console.log('SCANNER RESPONSE', r);
+      if (r?.meta) {
+        state.runtime.feedMeta = {
+          ...r.meta,
+          provider: r.meta.provider?.active || '—',
+          safeMode: !!r.meta.provider?.safeMode,
+          bySource: r.meta.bySource || {},
+          topLeagues: r.meta.topLeagues || [],
+          lastUpdate: r.generatedAt,
+          lastSource: 'scanner-rest',
+        };
+      } else {
+        console.warn('SCANNER RESPONSE sem r.meta — sintetizando a partir do estado');
+      }
+      if (Array.isArray(r?.matches)) {
+        replaceMatches(r.matches, r.generatedAt);
+        bumpRuntime({ poll: true });
+      }
+      // Mesmo com meta vindo do backend, garante que totalReceived bate com state.matches
+      syncFeedMetaFromState({ source: 'scanner-rest-sync', generatedAt: r?.generatedAt });
+      console.log('FEED META', state.runtime.feedMeta);
+      console.log('MODE', state.mode);
+      logEvent('scanner-refresh', {
+        matches: r?.matches?.length || 0,
+        provider: r?.meta?.provider?.active,
+      });
+      render();
+    } catch (e) {
+      console.error('SCANNER REFRESH FAIL', e);
+      logEvent('scanner-refresh-fail', { err: e.message });
+    }
+  }
+
+  /**
+   * Helper de console para resetar o painel — útil quando o usuário tem
+   * estado antigo travado em localStorage. Use no devtools:
+   *     window.__forceScanner()
+   * Faz: força state.mode='scanner', limpa localStorage do modo,
+   * dispara refreshScannerFeed e renderiza.
+   */
+  window.__forceScanner = function forceScanner() {
+    try { localStorage.removeItem('rt:fb:mode'); } catch {}
+    try { localStorage.setItem('rt:fb:mode', JSON.stringify('scanner')); } catch {}
+    state.mode = 'scanner';
+    document.querySelectorAll('.fb-mode-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.mode === 'scanner');
+    });
+    console.log('🔄 FORÇADO modo=scanner — atualizando feed…');
+    refreshScannerFeed().then(() => {
+      console.log('✅ scanner refresh OK', { mode: state.mode, feedMeta: state.runtime.feedMeta });
+    });
+  };
+
   /** Aguarda lastEnrichedAt avançar (= novo evento match:enriched chegou). */
   function waitForEnriched(timeoutMs, baseline) {
     return new Promise((resolve) => {
@@ -1854,7 +2231,7 @@
   //  RADAR BAR — bindings
   // ============================================================
   function bindRadarBar() {
-    // MODE buttons (signals / live / radar)
+    // MODE buttons (signals / scanner / radar)
     $$('.fb-mode-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.mode === state.mode);
       btn.addEventListener('click', () => {
@@ -1864,6 +2241,8 @@
         render();
         // Modo signals: se nenhum match enriquecido, dispara enrich dos top 5 visíveis
         if (state.mode === 'signals') autoEnrichTop();
+        // Modo scanner: refetch direto do endpoint /scanner (raw, sem filtros)
+        if (state.mode === 'scanner') refreshScannerFeed();
       });
     });
 
@@ -1944,6 +2323,13 @@
     try {
       const r = await api('/api/football/live/panel');
       state.poller = r.poller;
+      if (r.meta) state.runtime.feedMeta = {
+        ...r.meta,
+        provider: r.meta.provider?.active || '—',
+        safeMode: !!r.meta.provider?.safeMode,
+        bySource: r.meta.bySource || {},
+        topLeagues: r.meta.topLeagues || [],
+      };
       if (r.matches) {
         replaceMatches(r.matches, r.generatedAt);
         bumpRuntime({ poll: true });
@@ -1971,9 +2357,28 @@
     initSocket();
     loadInitialSignals();
     setTimeout(() => { if (state.mode === 'signals') autoEnrichTop(); }, 1500);
+    // Se o usuário voltou no modo Scanner, recarrega o feed cru do /scanner
+    // (e mantém um auto-refresh a cada 20s — socket cobre updates incrementais,
+    // mas /scanner é a única fonte que traz o bloco meta completo: provider,
+    // bySource, topLeagues, etc.)
+    if (state.mode === 'scanner') {
+      refreshScannerFeed();
+      setInterval(() => {
+        if (state.mode === 'scanner') refreshScannerFeed();
+      }, 20_000);
+    }
 
     // Pipeline health check periódico (a cada 5s)
     setInterval(() => { bumpRuntime({}); }, 5000);
+
+    // TEMP DEBUG: liga logs SCANNER/FEED META automaticamente até validarmos
+    // que o fluxo de scanner está estável. Pode desligar via:
+    //   localStorage.removeItem('fbDebug'); location.reload()
+    if (!window.__ROBOTREND_DEBUG && state.mode === 'scanner') {
+      window.__ROBOTREND_DEBUG = true;
+      console.log('🔍 SCANNER DEBUG ATIVO — verá logs SCANNER RESPONSE / FEED META / MODE.');
+      console.log('💡 Para forçar reset/refresh manual: window.__forceScanner()');
+    }
 
     // Fallback cliente: 5s sem enriched (servidor já envia minimal no panel/tick)
     setTimeout(() => {

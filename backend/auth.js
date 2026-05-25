@@ -302,41 +302,56 @@ function buildAuthRoutes(app, db) {
   });
 
   app.post('/api/auth/login', async (req, res) => {
+    const isDev = !isProd();
     try {
       // Trim defensivo
       const body = req.body || {};
       const email    = String(body.email    ?? '').trim().toLowerCase();
       const password = String(body.password ?? '').trim();
-      if (!email || !password) return res.status(400).json({ error: 'EMAIL_PASSWORD_REQUIRED' });
+      if (!email || !password) {
+        console.log(`[AUTH LOGIN] rejeitado email="${email}" motivo=EMAIL_PASSWORD_REQUIRED`);
+        return res.status(400).json({ error: 'EMAIL_PASSWORD_REQUIRED' });
+      }
 
       const ip = req.ip || req.connection?.remoteAddress || 'unknown';
       const bfKey = `${email}:${ip}`;
-      const blockStatus = bruteforce.status(bfKey);
-      if (blockStatus.blocked) {
-        return res.status(429).json({
-          error: 'Muitas tentativas falhas. Tente novamente em breve.',
-          secondsRemaining: blockStatus.secondsRemaining,
-        });
+
+      // Em dev, bruteforce é DESLIGADO (default) — pode reativar com BRUTEFORCE_ENABLED_DEV=true.
+      // Em produção/staging, sempre ativo.
+      const bruteforceEnabled = !isDev || String(process.env.BRUTEFORCE_ENABLED_DEV || '').toLowerCase() === 'true';
+      if (bruteforceEnabled) {
+        const blockStatus = bruteforce.status(bfKey);
+        if (blockStatus.blocked) {
+          console.log(`[AUTH LOGIN] BLOQUEADO email="${email}" ip=${ip} motivo=BRUTEFORCE_LOCK restante=${blockStatus.secondsRemaining}s`);
+          return res.status(429).json({
+            error: 'Muitas tentativas falhas. Tente novamente em breve.',
+            secondsRemaining: blockStatus.secondsRemaining,
+          });
+        }
       }
 
       const user = await db.findUserByEmail(email);
       if (!user) {
-        bruteforce.recordFail(bfKey);
+        if (bruteforceEnabled) bruteforce.recordFail(bfKey);
+        console.log(`[AUTH LOGIN] FALHOU email="${email}" ip=${ip} motivo=USER_NOT_FOUND`);
         return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
       }
       const okPw = await comparePassword(password, user.passwordHash);
       if (!okPw) {
-        const e = bruteforce.recordFail(bfKey);
+        const e = bruteforceEnabled ? bruteforce.recordFail(bfKey) : { fails: 0 };
+        console.log(`[AUTH LOGIN] FALHOU email="${email}" ip=${ip} motivo=INVALID_PASSWORD fails=${e.fails}`);
         logger.warn('login fail', { email, ip, fails: e.fails });
         return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
       }
-      bruteforce.recordSuccess(bfKey);
+      if (bruteforceEnabled) bruteforce.recordSuccess(bfKey);
 
       const token = signToken({ sub: user.id, role: user.role, plan: user.plan });
       setAuthCookie(res, token);
+      console.log(`[AUTH LOGIN] OK email="${email}" id=${user.id} role=${user.role} plan=${user.plan}`);
       logger.info('user login', { email: user.email, userId: user.id });
       res.json({ ok: true, token, user: sanitizeUser(user) });
     } catch (e) {
+      console.log(`[AUTH LOGIN] ERRO motivo=${e.message}`);
       logger.error('login error', { err: e.message });
       res.status(500).json({ error: e.message });
     }

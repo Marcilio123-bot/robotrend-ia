@@ -16,6 +16,20 @@ try { rateLimit = require('express-rate-limit'); } catch (e) { rateLimit = null;
 const WINDOW = Number(process.env.RATE_LIMIT_WINDOW_MS || 60000);
 const MAX    = Number(process.env.RATE_LIMIT_MAX || 120);
 
+const ENV = process.env.NODE_ENV || 'development';
+const IS_DEV = ENV === 'development' || ENV === 'dev' || ENV === 'local';
+
+/**
+ * Limite de tentativas no endpoint de auth.
+ *  - production/staging: 10/min por IP (default seguro)
+ *  - development/local:  100/min por IP (não atrapalha QA/testes)
+ *  - override total com AUTH_RATE_LIMIT_MAX
+ *  - desligar com AUTH_RATE_LIMIT_DISABLED=true (apenas em dev — em produção é ignorado)
+ */
+const AUTH_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX || (IS_DEV ? 100 : 10));
+const AUTH_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 60_000);
+const AUTH_LIMIT_DISABLED = IS_DEV && String(process.env.AUTH_RATE_LIMIT_DISABLED || '').toLowerCase() === 'true';
+
 function buildCspDirectives() {
   return {
     "default-src": ["'self'"],
@@ -85,13 +99,38 @@ function applySecurity(app) {
       legacyHeaders: false,
       message: { error: 'Muitas requisições — aguarde alguns instantes.' },
     });
-    const authLimiter = rateLimit({
-      windowMs: 60_000,
-      max: 10,
-      message: { error: 'Muitas tentativas de autenticação. Tente novamente em 1 min.' },
-    });
+
+    // === AUTH limiter — comportamento depende do ambiente =====================
+    if (AUTH_LIMIT_DISABLED) {
+      console.warn(
+        `[AUTH RATE LIMIT] DESATIVADO em ${ENV} (env AUTH_RATE_LIMIT_DISABLED=true). ` +
+        `Em produção isto seria ignorado — só funciona em development.`
+      );
+    } else {
+      const authLimiter = rateLimit({
+        windowMs: AUTH_LIMIT_WINDOW_MS,
+        max: AUTH_LIMIT_MAX,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: `Muitas tentativas de autenticação. Tente novamente em ${Math.round(AUTH_LIMIT_WINDOW_MS / 1000)}s.` },
+        // Loga toda vez que o limite é estourado para um IP, facilita debug em dev
+        handler: (req, res, _next, options) => {
+          const ip = req.ip || req.headers['x-forwarded-for'] || req.connection?.remoteAddress || '?';
+          console.warn(
+            `[AUTH RATE LIMIT] BLOQUEADO ip=${ip} path=${req.path} ` +
+            `limit=${options.max} window=${options.windowMs}ms env=${ENV}`
+          );
+          res.status(options.statusCode).json(options.message);
+        },
+      });
+      console.log(
+        `[AUTH RATE LIMIT] ativo em ${ENV} → max=${AUTH_LIMIT_MAX}/${Math.round(AUTH_LIMIT_WINDOW_MS / 1000)}s ` +
+        `(override com AUTH_RATE_LIMIT_MAX / AUTH_RATE_LIMIT_WINDOW_MS)`
+      );
+      app.use(['/api/auth/login', '/api/auth/register', '/api/auth/forgot', '/api/auth/reset'], authLimiter);
+    }
+
     app.use('/api/', generalLimiter);
-    app.use(['/api/auth/login', '/api/auth/register', '/api/auth/forgot', '/api/auth/reset'], authLimiter);
   } else {
     console.warn('[security] express-rate-limit não instalado.');
   }

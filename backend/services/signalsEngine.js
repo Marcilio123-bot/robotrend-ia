@@ -34,6 +34,8 @@ const log = logger.child({ module: 'signalsEngine' });
 
 const ENABLED            = String(process.env.SIGNALS_ENABLED || 'true').toLowerCase() !== 'false';
 const COOLDOWN_MS        = Number(process.env.SIGNALS_COOLDOWN_MS || 6 * 60_000);
+const DEBUG_MODE         = String(process.env.SIGNALS_DEBUG || 'false').toLowerCase() === 'true';
+const DROPS_MAX          = Number(process.env.SIGNALS_DROPS_MAX || 100);
 
 const PRESSURE_MIN       = Number(process.env.SIGNALS_PRESSURE_MIN || 70);
 const PRESSURE_RAMP_DELTA = Number(process.env.SIGNALS_PRESSURE_RAMP_DELTA || 18);
@@ -91,6 +93,19 @@ function marketsFor(type) { return TYPE_TO_MARKETS[type] || []; }
 const cooldowns = new Map(); // `${matchId}:${type}` -> ts
 const RECENT_MAX = Number(process.env.SIGNALS_RECENT_MAX || 200);
 const recent = []; // ring buffer dos últimos sinais (para /signals/live)
+
+/* ============================================================
+   DIAGNÓSTICO — ring buffer de descartes + histograma por motivo
+   ============================================================ */
+const recentDrops = []; // { ts, type, reason, matchId, label?, minute? }
+const dropHistogram = {}; // `${type}:${reason}` -> count
+function recordDrop(type, reason, payload = {}) {
+  const key = `${type}:${reason}`;
+  dropHistogram[key] = (dropHistogram[key] || 0) + 1;
+  recentDrops.unshift({ ts: Date.now(), type, reason, ...payload });
+  if (recentDrops.length > DROPS_MAX) recentDrops.length = DROPS_MAX;
+  if (DEBUG_MODE) log.info('signal DROP', { type, reason, ...payload });
+}
 
 /* ============================================================
    HELPERS
@@ -162,8 +177,14 @@ function listRecent({ limit = 50, type = null, markets = null, minConfidence = 0
   return out.slice(0, limit);
 }
 
-function skip(reason, type) {
+function skip(reason, type, match = null, extras = {}) {
   m_skipped.inc(1, { type, reason });
+  recordDrop(type, reason, {
+    matchId: match?.fixtureId || match?.id || null,
+    label: match ? `${match.home || '?'} x ${match.away || '?'}` : null,
+    minute: match?.minute ?? null,
+    ...extras,
+  });
 }
 
 /**
@@ -174,10 +195,10 @@ function skip(reason, type) {
 function onPressure({ match, pressure, delta }) {
   if (!match) return;
   if (pressure < PRESSURE_MIN || delta < PRESSURE_RAMP_DELTA) {
-    skip('threshold', 'pressure-surge'); return;
+    skip('threshold', 'pressure-surge', match, { pressure, delta, min: PRESSURE_MIN }); return;
   }
   const key = `${match.id}:pressure`;
-  if (!canFire(key)) { skip('cooldown', 'pressure-surge'); return; }
+  if (!canFire(key)) { skip('cooldown', 'pressure-surge', match); return; }
 
   const side = match.stats?.shotsOnTarget?.home > match.stats?.shotsOnTarget?.away ? 'home' : 'away';
   const confidence = clamp(Math.round(50 + (pressure - PRESSURE_MIN) * 0.6 + delta * 0.4), 60, 98);
@@ -218,9 +239,9 @@ function onPressure({ match, pressure, delta }) {
 function onBttsNear({ match, reason }) {
   if (!match) return;
   const min = n(match.minute);
-  if (min < BTTS_MIN_MINUTE || min > BTTS_MAX_MINUTE) { skip('minute-range', 'btts-imminent'); return; }
+  if (min < BTTS_MIN_MINUTE || min > BTTS_MAX_MINUTE) { skip('minute-range', 'btts-imminent', match, { minute: min, range: [BTTS_MIN_MINUTE, BTTS_MAX_MINUTE] }); return; }
   const sh = n(match.score?.home), sa = n(match.score?.away);
-  if (!((sh > 0 && sa === 0) || (sa > 0 && sh === 0))) { skip('not-1-0', 'btts-imminent'); return; }
+  if (!((sh > 0 && sa === 0) || (sa > 0 && sh === 0))) { skip('not-1-0', 'btts-imminent', match, { score: { home: sh, away: sa } }); return; }
 
   const losing = losingSide(match);
   if (!losing) return;
@@ -228,10 +249,10 @@ function onBttsNear({ match, reason }) {
   const dangLosing = n(match.stats?.dangerousAttacks?.[losing]);
   const cornersLosing = n(match.stats?.corners?.[losing]);
   const pressureLosing = sotLosing * 12 + dangLosing * 0.5 + cornersLosing * 4;
-  if (pressureLosing < BTTS_MIN_PRESSURE) { skip('pressure-low', 'btts-imminent'); return; }
+  if (pressureLosing < BTTS_MIN_PRESSURE) { skip('pressure-low', 'btts-imminent', match, { pressureLosing, minRequired: BTTS_MIN_PRESSURE }); return; }
 
   const key = `${match.id}:btts-imminent`;
-  if (!canFire(key)) { skip('cooldown', 'btts-imminent'); return; }
+  if (!canFire(key)) { skip('cooldown', 'btts-imminent', match); return; }
 
   const confidence = clamp(Math.round(55 + (pressureLosing - BTTS_MIN_PRESSURE) * 0.6 + (sotLosing * 3)), 60, 95);
 
@@ -272,7 +293,7 @@ function onCorner({ match }) {
   if (list.length < CORNERS_MIN_COUNT) return;
 
   const key = `${id}:corners-momentum`;
-  if (!canFire(key)) { skip('cooldown', 'corners-momentum'); return; }
+  if (!canFire(key)) { skip('cooldown', 'corners-momentum', match); return; }
 
   const confidence = clamp(55 + (list.length - CORNERS_MIN_COUNT) * 8, 60, 95);
 
@@ -309,7 +330,7 @@ function onMatchUpdate({ match }) {
   if (projected90 < totalCorners + 3) return; // sem upside
 
   const key = `${match.id}:over-corners`;
-  if (!canFire(key)) { skip('cooldown', 'over-corners'); return; }
+  if (!canFire(key)) { skip('cooldown', 'over-corners', match); return; }
 
   const confidence = clamp(50 + Math.round((rate - OVER_CORNERS_MIN_RATE) * 200), 55, 90);
 
@@ -352,7 +373,7 @@ function onCard({ match, color }) {
   if (weighted < CARDS_MIN_COUNT) return;
 
   const key = `${id}:cards-surge`;
-  if (!canFire(key)) { skip('cooldown', 'cards-surge'); return; }
+  if (!canFire(key)) { skip('cooldown', 'cards-surge', match); return; }
 
   const reds = list.filter((x) => x.color === 'red').length;
   const confidence = clamp(55 + Math.round((weighted - CARDS_MIN_COUNT) * 10 + reds * 8), 60, 95);
@@ -409,7 +430,7 @@ function onMatchUpdateGoals({ match }) {
   if (pressure < 25) return;
 
   const key = `${match.id}:over-goals`;
-  if (!canFire(key)) { skip('cooldown', 'over-goals'); return; }
+  if (!canFire(key)) { skip('cooldown', 'over-goals', match); return; }
 
   const threshold = goals + 0.5; // ex: 1×1 (2 gols) → over 2.5
   const confidence = clamp(50 + Math.round((projectedTotal - threshold) * 18 + Math.min(pressure, 80) * 0.3), 55, 92);
@@ -478,6 +499,7 @@ function snapshot() {
   return {
     enabled: ENABLED,
     started,
+    debugMode: DEBUG_MODE,
     markets: Object.values(MARKET),
     radarMinConfidence: RADAR_MIN_CONFIDENCE,
     thresholds: {
@@ -495,8 +517,26 @@ function snapshot() {
   };
 }
 
+/**
+ * Relatório de descartes: motivos × frequência + amostra detalhada.
+ * Útil para diagnosticar "por que nenhum sinal está sendo gerado".
+ */
+function debugReport({ dropLimit = 30 } = {}) {
+  return {
+    snapshot: snapshot(),
+    dropHistogram: { ...dropHistogram },
+    recentDrops: recentDrops.slice(0, dropLimit),
+    recentSignals: recent.slice(0, 10).map((s) => ({
+      type: s.type, market: s.market, confidence: s.confidence,
+      suggestion: s.suggestion, matchId: s.matchId,
+      minute: s.minute, createdAt: s.createdAt,
+    })),
+  };
+}
+
 module.exports = {
   start, stop, snapshot, listRecent,
+  debugReport,
   MARKET, TYPE_TO_MARKETS, marketsFor,
   RADAR_MIN_CONFIDENCE,
 };

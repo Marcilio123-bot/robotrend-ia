@@ -201,6 +201,29 @@ class RobotrendBot {
     for (const { match, analysis } of safe) {
       if (!analysis.shouldSignal) continue;
 
+      // FAKE-MATCH GUARD — defesa SEMPRE ativa (não depende de STRICT).
+      // IDs `demo-*` ou matches sem origem real (source !== 'api-football'
+      // / sem provider conhecido) NUNCA devem gerar signal Telegram.
+      // Antes esse bloqueio só rodava em STRICT_REAL_ONLY → em dev o sistema
+      // emitia signals fake (ex.: Chelsea x Arsenal) sobre os matches sintéticos
+      // do DemoLiveScanner. Agora bloqueamos em todos os ambientes.
+      const isDemoId = String(match.id || '').startsWith('demo-');
+      const knownRealSource = match.source === 'api-football'
+        || match.provider === 'sofascore'
+        || match.provider === 'thesportsdb'
+        || match.provider === 'apisports'
+        || match.provider === 'football-data'
+        || match.isFromLiveAPI === true;
+      if (isDemoId || !knownRealSource) {
+        console.log(`[SIGNAL BLOCK] ${match.home} x ${match.away} bloqueado: fonte sintética/desconhecida (id=${match.id}, source=${match.source || match.provider || 'unknown'})`);
+        this.log.warn('signal blocked: fake-match guard', {
+          match: `${match.home} x ${match.away}`,
+          id: match.id,
+          source: match.source || match.provider,
+        });
+        continue;
+      }
+
       // SIGNAL SOURCE GUARD — última camada antes de emitir/persistir/enviar.
       // STRICT: bloqueia QUALQUER signal de origem não-API live confirmada.
       if (STRICT_REAL_ONLY) {

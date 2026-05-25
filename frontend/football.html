@@ -117,6 +117,34 @@
       vertical-align: middle;
     }
     .fb-match.partial-data { opacity: .96; }
+    /* Badge de qualidade da fonte (consensus engine).
+       Mostra de onde veio o jogo e quão confiável é a confirmação. */
+    .fb-src-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 6px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .05em;
+      border-radius: 999px;
+      vertical-align: middle;
+      cursor: help;
+    }
+    .fb-src-badge.verified {
+      background: rgba(34, 197, 94, 0.14);
+      color: #22c55e;
+      border: 1px solid rgba(34, 197, 94, 0.35);
+    }
+    .fb-src-badge.partial {
+      background: rgba(251, 146, 60, 0.14);
+      color: #fb923c;
+      border: 1px solid rgba(251, 146, 60, 0.35);
+    }
+    .fb-src-badge.single {
+      background: rgba(148, 163, 184, 0.12);
+      color: #94a3b8;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+    }
     .fb-match .teams { display:flex; flex-direction: column; gap: 2px; min-width: 0; }
     .fb-match .teams .row { display:flex; align-items:center; justify-content:space-between; gap: 6px; font-size: 13px; }
     .fb-match .teams .row .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color: var(--text); font-weight: 600; }
@@ -328,6 +356,58 @@
     #conf-slider { width: 130px; accent-color: var(--brand); cursor: pointer; }
     #conf-val { color: var(--brand); font-family: 'JetBrains Mono', monospace; }
 
+    /* === META BAR (contadores totais / filtrados / provider) === */
+    .fb-mode-meta {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 8px 14px; margin: 0 0 12px 0;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 10px; font-size: 12px; color: var(--muted);
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+    .fb-mode-meta strong { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .fb-mode-meta .fb-meta-item { display: inline-flex; align-items: center; gap: 4px; }
+    .fb-mode-meta .fb-meta-sep { color: var(--border); }
+    .fb-mode-meta.scanner { border-color: var(--brand); background: var(--brand-soft); }
+    .fb-mode-meta.scanner strong { color: var(--brand); }
+    /* Chips de breakdown por provider (modo agregado) */
+    .fb-src-chip {
+      display: inline-block;
+      padding: 1px 6px;
+      margin: 0 2px;
+      font-size: 10px;
+      background: rgba(34, 197, 94, 0.08);
+      color: var(--text);
+      border: 1px solid rgba(34, 197, 94, 0.25);
+      border-radius: 999px;
+      letter-spacing: .02em;
+    }
+    .fb-src-chip strong { font-weight: 700; color: #22c55e; }
+    .fb-src-chip[data-src="sofascore"] { border-color: rgba(59, 130, 246, 0.4); }
+    .fb-src-chip[data-src="sofascore"] strong { color: #60a5fa; }
+    .fb-src-chip[data-src="thesportsdb"] { border-color: rgba(168, 85, 247, 0.4); }
+    .fb-src-chip[data-src="thesportsdb"] strong { color: #c084fc; }
+    .fb-src-chip[data-src="apisports"] { border-color: rgba(251, 146, 60, 0.4); }
+    .fb-src-chip[data-src="apisports"] strong { color: #fb923c; }
+    /* Chips de top ligas no Scanner Mode */
+    .fb-league-chip {
+      display: inline-block;
+      padding: 1px 6px;
+      margin: 0 2px;
+      font-size: 10px;
+      background: var(--surface);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+    }
+    .fb-league-chip strong { font-weight: 700; color: var(--text); }
+    .fb-mode-meta .fb-meta-warn {
+      margin-left: auto; padding: 2px 8px; border-radius: 999px;
+      background: var(--rt-yellow, #facc15); color: #111;
+      font-weight: 700; font-size: 11px;
+    }
+    /* Scanner mode esconde a parte IA da barra (markets/profile/confidence) */
+    .fb-radar-bar.scanner-mode .fb-ia-group { display: none; }
+
     /* === Match card: signal overlay (radar) === */
     .fb-match.has-signal { box-shadow: inset 3px 0 0 var(--brand); }
     .fb-match.hot { box-shadow: inset 3px 0 0 var(--rt-red); background: linear-gradient(90deg, rgba(239,68,68,.06), transparent 60%); }
@@ -508,16 +588,23 @@
         <div class="fb-kpi"><div class="lbl">BTTS atual</div><div class="val" id="kpi-btts">0%</div><div class="sub">dos jogos</div></div>
       </section>
 
-      <!-- RADAR / MARKET BAR — controle operacional do painel -->
+      <!-- MODE BAR — Scanner vs Sinais IA (toggle principal) -->
       <section class="fb-radar-bar" id="radar-bar">
         <div class="fb-radar-group">
           <span class="fb-radar-label">📡 Modo</span>
-          <button class="fb-mode-btn active" data-mode="signals">🎯 Sinais</button>
-          <button class="fb-mode-btn" data-mode="live">Ao vivo</button>
-          <button class="fb-mode-btn" data-mode="radar">📈 Radar</button>
+          <button class="fb-mode-btn active" data-mode="signals" title="Apenas jogos operáveis (com sinais IA)">
+            🎯 Sinais IA
+          </button>
+          <button class="fb-mode-btn" data-mode="scanner" title="TODOS os jogos ao vivo, sem filtros IA">
+            📡 Scanner ao vivo
+          </button>
+          <button class="fb-mode-btn" data-mode="radar" title="Jogos quentes (com algum signal acima do threshold)">
+            📈 Radar
+          </button>
           <span class="fb-mode-pill" id="radar-status">—</span>
         </div>
-        <div class="fb-radar-group">
+        <!-- Grupo IA — escondido em modo Scanner via JS -->
+        <div class="fb-radar-group fb-ia-group">
           <span class="fb-radar-label">Mercados</span>
           <button class="fb-mkt-chip" data-mkt="all">🌐 Todos</button>
           <button class="fb-mkt-chip" data-mkt="corners">🚩 Escanteios</button>
@@ -526,16 +613,44 @@
           <button class="fb-mkt-chip" data-mkt="cards">🟨 Cartões</button>
           <button class="fb-mkt-chip" data-mkt="pressure">🔥 Pressão</button>
         </div>
-        <div class="fb-radar-group">
+        <div class="fb-radar-group fb-ia-group">
           <span class="fb-radar-label">Perfil</span>
           <button class="fb-prof-btn" data-prof="conservative">🛡 Conservador</button>
           <button class="fb-prof-btn active" data-prof="balanced">⚖ Equilibrado</button>
           <button class="fb-prof-btn" data-prof="aggressive">⚡ Agressivo</button>
         </div>
-        <div class="fb-radar-group">
+        <div class="fb-radar-group fb-ia-group">
           <label class="fb-radar-label" for="conf-slider">Confiança ≥ <strong id="conf-val">70</strong>%</label>
           <input type="range" id="conf-slider" min="50" max="98" step="1" value="70" />
         </div>
+      </section>
+
+      <!-- META BAR — total recebido / filtrado / provider de origem -->
+      <section class="fb-mode-meta" id="fb-mode-meta" hidden>
+        <span class="fb-meta-item" id="meta-mode-label">—</span>
+        <span class="fb-meta-sep">·</span>
+        <span class="fb-meta-item" title="Total de jogos ao vivo recebidos do provider">
+          <strong id="meta-total">0</strong> recebidos
+        </span>
+        <span class="fb-meta-sep">·</span>
+        <span class="fb-meta-item" title="Mostrados após filtros (UI + IA)">
+          <strong id="meta-shown">0</strong> exibidos
+        </span>
+        <span class="fb-meta-sep">·</span>
+        <span class="fb-meta-item" title="Quantos foram filtrados">
+          <strong id="meta-filtered">0</strong> filtrados
+        </span>
+        <span class="fb-meta-sep">·</span>
+        <span class="fb-meta-item" title="Provider de dados ativo">
+          provider: <strong id="meta-provider">—</strong>
+        </span>
+        <span class="fb-meta-sep" id="meta-source-sep" hidden>·</span>
+        <span class="fb-meta-item" id="meta-source-breakdown" hidden
+              title="Quantos jogos cada provider contribuiu (modo agregado)"></span>
+        <span class="fb-meta-sep" id="meta-leagues-sep" hidden>·</span>
+        <span class="fb-meta-item" id="meta-top-leagues" hidden
+              title="Top 5 ligas com mais jogos ao vivo agora"></span>
+        <span class="fb-meta-item fb-meta-warn" id="meta-warn" hidden></span>
       </section>
 
       <!-- 3-PAINEL: ligas | partidas | detalhe -->

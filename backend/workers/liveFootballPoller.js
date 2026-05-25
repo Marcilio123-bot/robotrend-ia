@@ -90,6 +90,9 @@ const PRIORITY_LEAGUE_TOKENS = (process.env.FOOTBALL_PRIORITY_LEAGUES || '')
 
 const PRIORITY_ONLY = String(process.env.LIVE_IMPORTANT_LEAGUES_ONLY || 'false').toLowerCase() === 'true';
 
+/** Quantos ticks seguidos um jogo precisa faltar do feed antes de emitir match:remove. */
+const REMOVE_MISS_TICKS = Math.max(1, Number(process.env.POLLER_REMOVE_MISS_TICKS || 2));
+
 function isExcludedLeague(match) {
   const l = match?.league;
   if (!l) return false;
@@ -213,6 +216,8 @@ class LiveFootballPoller {
     this.consecutiveFailures = 0;
     this.nextDelayMs = this.intervalMs;
     this.cache = new Map();
+    /** id → ticks consecutivos ausentes do feed (antes de match:remove). */
+    this._missCounts = new Map();
     this.lastRawSnapshot = [];
     this.stats = {
       ticks: 0,
@@ -525,12 +530,12 @@ class LiveFootballPoller {
 
     let raw = [];
     try {
-      if (!apiFootball.isConfigured()) {
+      if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
         // Não derruba o poller; mantém vivo com heartbeat e cache anterior.
-        this.lastFallbackReason = 'api_not_configured';
-        raw = this._fallbackSnapshot('api_not_configured');
+        this.lastFallbackReason = 'no_provider_configured';
+        raw = this._fallbackSnapshot('no_provider_configured');
         if (this.stats.ticks === 0 && this.stats.ticksFallback <= 1) {
-          log.warn('poller em modo passivo — API_FOOTBALL_KEY/host ausentes (heartbeat ativo)');
+          log.warn('poller em modo passivo — nenhum provider na FOOTBALL_PROVIDER_PRIORITY (heartbeat ativo)');
         }
       } else {
         raw = await this._safeFetchLiveFixtures();
@@ -707,13 +712,23 @@ class LiveFootballPoller {
         }
       }
 
-      // Remoção de matches que sumiram (jogo encerrou ou saiu de live)
+      // Remoção de matches que sumiram (jogo encerrou ou saiu de live).
+      // Exige REMOVE_MISS_TICKS ausências consecutivas — evita flicker quando
+      // o provider (TheSportsDB/SofaScore) oscila entre ticks após restart.
+      for (const id of seen) this._missCounts.delete(id);
       for (const id of [...this.cache.keys()]) {
-        if (!seen.has(id)) {
-          const removed = this.cache.get(id);
-          this.cache.delete(id);
-          events.emit('match:remove', { matchId: id, match: removed });
+        if (seen.has(id)) continue;
+        const misses = (this._missCounts.get(id) || 0) + 1;
+        this._missCounts.set(id, misses);
+        if (misses < REMOVE_MISS_TICKS) {
+          log.debug?.('poller remove adiado', { id, misses, need: REMOVE_MISS_TICKS });
+          continue;
         }
+        const removed = this.cache.get(id);
+        this.cache.delete(id);
+        this._missCounts.delete(id);
+        console.log(`[LIVE FILTER] match:remove ${removed?.home || '?'} x ${removed?.away || '?'} (ausente ${misses} ticks)`);
+        events.emit('match:remove', { matchId: id, match: removed });
       }
 
       this.stats.lastDurationMs = Date.now() - t0;

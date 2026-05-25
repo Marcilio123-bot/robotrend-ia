@@ -80,9 +80,16 @@ services:
         sync: false
       - key: TELEGRAM_ENABLED
         value: "false"
-      # Providers live (failover automático). thesportsdb é o default (gratuito).
+      # Providers live (failover automático).
+      # Recomendado: signup grátis em football-data.org e preencher FOOTBALL_DATA_KEY.
+      # NÃO defina PGHOST=postgres — causa getaddrinfo ENOTFOUND no Render.
+      # DATABASE_URL vem do bloco fromDatabase abaixo.
       - key: FOOTBALL_PROVIDER_PRIORITY
-        value: thesportsdb,sofascore,apisports
+        value: sofascore,thesportsdb,football-data,apisports,demo
+      - key: FOOTBALL_DATA_KEY
+        sync: false
+      - key: DEMO_PROVIDER_ENABLED
+        value: "true"
       - key: API_FOOTBALL_KEY
         sync: false
       - key: ODDS_API_KEY

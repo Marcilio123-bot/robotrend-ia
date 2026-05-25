@@ -46,6 +46,7 @@ const events = require('../services/footballEvents');
 const metrics = require('../services/metrics');
 const signalsEngine = require('../services/signalsEngine');
 const betSignalEngine = require('../services/betSignalEngine');
+const consensus = require('../consensus');
 const { getPoller } = require('../workers/liveFootballPoller');
 const { getEnricher } = require('../services/fixtureEnricher');
 const { normalizeFixture, statName, ensureAllMinimal } = require('../services/fixtureNormalizer');
@@ -169,11 +170,28 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     return out;
   }
 
-  router.get('/live', asyncHandler(async (req, res) => {
-    noStore(res);
+  /* ============================================================
+     LIVE-FILTERING — extraído para reuso entre /live e /scanner
+     ------------------------------------------------------------
+     `isLive(m)`     → descarta FT/AET/PST/SCHED/NS e minute>=120
+     `liveMatches()` → resolve poller, força refresh no boot e devolve
+                       APENAS matches ao vivo (sem filtros de query).
+     Tanto /live (com filtros) quanto /scanner (raw) consomem `liveMatches()`.
+     ============================================================ */
+  const FT_OR_NOT_LIVE = new Set([
+    'FT','AET','PEN','AWD','WO','ABD','CANC','FINISHED','MATCH FINISHED',
+    'POSTPONED','PST','SUSP','CANCELLED','TIMED','SCHEDULED','NS',
+  ]);
+  function isLive(m) {
+    const status = String(m?.status || '').toUpperCase().trim();
+    const long = String(m?.statusLong || '').toUpperCase().trim();
+    if (FT_OR_NOT_LIVE.has(status) || FT_OR_NOT_LIVE.has(long)) return false;
+    if (Number(m?.minute || 0) >= 120) return false;
+    return true;
+  }
+
+  async function liveMatches({ aggregate } = {}) {
     let matches = poller.getMatches();
-    // forceRefresh dispara chamada extra à API. Só fazemos no boot
-    // (poller ainda não rodou). Em safe-mode NUNCA forçamos.
     if (!matches.length && !(af.isSafeMode && af.isSafeMode())) {
       const snap = poller.snapshot();
       if (!snap.lastTickAt) {
@@ -181,17 +199,89 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
         matches = poller.getMatches();
       }
     }
-    // Filtro de segurança final: só matches realmente LIVE. Mesmo que o
-    // cache contenha algum FT por race condition, NUNCA expomos pelo REST.
-    matches = matches.filter((m) => {
-      const status = String(m?.status || '').toUpperCase().trim();
-      const long = String(m?.statusLong || '').toUpperCase().trim();
-      const ftSet = new Set(['FT','AET','PEN','AWD','WO','ABD','CANC','FINISHED','MATCH FINISHED']);
-      if (ftSet.has(status) || ftSet.has(long)) return false;
-      if (Number(m?.minute || 0) >= 120) return false;
-      return true;
-    });
-    matches = applyFilters(matches, req.query);
+    // Scanner pode pedir agregação direta (query ?aggregate=true) mesmo com
+    // cache cheio. Bate em todos os providers em paralelo, normaliza e dedupa.
+    // Útil para maximizar cobertura quando o provider primário está com
+    // poucos jogos visíveis. NUNCA bloqueia — em erro, devolve o cache.
+    if (aggregate === true && typeof af.getLiveFixturesAggregated === 'function') {
+      try {
+        const raw = await af.getLiveFixturesAggregated();
+        if (raw.length) {
+          matches = raw.map((fx) => {
+            try { return normalizeFixture(fx); } catch { return null; }
+          }).filter(Boolean);
+        }
+      } catch (e) {
+        console.warn(`[SCANNER PROVIDER] aggregated fetch falhou: ${e.message} — usando cache do poller`);
+      }
+    }
+    return matches.filter(isLive);
+  }
+
+  /**
+   * Anota `sourceQuality` (+ `consensus` mínimo) em matches vindos do poller.
+   * O pipeline scanner/live/panel NÃO chama o consensus engine — usa o
+   * poller central como única fonte. Mesmo assim, queremos que o frontend
+   * receba o campo de qualidade pra renderizar o badge consistentemente.
+   * Se o match já vier anotado (vindo do consensus engine via signal pipeline),
+   * o helper preserva os campos originais.
+   */
+  function annotateMatches(matches) {
+    return matches.map((m) => consensus.annotateSourceQuality(m, {
+      reason: 'poller-feed',
+      providerSource: m.provider || m.flags?.source || null,
+    }));
+  }
+
+  /**
+   * Constrói o bloco `meta` exposto por /live e /scanner.
+   * Centraliza a leitura de provider/quota/origem para o frontend
+   * conseguir mostrar "📡 Scanner: 87 jogos · provider: sofascore".
+   */
+  function buildLiveMeta(allLive, afterFilter) {
+    const total = allLive.length;
+    const filteredOut = total - afterFilter.length;
+    // Histograma por provider de origem do match (cada provider stampa
+    // `match.provider` e `match.flags.source` no poller).
+    const bySource = {};
+    const byLeague = new Map();
+    for (const m of allLive) {
+      const src = m.provider || m.flags?.source || 'unknown';
+      bySource[src] = (bySource[src] || 0) + 1;
+      const k = m.league?.name || m.league || 'unknown';
+      byLeague.set(k, (byLeague.get(k) || 0) + 1);
+    }
+    const status = af.status?.() || {};
+    return {
+      totalReceived: total,
+      totalAfterFilter: afterFilter.length,
+      filteredOut,
+      filterPct: total ? +(filteredOut * 100 / total).toFixed(1) : 0,
+      provider: {
+        active: af.providerName || status.activeProvider || 'unknown',
+        available: status.available || [],
+        priority: status.priority || [],
+        safeMode: af.isSafeMode?.() || false,
+        breaker: status.breaker?.state || null,
+        quota: af.quota?.() || null,
+      },
+      bySource,
+      topLeagues: Array.from(byLeague.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 15)
+        .map(([name, count]) => ({ name, count })),
+      poller: {
+        tracked: poller.snapshot().tracked,
+        alive: poller.snapshot().alive,
+        lastTickAt: poller.snapshot().lastTickAt,
+      },
+    };
+  }
+
+  router.get('/live', asyncHandler(async (req, res) => {
+    noStore(res);
+    const allLive = await liveMatches();
+    const matches = annotateMatches(applyFilters(allLive, req.query));
     ensureAllMinimal(matches);
     res.json({
       ok: true,
@@ -199,6 +289,57 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       matches,
       generatedAt: new Date().toISOString(),
       safeMode: af.isSafeMode?.() || false,
+      meta: buildLiveMeta(allLive, matches),
+      consensus: { mode: consensus.CONSENSUS_MODE },
+    });
+  }));
+
+  /* ============================================================
+     SCANNER — modo CRU ao vivo (zero filtro IA, zero confiança, zero score).
+     Mostra TODOS os jogos reais que o poller recebeu. Aceita opcionalmente
+     `search=` e `league=` como ajudantes de navegação, mas IGNORA
+     scored / minute / pressure / favorites / btts-near (que dependem de
+     enrichment ou de filtros de IA).
+     ============================================================ */
+  router.get('/scanner', asyncHandler(async (req, res) => {
+    noStore(res);
+
+    // SCANNER aceita uma flag opcional `aggregate=true` para forçar agregação
+    // multi-provider. Por padrão segue a env SCANNER_AGGREGATE_PROVIDERS.
+    const forceAggregate = String(req.query.aggregate || '').toLowerCase() === 'true';
+    const allLive = await liveMatches({ aggregate: forceAggregate || undefined });
+    console.log(`[LIVE MATCHES RECEIVED] /scanner — ${allLive.length} matches (provider ativo: ${af.providerName})`);
+
+    // Filtros de NAVEGAÇÃO permitidos (não-IA)
+    const navFilters = {
+      search: req.query.search,
+      league: req.query.league,
+    };
+    const filtered = applyFilters(allLive, navFilters);
+    console.log(`[NORMALIZED MATCHES] /scanner — ${filtered.length}/${allLive.length} após filtros de navegação`);
+
+    // SCANNER nunca aplica consensus. Anota tudo como single-source para
+    // que o frontend mostre o badge "📡 SINGLE-SOURCE" no card.
+    const matches = annotateMatches(filtered);
+    ensureAllMinimal(matches);
+    console.log(`[RENDERED MATCHES] /scanner — devolvendo ${matches.length} matches anotados ao frontend`);
+
+    res.json({
+      ok: true,
+      mode: 'scanner',
+      count: matches.length,
+      matches,
+      generatedAt: new Date().toISOString(),
+      safeMode: af.isSafeMode?.() || false,
+      meta: buildLiveMeta(allLive, matches),
+      consensus: { mode: 'off', applied: false, reason: 'scanner-bypass' },
+      aggregation: {
+        enabled: forceAggregate || af.AGGREGATE_PROVIDERS,
+        priority: af.priority || af.status?.()?.priority || [],
+        active: af.providerName,
+      },
+      hint: 'Modo SCANNER — todos os jogos ao vivo, sem filtros IA, sem consensus. ' +
+            'Use /api/football/live para o feed com filtros + score IA.',
     });
   }));
 
@@ -208,14 +349,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
    */
   router.get('/live/panel', asyncHandler(async (req, res) => {
     noStore(res);
-    let matches = poller.getMatches();
-    if (!matches.length && !(af.isSafeMode && af.isSafeMode())) {
-      const snap = poller.snapshot();
-      if (!snap.lastTickAt) {
-        await poller.forceRefresh();
-        matches = poller.getMatches();
-      }
-    }
+    const matches = await liveMatches();
 
     // Agregados sobre TODAS antes do filtro (para construir a sidebar de ligas)
     const allLeagues = new Map();
@@ -228,7 +362,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     }
 
     ensureAllMinimal(matches);
-    const filtered = applyFilters(matches, req.query);
+    const filtered = annotateMatches(applyFilters(matches, req.query));
     const total = filtered.length;
     let totalCorners = 0, totalShots = 0, totalDang = 0, totalGoals = 0, totalCardsY = 0, totalCardsR = 0;
     let bttsCount = 0;
@@ -258,6 +392,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       } : null,
       leagues: Array.from(allLeagues.values()).sort((a,b) => b.count - a.count),
       matches: filtered,
+      meta: buildLiveMeta(matches, filtered),
+      consensus: { mode: consensus.CONSENSUS_MODE },
     });
   }));
 
@@ -801,6 +937,42 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   router.get('/bet-signals/engine', adminMw, (req, res) => {
     noStore(res);
     res.json({ ok: true, engine: betSignalEngine.snapshot() });
+  });
+
+  /**
+   * GET /api/football/bet-signals/debug
+   *  Diagnóstico do pipeline de sinais (admin):
+   *    - funil completo (input → enriched → minute → compute → conf → odd → cooldown → emitted)
+   *    - contagem absoluta e percentual em cada estágio
+   *    - últimas N decisões de descarte com motivo + payload curto
+   *    - hints automáticos identificando o gargalo
+   *
+   *  Use ?drops=50 para ver mais descartes (max 100).
+   */
+  router.get('/bet-signals/debug', adminMw, (req, res) => {
+    noStore(res);
+    const dropLimit = Math.min(100, Math.max(1, Number(req.query.drops || 30)));
+    res.json({
+      ok: true,
+      engine: 'betSignalEngine',
+      generatedAt: new Date().toISOString(),
+      report: betSignalEngine.debugReport({ dropLimit }),
+    });
+  });
+
+  /**
+   * GET /api/football/signals/debug
+   *  Mesmo diagnóstico para o signalsEngine REATIVO (detectors).
+   */
+  router.get('/signals/debug', adminMw, (req, res) => {
+    noStore(res);
+    const dropLimit = Math.min(100, Math.max(1, Number(req.query.drops || 30)));
+    res.json({
+      ok: true,
+      engine: 'signalsEngine',
+      generatedAt: new Date().toISOString(),
+      report: signalsEngine.debugReport({ dropLimit }),
+    });
   });
 
   /* ============================================================

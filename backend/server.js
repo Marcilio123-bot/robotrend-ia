@@ -27,7 +27,14 @@ const {
   assertProductionEnv,
   buildCorsOptions,
   buildSocketCors,
+  resolvePublicBaseUrl,
+  isOnRender,
+  parseAllowedOrigins,
 } = require('./startup-check');
+const {
+  printConnectivityReport,
+  probeOptionalDns,
+} = require('./startup-connectivity');
 assertProductionEnv();
 
 const express = require('express');
@@ -42,6 +49,7 @@ const auth = require('./auth');
 const { applySecurity } = require('./security');
 const { requireFeature } = require('./plans');
 const { buildAuthRoutes } = require('./auth');
+const bruteforce = require('./bruteforce');
 const { buildPaymentRoutes } = require('./payments');
 const { buildAdminRoutes } = require('./admin');
 const { buildFootballRoutes } = require('./routes/football');
@@ -163,6 +171,10 @@ const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: buildSocketCors(),
   perMessageDeflate: true,
+  // Render termina TLS na borda; cliente usa wss:// — polling como fallback
+  transports: ['websocket', 'polling'],
+  pingTimeout: 25_000,
+  pingInterval: 10_000,
 });
 const bot = new RobotrendBot(io);
 
@@ -180,6 +192,8 @@ app.get('/readyz', async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
+  const af = require('./services/footballProvider');
+  const afSt = af.status?.() || {};
   res.json({
     ok: true,
     service: 'Robotrend IA',
@@ -188,6 +202,14 @@ app.get('/api/health', (req, res) => {
     demo: String(process.env.DEMO_MODE || 'true') === 'true',
     telegram: String(process.env.TELEGRAM_ENABLED || 'false') === 'true',
     postgres: db.isPostgres(),
+    render: isOnRender(),
+    publicUrl: resolvePublicBaseUrl() || null,
+    corsOrigins: parseAllowedOrigins().length,
+    football: {
+      configured: af.isConfigured?.() ?? false,
+      activeProvider: afSt.activeProvider || af.providerName,
+      priority: af.priority,
+    },
     uptime: process.uptime(),
     pid: process.pid,
   });
@@ -246,6 +268,53 @@ app.post('/api/prelive/toggle', auth.requireSystemToggle(db), (req, res) => {
    AUTH
    ============================================================ */
 buildAuthRoutes(app, db);
+
+/* ============================================================
+   DEV-ONLY — endpoints de socorro para destravar login local
+   ------------------------------------------------------------
+   Habilitados APENAS quando NODE_ENV !== production/staging.
+   Em deploy a rota responde 404 (rota não existe).
+   ============================================================ */
+{
+  const env = process.env.NODE_ENV || 'development';
+  const devEnabled = env !== 'production' && env !== 'staging';
+  if (devEnabled) {
+    console.log('[AUTH LOGIN] DEV ENDPOINTS ATIVOS — GET /api/dev/reset-admin disponível (env=' + env + ')');
+
+    app.get('/api/dev/reset-admin', async (req, res) => {
+      try {
+        const customEmail = req.query.email ? String(req.query.email) : undefined;
+        const customPass = req.query.password ? String(req.query.password) : undefined;
+        const info = await resetAdminUser({ email: customEmail, password: customPass });
+        // Também limpa TODOS os locks de bruteforce — útil quando o IP local
+        // ficou bloqueado por testes anteriores com email errado.
+        const clearedAll = bruteforce.resetAll();
+        console.log(`[AUTH LOGIN] /api/dev/reset-admin OK → ${info.email} · bruteforce.resetAll: ${clearedAll}`);
+        res.json({
+          ok: true,
+          admin: {
+            email: info.email,
+            password: customPass || process.env.BOOTSTRAP_ADMIN_PASSWORD || 'admin123',
+            role: info.role,
+            plan: info.plan,
+          },
+          bruteforceCleared: clearedAll,
+          hint: 'Faça POST /api/auth/login com { email, password } acima.',
+        });
+      } catch (err) {
+        console.error('[AUTH LOGIN] /api/dev/reset-admin ERRO:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
+    // Bônus: limpar apenas o bruteforce sem mexer no admin (caso já saiba a senha)
+    app.get('/api/dev/clear-bruteforce', (req, res) => {
+      const cleared = bruteforce.resetAll();
+      console.log(`[AUTH LOGIN] /api/dev/clear-bruteforce → removidas ${cleared} entradas`);
+      res.json({ ok: true, cleared });
+    });
+  }
+}
 
 /* ============================================================
    PAYMENTS
@@ -702,6 +771,45 @@ async function bootstrapAdmin() {
   log.info('bootstrap admin criado', { email });
 }
 
+/**
+ * Reset agressivo do admin local — usado pelo endpoint /api/dev/reset-admin.
+ * Cria o usuário se não existir, sobrescreve a senha com bcrypt(admin123),
+ * promove para role=admin/plan=PREMIUM e limpa o lock de bruteforce.
+ *
+ * Idempotente: pode ser chamado quantas vezes for preciso para destravar
+ * o painel durante desenvolvimento.
+ */
+async function resetAdminUser({ email, password } = {}) {
+  const targetEmail = (email || process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin@robotrend.local').toLowerCase();
+  const targetPassword = password || process.env.BOOTSTRAP_ADMIN_PASSWORD || 'admin123';
+  const passwordHash = await auth.hashPassword(targetPassword);
+  const existing = await db.findUserByEmail(targetEmail);
+  let user;
+  if (existing) {
+    user = await db.updateUser(existing.id, {
+      passwordHash,
+      role: 'admin',
+      plan: 'PREMIUM',
+      resetToken: null,
+      resetTokenExpires: null,
+    });
+    console.log(`[AUTH LOGIN] resetAdminUser → atualizado email="${targetEmail}" id=${existing.id}`);
+  } else {
+    user = await db.createUser({
+      email: targetEmail,
+      name: 'Admin',
+      passwordHash,
+      role: 'admin',
+      plan: 'PREMIUM',
+    });
+    console.log(`[AUTH LOGIN] resetAdminUser → criado email="${targetEmail}" id=${user.id}`);
+  }
+  // Limpa qualquer lock de bruteforce associado a esse email
+  const cleared = bruteforce.reset(targetEmail);
+  if (cleared) console.log(`[AUTH LOGIN] resetAdminUser → bruteforce limpo (${cleared} entradas removidas)`);
+  return { email: targetEmail, id: user.id, role: user.role, plan: user.plan, bruteforceCleared: cleared };
+}
+
 /* ============================================================
    PERIODIC JOBS
    ============================================================ */
@@ -736,7 +844,17 @@ async function startAdaptiveLoop() {
    START + GRACEFUL SHUTDOWN
    ============================================================ */
 async function main() {
-  await db.init();
+  const bootReport = printConnectivityReport();
+
+  try {
+    await db.init();
+  } catch (e) {
+    log.fatal('PostgreSQL falhou no boot — causa provável: DATABASE_URL ausente ou PGHOST=postgres (ENOTFOUND)', {
+      err: e.message,
+      code: e.code,
+    });
+    throw e;
+  }
   await bootstrapAdmin();
 
   /* ============================================================
@@ -752,52 +870,71 @@ async function main() {
 
   const af = require('./services/footballProvider');
   const afStatus = af.status();
-  log.info('API-Football boot', {
-    configured: afStatus.configured,
-    host: afStatus.host,
-    baseURL: afStatus.baseURL ? 'set' : 'missing',
+  log.info('Football providers boot', {
+    configured: af.isConfigured(),
+    activeProvider: afStatus.activeProvider || af.providerName,
+    priority: af.priority,
+    apisportsKey: process.env.API_FOOTBALL_KEY ? 'set' : 'MISSING',
     oddsOptional: !process.env.ODDS_API_KEY || String(process.env.ODDS_OPTIONAL || '').toLowerCase() === 'true',
   });
-  if (!afStatus.configured) {
-    log.warn('API_FOOTBALL_KEY/host ausentes — scanners externos desligados (sem ENOTFOUND)');
+  if (!af.isConfigured()) {
+    log.warn('Nenhum provider live configurado — modo degradado (poller heartbeat, scanner vazio)');
+  } else if (!process.env.API_FOOTBALL_KEY) {
+    log.info('API_FOOTBALL_KEY ausente — usando failover: ' + (af.priority || []).join(' → '));
   }
 
-  attachFootballRealtime(io, { db, auth });
-  footballAlerts.start();
-  signalsEngine.start();
-  betSignalEngine.start();
-  quotaMonitor.start();
+  try { attachFootballRealtime(io, { db, auth }); }
+  catch (e) { log.warn('footballRealtime init falhou (modo degradado)', { err: e.message }); }
+
+  try { footballAlerts.start(); } catch (e) { log.warn('footballAlerts start falhou', { err: e.message }); }
+  try { signalsEngine.start(); } catch (e) { log.warn('signalsEngine start falhou', { err: e.message }); }
+  try { betSignalEngine.start(); } catch (e) { log.warn('betSignalEngine start falhou', { err: e.message }); }
+  try { quotaMonitor.start(); } catch (e) { log.warn('quotaMonitor start falhou', { err: e.message }); }
 
   const footballPoller = getPoller();
   const enricher = getEnricher();
-  enricher.setPoller(footballPoller);   // dá ao enricher acesso ao cache de matches
-  enricher.start();
+  enricher.setPoller(footballPoller);
+  try { enricher.start(); } catch (e) { log.warn('fixtureEnricher start falhou', { err: e.message }); }
 
   if (String(process.env.FOOTBALL_POLLER_ENABLED || 'true').toLowerCase() !== 'false') {
-    footballPoller.start();
+    try { footballPoller.start(); }
+    catch (e) { log.warn('football poller start falhou (heartbeat tentará continuar)', { err: e.message }); }
   } else {
     log.warn('football poller desabilitado (FOOTBALL_POLLER_ENABLED=false)');
   }
 
-  bot.start();
+  try { bot.start(); } catch (e) { log.warn('bot start falhou', { err: e.message }); }
   startCleanupJob();
   startAdaptiveLoop();
-  watchdog.start();
+  try { watchdog.start(); } catch (e) { log.warn('watchdog start falhou', { err: e.message }); }
 
+  probeOptionalDns(bootReport).catch((e) => {
+    log.warn('DNS probe pós-boot falhou (não fatal)', { err: e.message });
+  });
+
+  const publicBase = resolvePublicBaseUrl();
   server.listen(PORT, () => {
-    log.info('Robotrend IA online', { port: PORT, version: APP_VERSION });
+    log.info('Robotrend IA online', { port: PORT, version: APP_VERSION, publicUrl: publicBase || 'local' });
     console.log('');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`🤖  ROBOTREND IA v${APP_VERSION} — COMMERCIAL READY`);
-    console.log(`🌐  Painel:    http://localhost:${PORT}`);
-    console.log(`🔐  Login:     http://localhost:${PORT}/login.html`);
-    console.log(`💎  Pricing:   http://localhost:${PORT}/pricing.html`);
-    console.log(`👑  Admin:     http://localhost:${PORT}/admin.html`);
-    console.log(`📈  Quality:   http://localhost:${PORT}/quality.html`);
-    console.log(`💰  Results:   http://localhost:${PORT}/results.html`);
-    console.log(`🧪  Backtest:  http://localhost:${PORT}/backtest.html`);
-    console.log(`📊  Metrics:   http://localhost:${PORT}/api/metrics`);
-    console.log(`💚  Healthz:   http://localhost:${PORT}/healthz`);
+    if (publicBase) {
+      console.log(`🌐  Painel:    ${publicBase}/`);
+      console.log(`🔐  Login:     ${publicBase}/login.html`);
+      console.log(`⚽  Football:  ${publicBase}/football.html`);
+      console.log(`💚  Healthz:   ${publicBase}/healthz`);
+      console.log(`📡  WSS:       ${publicBase.replace(/^http/, 'ws')}/socket.io/`);
+    } else {
+      console.log(`🌐  Painel:    http://localhost:${PORT}`);
+      console.log(`🔐  Login:     http://localhost:${PORT}/login.html`);
+      console.log(`💎  Pricing:   http://localhost:${PORT}/pricing.html`);
+      console.log(`👑  Admin:     http://localhost:${PORT}/admin.html`);
+      console.log(`📈  Quality:   http://localhost:${PORT}/quality.html`);
+      console.log(`💰  Results:   http://localhost:${PORT}/results.html`);
+      console.log(`🧪  Backtest:  http://localhost:${PORT}/backtest.html`);
+      console.log(`📊  Metrics:   http://localhost:${PORT}/api/metrics`);
+      console.log(`💚  Healthz:   http://localhost:${PORT}/healthz`);
+    }
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('');
   });
@@ -836,6 +973,10 @@ process.on('unhandledRejection', (err) => {
 process.on('uncaughtException',  (err) => log.fatal('uncaughtException',  { err: err?.message || String(err) }));
 
 main().catch((err) => {
-  log.fatal('startup failed', { err: err.message });
+  const code = err?.code || err?.cause?.code || '';
+  const hint = /ENOTFOUND|getaddrinfo/i.test(err?.message || '')
+    ? ' → Verifique DATABASE_URL no Render (não use PGHOST=postgres). Relatório [STARTUP CONNECTIVITY] acima.'
+    : '';
+  log.fatal('startup failed' + hint, { err: err.message, code });
   process.exit(1);
 });

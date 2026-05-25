@@ -51,23 +51,42 @@ const log = logger.child({ module: 'betSignalEngine' });
 
 /* ============================================================
    CONFIG
+   ------------------------------------------------------------
+   DEBUG / TEST MODES:
+     BET_SIGNAL_DEBUG=true       → log verboso por decisão + payload de drops
+     BET_SIGNAL_TEST_MODE=true   → afrouxa TODOS os filtros para diagnóstico:
+       minConfidence → BET_SIGNAL_TEST_MIN_CONFIDENCE (default 70)
+       oddRange      → [1.20, 10.0]  (era [1.80, 2.20])
+       minuteRange   → [1, 120]      (era [20, 85])
+       cooldown      → 0             (sem cooldown)
+       enrichedGate  → IGNORADO      (processa parciais também)
+     Use apenas para validar funcionamento. NÃO use em produção.
    ============================================================ */
 const ENABLED        = String(process.env.BET_SIGNAL_ENABLED || 'true').toLowerCase() !== 'false';
 const TICK_MS        = Number(process.env.BET_SIGNAL_TICK_MS         || 90_000);
+
+// === MODOS DIAGNÓSTICO ===========================================
+const DEBUG_MODE     = String(process.env.BET_SIGNAL_DEBUG     || 'false').toLowerCase() === 'true';
+const TEST_MODE      = String(process.env.BET_SIGNAL_TEST_MODE || 'false').toLowerCase() === 'true';
+const TEST_MIN_CONF  = Number(process.env.BET_SIGNAL_TEST_MIN_CONFIDENCE || 70);
 
 // Tier FREE (entrada baixa, sinais mais amplos)
 const FREE_MIN_CONFIDENCE    = Number(process.env.BET_SIGNAL_FREE_MIN_CONFIDENCE    || 65);
 // Tier PREMIUM (qualidade — só sinais fortes)
 const PREMIUM_MIN_CONFIDENCE = Number(process.env.BET_SIGNAL_PREMIUM_MIN_CONFIDENCE || 75);
-// Compat: MIN_CONFIDENCE = piso geral para emitir (= FREE)
-const MIN_CONFIDENCE = Math.min(FREE_MIN_CONFIDENCE, Number(process.env.BET_SIGNAL_MIN_CONFIDENCE || FREE_MIN_CONFIDENCE));
+// Compat: MIN_CONFIDENCE = piso geral para emitir (= FREE).
+// Em TEST_MODE força o piso para TEST_MIN_CONF (default 70).
+const MIN_CONFIDENCE = TEST_MODE
+  ? TEST_MIN_CONF
+  : Math.min(FREE_MIN_CONFIDENCE, Number(process.env.BET_SIGNAL_MIN_CONFIDENCE || FREE_MIN_CONFIDENCE));
 
-const MIN_ODD        = Number(process.env.BET_SIGNAL_MIN_ODD         || 1.80);
-const MAX_ODD        = Number(process.env.BET_SIGNAL_MAX_ODD         || 2.20);
-const COOLDOWN_MS    = Number(process.env.BET_SIGNAL_COOLDOWN_MS     || 10 * 60_000);
-const MIN_MINUTE     = Number(process.env.BET_SIGNAL_MIN_MINUTE      || 20);
-const MAX_MINUTE     = Number(process.env.BET_SIGNAL_MAX_MINUTE      || 85);
+const MIN_ODD        = TEST_MODE ? 1.20 : Number(process.env.BET_SIGNAL_MIN_ODD || 1.80);
+const MAX_ODD        = TEST_MODE ? 10.0 : Number(process.env.BET_SIGNAL_MAX_ODD || 2.20);
+const COOLDOWN_MS    = TEST_MODE ? 0    : Number(process.env.BET_SIGNAL_COOLDOWN_MS || 10 * 60_000);
+const MIN_MINUTE     = TEST_MODE ? 1    : Number(process.env.BET_SIGNAL_MIN_MINUTE  || 20);
+const MAX_MINUTE     = TEST_MODE ? 120  : Number(process.env.BET_SIGNAL_MAX_MINUTE  || 85);
 const RECENT_MAX     = Number(process.env.BET_SIGNAL_RECENT_MAX      || 200);
+const DROPS_MAX      = Number(process.env.BET_SIGNAL_DROPS_MAX       || 100);
 
 // Janela em que a "melhor aposta do momento" continua válida (default 8min)
 const BEST_TTL_MS    = Number(process.env.BET_SIGNAL_BEST_TTL_MS     || 8 * 60_000);
@@ -89,6 +108,46 @@ const g_recent    = metrics.gauge('bet_signal_recent_count');
    ============================================================ */
 const cooldowns = new Map();  // `${matchId}:${market}` -> ts
 const recent = [];            // ring buffer dos últimos sinais
+
+/* ============================================================
+   DIAGNÓSTICO — contadores por estágio + amostra de descartes
+   ------------------------------------------------------------
+   Cada tick zera `tickFunnel`; os totais acumulados ficam em `funnelTotals`.
+   `recentDrops` guarda os últimos N motivos de descarte (anel) com
+   payload curto explicando POR QUE cada match/sinal foi rejeitado.
+   Tudo exposto via GET /api/football/bet-signals/debug.
+   ============================================================ */
+const FUNNEL_KEYS = [
+  'input',                 // matches recebidos do poller
+  'no-match',              // m falsy
+  'not-enriched',          // !m.enriched
+  'no-stats',              // !m.stats
+  'minute-out-of-range',
+  'computed',              // passou os gates de match → entrou em compute*
+  'compute-null',          // compute*Bet() retornou null (sem sinal candidato)
+  'low-confidence',
+  'odd-out-of-range',
+  'cooldown',
+  'emitted',
+];
+function makeCounter() {
+  return Object.fromEntries(FUNNEL_KEYS.map((k) => [k, 0]));
+}
+let tickFunnel = makeCounter();
+const funnelTotals = makeCounter();
+const recentDrops = []; // ring buffer { ts, stage, reason, match, market, conf?, odd?, snapshot? }
+
+function recordFunnel(stage, delta = 1) {
+  tickFunnel[stage] = (tickFunnel[stage] || 0) + delta;
+  funnelTotals[stage] = (funnelTotals[stage] || 0) + delta;
+}
+function recordDrop(payload) {
+  recentDrops.unshift({ ts: Date.now(), ...payload });
+  if (recentDrops.length > DROPS_MAX) recentDrops.length = DROPS_MAX;
+}
+function resetTickFunnel() {
+  tickFunnel = makeCounter();
+}
 
 /* ============================================================
    HELPERS
@@ -674,35 +733,104 @@ function emit(signal) {
   events.emit('signal:new', signal);
 }
 
+/**
+ * Resumo curto de match usado nos logs/drops para diagnóstico.
+ * Não inclui campos pesados (stats completos, eventos, etc).
+ */
+function matchSummary(m) {
+  return {
+    matchId: m?.fixtureId,
+    label: `${m?.home || '?'} x ${m?.away || '?'}`,
+    league: m?.league?.name || m?.league,
+    minute: m?.minute,
+    status: m?.status,
+    score: m?.score,
+    enriched: !!m?.enriched,
+    hasStats: !!m?.stats,
+    dataQuality: m?.dataQuality || null,
+  };
+}
+
+function dropAndLog(stage, m, extra = {}) {
+  recordFunnel(stage);
+  m_skipped.inc(1, { reason: stage, ...(extra.market ? { market: extra.market } : {}) });
+  recordDrop({ stage, match: matchSummary(m), ...extra });
+  if (DEBUG_MODE) {
+    log.info('bet signal DROP', { stage, match: matchSummary(m), ...extra });
+  }
+}
+
 function processMatch(m) {
-  if (!m || !m.enriched || !m.stats) return;
+  recordFunnel('input');
+
+  if (!m) { dropAndLog('no-match', m); return; }
+
+  // === Gate de dados ============================================
+  // Em TEST_MODE processamos qualquer fixture (mesmo sem enriquecimento)
+  // para o usuário ver SE alguma coisa estaria sendo gerada.
+  if (!TEST_MODE) {
+    if (!m.enriched) { dropAndLog('not-enriched', m); return; }
+    if (!m.stats)    { dropAndLog('no-stats', m); return; }
+  } else {
+    if (!m.enriched) recordFunnel('not-enriched');
+    if (!m.stats)    recordFunnel('no-stats');
+  }
+
   const min = n(m.minute);
   if (min < MIN_MINUTE || min > MAX_MINUTE) {
-    m_skipped.inc(1, { reason: 'minute-range' });
+    dropAndLog('minute-out-of-range', m, { minute: min, range: [MIN_MINUTE, MAX_MINUTE] });
     return;
   }
+  recordFunnel('computed');
   m_processed.inc();
 
-  const candidates = [
-    safe(() => computeCornersBet(m)),
-    safe(() => computeBttsBet(m)),
-    safe(() => computeWinBet(m)),
-  ].filter(Boolean);
+  const rawCandidates = [
+    { market: 'corners', fn: () => computeCornersBet(m) },
+    { market: 'btts',    fn: () => computeBttsBet(m)    },
+    { market: 'win',     fn: () => computeWinBet(m)     },
+  ];
 
-  for (const c of candidates) {
+  for (const { market, fn } of rawCandidates) {
+    const c = safe(fn);
+    if (!c) {
+      recordFunnel('compute-null');
+      recordDrop({ stage: 'compute-null', market, match: matchSummary(m), reason: 'compute returned null (sem dados ou mercado resolvido)' });
+      if (DEBUG_MODE) log.info('bet signal DROP compute-null', { market, match: matchSummary(m) });
+      continue;
+    }
+
     if (c.confidence < MIN_CONFIDENCE) {
-      m_skipped.inc(1, { reason: 'low-confidence', market: c.market });
+      dropAndLog('low-confidence', m, {
+        market: c.market,
+        confidence: c.confidence,
+        minRequired: MIN_CONFIDENCE,
+        probability: c.probability,
+        prediction: c.prediction,
+      });
       continue;
     }
     if (c.oddEstimated < MIN_ODD || c.oddEstimated > MAX_ODD) {
-      m_skipped.inc(1, { reason: 'odd-out-of-range', market: c.market });
+      dropAndLog('odd-out-of-range', m, {
+        market: c.market,
+        oddEstimated: c.oddEstimated,
+        oddRange: [MIN_ODD, MAX_ODD],
+        confidence: c.confidence,
+        probability: c.probability,
+        prediction: c.prediction,
+      });
       continue;
     }
     const key = `${m.fixtureId}:${c.market}`;
     if (!canFire(key)) {
-      m_skipped.inc(1, { reason: 'cooldown', market: c.market });
+      dropAndLog('cooldown', m, {
+        market: c.market,
+        cooldownMs: COOLDOWN_MS,
+        confidence: c.confidence,
+        prediction: c.prediction,
+      });
       continue;
     }
+    recordFunnel('emitted');
     emit(buildSignal(m, c));
   }
 }
@@ -713,9 +841,13 @@ function processMatch(m) {
 let timer = null;
 let started = false;
 
+let lastTickAt = null;
+let lastTickSummary = null;
+
 function tick() {
   if (!ENABLED) return;
   const t0 = Date.now();
+  resetTickFunnel();
   try {
     const poller = getPoller();
     const matches = poller.getMatches();
@@ -723,7 +855,23 @@ function tick() {
   } catch (e) {
     log.error('tick error', { err: e.message });
   } finally {
-    m_lat.observe(Date.now() - t0);
+    const dur = Date.now() - t0;
+    m_lat.observe(dur);
+    lastTickAt = Date.now();
+    lastTickSummary = { ...tickFunnel, durationMs: dur };
+    if (DEBUG_MODE || TEST_MODE) {
+      log.info('bet signal tick summary', {
+        mode: TEST_MODE ? 'TEST' : (DEBUG_MODE ? 'DEBUG' : 'PROD'),
+        durationMs: dur,
+        funnel: tickFunnel,
+        thresholds: {
+          minConf: MIN_CONFIDENCE,
+          oddRange: [MIN_ODD, MAX_ODD],
+          minuteRange: [MIN_MINUTE, MAX_MINUTE],
+          cooldownMs: COOLDOWN_MS,
+        },
+      });
+    }
   }
 }
 
@@ -732,12 +880,19 @@ function start() {
   if (started) return;
   started = true;
   log.info('betSignalEngine started', {
+    mode: TEST_MODE ? 'TEST' : (DEBUG_MODE ? 'DEBUG' : 'PROD'),
     tickMs: TICK_MS,
     minConfidence: MIN_CONFIDENCE,
     oddRange: [MIN_ODD, MAX_ODD],
     minuteRange: [MIN_MINUTE, MAX_MINUTE],
     cooldownMs: COOLDOWN_MS,
   });
+  if (TEST_MODE) {
+    log.warn('⚠️  BET_SIGNAL_TEST_MODE ATIVO — thresholds afrouxados (não use em produção).');
+  }
+  if (DEBUG_MODE) {
+    log.warn('🔍 BET_SIGNAL_DEBUG ATIVO — logs verbosos por decisão. Pode poluir o stdout.');
+  }
   setTimeout(tick, 5_000);
   timer = setInterval(tick, TICK_MS);
   if (typeof timer.unref === 'function') timer.unref();
@@ -753,6 +908,9 @@ function snapshot() {
   return {
     enabled: ENABLED,
     started,
+    mode: TEST_MODE ? 'TEST' : (DEBUG_MODE ? 'DEBUG' : 'PROD'),
+    debugMode: DEBUG_MODE,
+    testMode: TEST_MODE,
     tickMs: TICK_MS,
     minConfidence: MIN_CONFIDENCE,
     freeMinConfidence: FREE_MIN_CONFIDENCE,
@@ -765,7 +923,82 @@ function snapshot() {
     activeCooldowns: cooldowns.size,
     recent: recent.length,
     bestSignalActive: bestStillValid(),
+    lastTickAt,
+    lastTickSummary,
+    funnelTotals: { ...funnelTotals },
   };
+}
+
+/**
+ * Relatório de diagnóstico completo: snapshot + amostra das últimas N
+ * decisões de descarte (com motivo + payload curto), para o usuário
+ * descobrir POR QUE nenhum sinal está sendo gerado.
+ */
+function debugReport({ dropLimit = 30 } = {}) {
+  const totalIn = funnelTotals.input || 0;
+  const breakdown = {};
+  for (const k of FUNNEL_KEYS) {
+    const v = funnelTotals[k] || 0;
+    breakdown[k] = { count: v, pct: totalIn ? +(v * 100 / totalIn).toFixed(1) : 0 };
+  }
+  // Top motivos de drop nos últimos N descartes (qualitativo)
+  const reasonHistogram = {};
+  for (const d of recentDrops) {
+    reasonHistogram[d.stage] = (reasonHistogram[d.stage] || 0) + 1;
+  }
+  return {
+    snapshot: snapshot(),
+    funnelTotals,
+    funnelBreakdown: breakdown,
+    lastTickSummary,
+    lastTickAt,
+    recentDrops: recentDrops.slice(0, dropLimit),
+    recentDropsReasonHistogram: reasonHistogram,
+    recentEmitted: recent.slice(0, 10).map((s) => ({
+      market: s.market,
+      prediction: s.prediction,
+      confidence: s.confidence,
+      odd: s.oddEstimated,
+      score: s.betScore,
+      match: s.match,
+      createdAt: s.createdAt,
+    })),
+    hints: buildHints(breakdown),
+  };
+}
+
+/**
+ * Gera dicas legíveis identificando o gargalo. Usa heurísticas simples
+ * sobre o funil para apontar onde a maioria dos matches está sumindo.
+ */
+function buildHints(breakdown) {
+  const hints = [];
+  const inP = breakdown.input?.count || 0;
+  if (inP === 0) {
+    hints.push('Nenhuma fixture chegou ao engine — verifique o poller (FOOTBALL_POLL_INTERVAL_MS, provider, quota).');
+    return hints;
+  }
+  const not = breakdown['not-enriched']?.count || 0;
+  const ns  = breakdown['no-stats']?.count || 0;
+  if ((not + ns) / inP > 0.7) {
+    hints.push(`> ${Math.round((not + ns) * 100 / inP)}% dos jogos não estão enriquecidos. Provider atual provavelmente é FREE (sem stats). Ative TEST_MODE ou use API-Sports/SofaScore.`);
+  }
+  if ((breakdown['minute-out-of-range']?.count || 0) / Math.max(inP, 1) > 0.4) {
+    hints.push('> 40% dos jogos caem fora da janela 20-85 min. Considere ajustar BET_SIGNAL_MIN_MINUTE/MAX_MINUTE.');
+  }
+  if ((breakdown['low-confidence']?.count || 0) > (breakdown.emitted?.count || 0) * 3) {
+    hints.push(`Muitos candidatos rejeitados por confidence < ${MIN_CONFIDENCE}. Considere baixar BET_SIGNAL_MIN_CONFIDENCE temporariamente.`);
+  }
+  if ((breakdown['odd-out-of-range']?.count || 0) > (breakdown.emitted?.count || 0) * 3) {
+    hints.push(`Faixa de odd [${MIN_ODD}, ${MAX_ODD}] é restritiva. Sinais com prob > 55% (odd < 1.80) ou < 45% (odd > 2.20) estão sendo descartados.`);
+  }
+  if ((breakdown.cooldown?.count || 0) > inP * 0.3) {
+    hints.push('Muitos sinais bloqueados por cooldown (10min). Em ambiente de teste, BET_SIGNAL_TEST_MODE=true desliga o cooldown.');
+  }
+  if (!hints.length) {
+    hints.push('Pipeline saudável — nenhum gargalo óbvio. Se sinais ainda não aparecem, rode `node scripts/diagnose-signals.js` para detalhes.');
+  }
+  return hints;
 }
 
 function listRecent({ limit = 50, market = null, minConfidence = 0, sinceMs = 0 } = {}) {
@@ -781,6 +1014,7 @@ function listRecent({ limit = 50, market = null, minConfidence = 0, sinceMs = 0 
 
 module.exports = {
   start, stop, snapshot, listRecent,
+  debugReport,
   getBestSignal,
   computeBetScore,
   // Configs expostas (usadas pelo footballRealtime para filtro tier)
@@ -789,6 +1023,14 @@ module.exports = {
     PREMIUM_MIN_CONFIDENCE,
     FREE_DELAY_MS,
     BEST_TTL_MS,
+    DEBUG_MODE,
+    TEST_MODE,
+    MIN_CONFIDENCE,
+    MIN_ODD,
+    MAX_ODD,
+    MIN_MINUTE,
+    MAX_MINUTE,
+    COOLDOWN_MS,
   },
   _internals: { computeCornersBet, computeBttsBet, computeWinBet, probToOdd, poisson, premiumInsight },
 };

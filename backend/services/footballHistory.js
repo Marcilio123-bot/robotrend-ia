@@ -111,40 +111,20 @@ let _ready = false;
 
 async function init() {
   if (_ready) return;
-  // db expõe pool internamente; usamos a mesma instância via require.
   const dbAny = require('../database');
   if (!dbAny.isPostgres()) {
     log.warn('footballHistory: modo memória (PG ausente)');
     _ready = true;
     return;
   }
-  // Acessa pool diretamente via require interno do pg
-  // (database.js mantém um pool exclusivo; fazemos init paralelo via pg)
+  // Reusa o pool único de database.js — evita 2ª conexão e ENOTFOUND duplicado no boot.
   try {
-    const { Pool } = require('pg');
-    const url = process.env.DATABASE_URL || '';
-    const flag = String(process.env.PGSSL || '').toLowerCase();
-    const host = (process.env.PGHOST || '').toLowerCase();
-    const envProd = (process.env.NODE_ENV || '') === 'production' || (process.env.NODE_ENV || '') === 'staging';
-    let ssl = false;
-    if (flag === 'true' || flag === '1' || flag === 'require')        ssl = true;
-    else if (flag === 'false' || flag === '0' || flag === 'disable')  ssl = false;
-    else if (/sslmode=require|sslmode=verify/i.test(url))             ssl = true;
-    else if (/\.render\.com|\.aws|\.fly\.dev|\.supabase\.|\.neon\.tech|\.cloud\.timescale|\.heroku/i.test(url)) ssl = true;
-    else if (host && host !== 'localhost' && !host.startsWith('127.') && envProd) ssl = true;
-    const sslOpt = ssl ? { rejectUnauthorized: false } : false;
-    _pool = new Pool(
-      url
-        ? { connectionString: url, ssl: sslOpt }
-        : {
-            host: process.env.PGHOST,
-            port: Number(process.env.PGPORT || 5432),
-            user: process.env.PGUSER,
-            password: process.env.PGPASSWORD,
-            database: process.env.PGDATABASE || 'robotrend',
-            ssl: sslOpt,
-          }
-    );
+    _pool = dbAny.getPool();
+    if (!_pool) {
+      log.warn('footballHistory: pool PG indisponível — memória');
+      _ready = true;
+      return;
+    }
 
     await _pool.query(`
       CREATE TABLE IF NOT EXISTS migrations (

@@ -282,17 +282,39 @@ function normalizeLive(item) {
    ============================================================ */
 function isConfigured() { return true; }
 
+/**
+ * AVISO: `/livescore.php` exige Patreon tier (pago) na API V1 atual.
+ * No free tier (key "3") usamos `eventsday.php` que retorna eventos
+ * agendados/em andamento/finalizados do dia. Filtramos os que estão
+ * em progresso/agendados pelo strStatus.
+ */
 async function getLiveFixtures() {
   const cached = cacheGet('live');
   if (cached) return cached;
-  const data = await httpGet('/livescore.php?s=Soccer');
-  if (!data || !Array.isArray(data.livescore)) {
+
+  // Tenta livescore primeiro (Patreon), cai para eventsday se falhar
+  let raw = null;
+  try {
+    raw = await httpGet('/livescore.php?s=Soccer');
+  } catch (_) { /* propaga só 403/429 */ }
+
+  let events = raw?.livescore;
+  if (!Array.isArray(events)) {
+    // Fallback grátis: eventos do dia
+    const today = new Date().toISOString().slice(0, 10);
+    let day = null;
+    try { day = await httpGet(`/eventsday.php?d=${today}&s=Soccer`); }
+    catch (_) {}
+    events = Array.isArray(day?.events) ? day.events : null;
+  }
+
+  if (!Array.isArray(events)) {
     const empty = [];
     Object.defineProperty(empty, '__stale', { value: true, enumerable: false });
     Object.defineProperty(empty, '__fallbackReason', { value: 'thesportsdb_unavailable', enumerable: false });
     return empty;
   }
-  const normalized = data.livescore.map(normalizeLive).filter(Boolean);
+  const normalized = events.map(normalizeLive).filter(Boolean);
   cacheSet('live', normalized, TTL_LIVE);
   return normalized;
 }

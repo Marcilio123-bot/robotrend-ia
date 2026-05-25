@@ -102,8 +102,8 @@ const PRELIVE_MAX_FIXTURES = Number(process.env.PRELIVE_MAX_FIXTURES || 5);
 
 class ApiPreliveScanner {
   async list() {
-    if (!apiFootball.isConfigured()) {
-      console.warn('[prelive] API_FOOTBALL não configurada — retornando [].');
+    if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
+      console.warn('[prelive] nenhum provider configurado na chain — retornando [].');
       return [];
     }
     // SAFE-MODE: não consome API. Devolve [] e deixa o frontend exibir aviso.
@@ -190,16 +190,21 @@ class ApiPreliveScanner {
 
 function createPreliveScanner() {
   if (STRICT_REAL_ONLY) {
-    if (!API_KEY) {
-      console.warn('[prelive] STRICT_REAL_ONLY=true e API_FOOTBALL_KEY ausente — scanner retornará [] sempre.');
-    }
     if (DEMO) {
       console.warn('[prelive] STRICT_REAL_ONLY=true sobrepõe DEMO_MODE — fonte sintética desabilitada.');
     }
+    if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
+      console.warn('[prelive] STRICT_REAL_ONLY=true + nenhum provider na chain — scanner retornará [].');
+      return { list: async () => [] };
+    }
+    console.log('[prelive] ApiPreliveScanner (STRICT) — provider: ' + (apiFootball.providerName || '?'));
     return new ApiPreliveScanner();
   }
-  if (DEMO || !API_KEY) return new DemoPreliveScanner();
-  return new ApiPreliveScanner();
+  if (DEMO) return new DemoPreliveScanner();
+  if (apiFootball.hasAnyConfiguredProvider?.() || apiFootball.isConfigured?.()) {
+    return new ApiPreliveScanner();
+  }
+  return new DemoPreliveScanner();
 }
 
 module.exports = { createPreliveScanner };

@@ -27,6 +27,54 @@ const useDatabase = Boolean(
   (databaseUrl && /^postgres(ql)?:\/\//i.test(databaseUrl)) || pgHost
 ) && Pool !== null;
 
+function parseDbConfig() {
+  if (databaseUrl && /^postgres(ql)?:\/\//i.test(databaseUrl)) {
+    try {
+      const u = new URL(databaseUrl.replace(/^postgresql:/i, 'postgres:'));
+      return {
+        mode: 'DATABASE_URL',
+        host: u.hostname || '',
+        port: Number(u.port || 5432),
+        database: (u.pathname || '').replace(/^\//, '') || 'robotrend',
+        user: u.username || '',
+        connectionString: databaseUrl,
+      };
+    } catch (e) {
+      return { mode: 'DATABASE_URL', error: `DATABASE_URL inválida: ${e.message}` };
+    }
+  }
+  if (pgHost) {
+    return {
+      mode: 'PGHOST',
+      host: pgHost,
+      port: Number(envDb('PGPORT') || 5432),
+      database: envDb('PGDATABASE') || 'robotrend',
+      user: envDb('PGUSER') || '',
+      password: envDb('PGPASSWORD') ? '(set)' : '(missing)',
+    };
+  }
+  return { mode: 'none' };
+}
+
+function formatDbConnectError(err, cfg) {
+  const code = err?.code || '';
+  const host = cfg?.host || '?';
+  const lines = [
+    `Falha ao conectar PostgreSQL (${code || 'erro'}).`,
+    `  Alvo: modo=${cfg?.mode || '?'} host=${host} port=${cfg?.port || '?'}`,
+  ];
+  if (code === 'ENOTFOUND' || /getaddrinfo/i.test(String(err?.message || ''))) {
+    lines.push(
+      '  → getaddrinfo ENOTFOUND: o hostname do banco NÃO existe no DNS.',
+      '  → Render: Environment → remova PGHOST=postgres (Docker) se existir.',
+      '  → Render: Web Service → Add Environment Variable → From Database → robotrend-pg → DATABASE_URL.',
+    );
+  }
+  if (cfg?.error) lines.push(`  → ${cfg.error}`);
+  lines.push(`  Mensagem: ${err?.message || err}`);
+  return lines.join('\n');
+}
+
 /**
  * Render Managed Postgres exige SSL. Bancos locais geralmente não.
  * Estratégia:
@@ -56,21 +104,29 @@ function shouldUseSsl() {
 
 let pool = null;
 if (useDatabase) {
+  const cfg = parseDbConfig();
+  if (cfg.error) {
+    throw new Error(`[db] ${cfg.error}`);
+  }
   const ssl = shouldUseSsl() ? { rejectUnauthorized: false } : false;
-  pool = new Pool(
-    databaseUrl
-      ? { connectionString: databaseUrl, ssl }
-      : {
-          host: pgHost,
-          port: Number(envDb('PGPORT') || 5432),
-          user: envDb('PGUSER'),
-          password: envDb('PGPASSWORD'),
-          database: envDb('PGDATABASE') || 'robotrend',
-          ssl,
-        }
+  const poolOpts = cfg.mode === 'DATABASE_URL'
+    ? { connectionString: cfg.connectionString, ssl }
+    : {
+        host: cfg.host,
+        port: cfg.port,
+        user: envDb('PGUSER'),
+        password: envDb('PGPASSWORD'),
+        database: cfg.database,
+        ssl,
+      };
+  pool = new Pool({
+    ...poolOpts,
+    connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 10_000),
+    idleTimeoutMillis: 30_000,
+  });
+  console.log(
+    `[db] Pool configurado · modo=${cfg.mode} host=${cfg.host || '?'} ssl=${ssl ? 'on' : 'off'}`
   );
-  // Log discreto p/ debug de deploy (não vaza senha)
-  console.log('[db] Pool inicializado · ssl=' + (ssl ? 'on' : 'off'));
 }
 
 /* ============================================================
@@ -170,26 +226,50 @@ async function init() {
   if (!useDatabase) {
     if (env === 'production' || env === 'staging') {
       throw new Error(
-        '[db] PostgreSQL obrigatório em produção/staging. Defina DATABASE_URL ou PGHOST.'
+        '[db] PostgreSQL obrigatório em produção/staging. Defina DATABASE_URL (Render: Add from Database → robotrend-pg).'
       );
     }
     console.log('[db] Modo in-memory ativo (apenas desenvolvimento).');
     return;
   }
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS migrations (
-      name TEXT PRIMARY KEY,
-      applied_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-  for (const m of MIGRATIONS) {
-    const { rows } = await pool.query(`SELECT 1 FROM migrations WHERE name=$1`, [m.name]);
-    if (rows.length) continue;
-    await pool.query(m.sql);
-    await pool.query(`INSERT INTO migrations(name) VALUES($1)`, [m.name]);
-    console.log(`[db] migration aplicada: ${m.name}`);
+
+  const cfg = parseDbConfig();
+  try {
+    await pool.query('SELECT 1');
+  } catch (e) {
+    const msg = formatDbConnectError(e, cfg);
+    console.error('[db] ENOTFOUND / conexão falhou:\n' + msg);
+    const wrapped = new Error(msg);
+    wrapped.code = e.code;
+    wrapped.cause = e;
+    throw wrapped;
   }
-  console.log('[db] PostgreSQL conectado.');
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS migrations (
+        name TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    for (const m of MIGRATIONS) {
+      const { rows } = await pool.query(`SELECT 1 FROM migrations WHERE name=$1`, [m.name]);
+      if (rows.length) continue;
+      await pool.query(m.sql);
+      await pool.query(`INSERT INTO migrations(name) VALUES($1)`, [m.name]);
+      console.log(`[db] migration aplicada: ${m.name}`);
+    }
+    console.log(`[db] PostgreSQL conectado (${cfg.mode} → ${cfg.host})`);
+  } catch (e) {
+    if (e.code === 'ENOTFOUND' || /getaddrinfo/i.test(e.message || '')) {
+      throw new Error(formatDbConnectError(e, cfg));
+    }
+    throw e;
+  }
+}
+
+function getPool() {
+  return pool;
 }
 
 /**
@@ -554,6 +634,8 @@ async function findPaymentByExternalId(externalId, provider) {
 
 module.exports = {
   init,
+  getPool,
+  parseDbConfig,
   cleanupOldSignals,
   // users
   createUser, findUserById, findUserByEmail, findUserByResetToken,

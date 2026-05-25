@@ -38,6 +38,12 @@ const WEAK_ADMIN_PASSWORDS = new Set([
   'robotrend',
 ]);
 
+/** Hostnames de docker-compose que NÃO resolvem no DNS do Render. */
+const BAD_PGHOST_RENDER = new Set([
+  'postgres', 'postgresql', 'db', 'database', 'localhost', '127.0.0.1',
+  'host.docker.internal', 'mysql', 'redis',
+]);
+
 /** Lê env com trim — nunca chama .trim() em undefined. */
 function envString(key) {
   const v = process.env[key];
@@ -155,6 +161,16 @@ function assertProductionEnv() {
     errors.push(
       'DATABASE_URL não parece uma connection string PostgreSQL válida.\n' +
       '    → Deve começar com postgresql:// ou postgres://'
+    );
+  } else if (isOnRender() && pgHost && BAD_PGHOST_RENDER.has(pgHost.toLowerCase()) && !dbUrl) {
+    errors.push(
+      `PGHOST="${pgHost}" é placeholder Docker e causa getaddrinfo ENOTFOUND no Render.\n` +
+      '    → Remova PGHOST do Environment.\n' +
+      '    → Adicione DATABASE_URL via "Add from Database" → robotrend-pg.'
+    );
+  } else if (isOnRender() && pgHost && dbUrl) {
+    console.warn(
+      '[startup-check] PGHOST está definido mas DATABASE_URL também — o pool usa só DATABASE_URL; remova PGHOST=postgres se existir.'
     );
   }
 

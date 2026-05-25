@@ -1,34 +1,49 @@
 /**
  * Robotrend IA — Multi-API Consensus Engine
  *
- * Confirma que um match está LIVE em N fontes externas independentes
- * antes de qualquer análise ou emissão de sinal.
+ * Confirma (ou anota) que um match está LIVE em N fontes externas independentes.
+ *
+ * ============================================================
+ *  MODOS DE OPERAÇÃO (env: MATCH_CONSENSUS_MODE)
+ * ============================================================
+ *
+ *  - STRICT  → comportamento original: TODAS as fontes precisam concordar
+ *              dentro da tolerância de timestamp. Divergência = match descartado.
+ *              Use em produção de Signal Mode quando você precisa de altíssima
+ *              certeza (ex.: cash bot operando).
+ *
+ *  - RELAXED → DEFAULT recomendado. Aceita o match se QUALQUER fonte o
+ *              confirma, mas anota a qualidade:
+ *                  • verified      → todas as fontes ativas concordam
+ *                  • partial       → ≥1 mas <N fontes concordam (dentro da tolerância)
+ *                  • single-source → apenas 1 fonte ou divergência grande
+ *              Nenhum match é descartado. Ideal para mostrar dados no painel
+ *              mesmo quando providers FREE (TheSportsDB) divergem do API-Football.
+ *
+ *  - OFF     → bypass total. Engine NÃO faz HTTP, devolve a lista intacta
+ *              anotada como `single-source`. Use quando o poller único já
+ *              é fonte de verdade suficiente (modo Scanner).
+ *
+ * Compat:
+ *   - Se `MATCH_CONSENSUS_MODE` não estiver setado E `STRICT_REAL_ONLY=true`,
+ *     o modo default é STRICT (comportamento legado).
+ *   - Caso contrário, default = RELAXED.
  *
  * Fontes possíveis (todas com retry exponencial):
  *   1. STATUS   → API-Football v3/fixtures?live=all
- *   2. EVENTS   → API-Football v3/fixtures?live=all (filtra elapsed >= 1 e events ativos)
+ *   2. EVENTS   → API-Football v3/fixtures?live=all (filtra elapsed >= 1)
  *   3. ODDS     → The Odds API v4/sports/soccer/odds  ── OPCIONAL ──
- *
- * Modo ODDS opcional (default quando ODDS_API_KEY ausente OU ODDS_OPTIONAL=true):
- *   - Source "odds" é desativada no boot (não há request nem retry)
- *   - Warning emitido UMA vez, sem spam
- *   - Consenso passa a ser de 2 fontes (status + events) — API-Football só
- *   - Realtime, signals e fixtures continuam fluindo normalmente
- *
- * Modo estrito (ODDS_API_KEY presente E ODDS_OPTIONAL=false):
- *   - As 3 fontes precisam concordar
- *   - Qualquer fonte falhando → bloqueia todos os matches do ciclo
  *
  * Regras compartilhadas:
  *   - Diferença máxima de timestamp entre fontes: 60s (configurável)
- *   - Em STRICT_REAL_ONLY=false (dev) o engine é bypass (devolve a lista intacta)
  *
  * Logs:
- *   [CONSENSUS]            X/Y matches confirmados pelas N APIs
- *   [CONSENSUS DIVERGENCE] match divergiu (reason)
+ *   [CONSENSUS]            X/Y matches confirmados pelas N APIs (modo)
+ *   [CONSENSUS DIVERGENCE] match divergiu (reason, source faltante, spread)
  *   [CONSENSUS RETRY]      tentativa X/Y falhou
  *   [CONSENSUS FAIL]       source "name" indisponível
- *   [CONSENSUS BLOCK]      bloqueando TODOS os matches
+ *   [CONSENSUS BLOCK]      apenas em STRICT — bloqueando TODOS os matches
+ *   [CONSENSUS RELAX]      em RELAXED — match aceito por 1 fonte (single-source)
  *   [CONSENSUS ODDS]       odds desativadas — modo fallback (somente 1x)
  */
 
@@ -44,6 +59,21 @@ const STRICT_REAL_ONLY = (() => {
   if (raw == null || raw === '') return ENV === 'production' || ENV === 'staging';
   return String(raw).toLowerCase() === 'true';
 })();
+
+/* ============================================================
+   MATCH_CONSENSUS_MODE — strict | relaxed | off
+   ------------------------------------------------------------
+   Default:
+     - STRICT  se STRICT_REAL_ONLY=true (compat com setup antigo)
+     - RELAXED em qualquer outro caso (segue a recomendação do user)
+   ============================================================ */
+const VALID_MODES = new Set(['strict', 'relaxed', 'off']);
+const CONSENSUS_MODE = (() => {
+  const raw = String(process.env.MATCH_CONSENSUS_MODE || '').trim().toLowerCase();
+  if (VALID_MODES.has(raw)) return raw;
+  return STRICT_REAL_ONLY ? 'strict' : 'relaxed';
+})();
+console.log(`[CONSENSUS] modo ativo: ${CONSENSUS_MODE.toUpperCase()} (env MATCH_CONSENSUS_MODE=${process.env.MATCH_CONSENSUS_MODE || '(default)'})`);
 
 // Retries default rebaixado para 1: apiFootball já faz retry interno
 // com backoff exponencial, então retentar aqui só gerava 3x mais log
@@ -117,7 +147,9 @@ async function fetchStatusSource() {
   }
   // Reusa o cache/quota do serviço centralizado (chamada compartilhada
   // com events e com live.js — o dedup in-flight garante 1 round-trip).
-  const response = await apiFootball.getLiveFixtures();
+  // `aggregate:false` força failover sequencial — não faz sentido agregar
+  // aqui porque o consensus já compara source-by-source.
+  const response = await apiFootball.getLiveFixtures({ aggregate: false });
   const out = new Map();
   for (const fx of response || []) {
     const status = fx?.fixture?.status?.short;
@@ -136,7 +168,7 @@ async function fetchEventsSource() {
     console.warn('[CONSENSUS] API_FOOTBALL não configurada — source events vazia (sem HTTP)');
     return new Map();
   }
-  const response = await apiFootball.getLiveFixtures();
+  const response = await apiFootball.getLiveFixtures({ aggregate: false });
   const out = new Map();
   for (const fx of response || []) {
     const elapsed = fx?.fixture?.status?.elapsed;
@@ -204,119 +236,236 @@ async function fetchAllSources(sources = DEFAULT_SOURCES) {
 }
 
 /* ============================================================
-   CONFIRM MATCHES (consensus)
+   QUALIDADE DA FONTE — usada por todos os modos
+   ------------------------------------------------------------
+     verified      → todas as fontes ATIVAS concordam, spread dentro da tolerância
+     partial       → ≥1 fonte mas <N fontes concordam (ou spread > tolerância)
+     single-source → match conhecido por apenas 1 fonte (o poller principal)
+   ============================================================ */
+function deriveSourceQuality({ matchedSources, totalSources, spreadMs }) {
+  if (matchedSources >= totalSources && totalSources >= 2 && spreadMs <= TS_TOLERANCE_MS) {
+    return 'verified';
+  }
+  if (matchedSources >= 2) return 'partial';
+  return 'single-source';
+}
+
+/**
+ * Anota um match com `consensus` + `sourceQuality` mesmo quando o engine
+ * não é executado (modo OFF, scanner endpoint, safe-mode). Útil para o
+ * frontend renderizar o badge consistentemente em qualquer caminho.
+ */
+function annotateSourceQuality(m, extra = {}) {
+  if (m.consensus && m.sourceQuality) return m;
+  return {
+    ...m,
+    consensus: {
+      mode: 'off',
+      confirmedAt: Date.now(),
+      sources: ['poller-cache'],
+      ...extra,
+    },
+    sourceQuality: 'single-source',
+  };
+}
+
+/* ============================================================
+   CONFIRM MATCHES — entrypoint público, despacha por modo
+   ============================================================
+   opts:
+     - mode:    'strict' | 'relaxed' | 'off'  (sobrescreve env)
+     - strict:  bool legado — equivale a mode='strict' quando true
+     - sources: injeção para testes
    ============================================================ */
 async function confirmMatches(matches, opts = {}) {
-  const strict = opts.strict != null ? !!opts.strict : STRICT_REAL_ONLY;
-  if (!strict) {
-    return { confirmed: matches || [], divergences: [], failedSources: [] };
-  }
+  // Resolve modo efetivo (opts.mode > opts.strict > env)
+  let mode = opts.mode || (opts.strict === true ? 'strict' : opts.strict === false ? 'off' : CONSENSUS_MODE);
+  if (!VALID_MODES.has(mode)) mode = CONSENSUS_MODE;
+
   if (!Array.isArray(matches) || matches.length === 0) {
-    return { confirmed: [], divergences: [], failedSources: [] };
+    return { confirmed: [], divergences: [], failedSources: [], mode };
   }
 
-  if (!apiFootball.isConfigured()) {
-    console.warn('[CONSENSUS] API_FOOTBALL não configurada — bypass sem HTTP (dados do poller)');
+  // === MODO OFF — pass-through anotado =============================
+  if (mode === 'off') {
     return {
-      confirmed: matches.map((m) => ({
-        ...m,
-        consensus: { confirmedAt: Date.now(), sources: ['poller-cache'], apiSkipped: true },
-      })),
+      confirmed: matches.map((m) => annotateSourceQuality(m, { reason: 'mode:off' })),
       divergences: [],
       failedSources: [],
+      mode,
     };
   }
 
-  // SAFE-MODE: o engine de consenso dispara 2-3 chamadas adicionais por ciclo.
-  // Em quota baixa, confiamos no poller central (single owner) e devolvemos
-  // os matches sem confirmação extra.
-  if (apiFootball.isSafeMode && apiFootball.isSafeMode()) {
+  // Gates compartilhados (apply em STRICT e RELAXED).
+  if (!apiFootball.isConfigured()) {
+    console.warn('[CONSENSUS] API_FOOTBALL não configurada — degradando para single-source (modo: ' + mode + ')');
     return {
-      confirmed: matches.map((m) => ({
-        ...m,
-        consensus: { confirmedAt: Date.now(), sources: ['poller-cache'], safeMode: true },
-      })),
+      confirmed: matches.map((m) => annotateSourceQuality(m, { reason: 'api-football-not-configured' })),
       divergences: [],
       failedSources: [],
+      mode,
+    };
+  }
+  if (apiFootball.isSafeMode && apiFootball.isSafeMode()) {
+    console.warn('[CONSENSUS] safe-mode ativo — degradando para single-source (modo: ' + mode + ')');
+    return {
+      confirmed: matches.map((m) => annotateSourceQuality(m, { reason: 'provider-safe-mode' })),
+      divergences: [],
+      failedSources: [],
+      mode,
     };
   }
 
   const sources = await fetchAllSources(opts.sources || DEFAULT_SOURCES);
-  // Considera só as fontes efetivamente ativas (odds pode estar desligada)
   const activeNames = SOURCE_NAMES.filter((n) => sources[n] != null);
   const failedSources = activeNames.filter((n) => !sources[n]?.ok);
-  if (failedSources.length) {
-    console.error(
-      `[CONSENSUS BLOCK] sources falharam: ${failedSources.join(',')} → bloqueando ${matches.length} matches`
-    );
-    return { confirmed: [], divergences: [], failedSources };
+
+  // === MODO STRICT — comportamento original (bloqueia se source falhar) ===
+  if (mode === 'strict') {
+    if (failedSources.length) {
+      console.error(
+        `[CONSENSUS BLOCK] strict mode — sources falharam: ${failedSources.join(',')} → bloqueando ${matches.length} matches`
+      );
+      return { confirmed: [], divergences: [], failedSources, mode };
+    }
+    return resolveMatches(matches, sources, activeNames, { mode: 'strict' });
   }
 
+  // === MODO RELAXED — nunca bloqueia, apenas anota qualidade =============
+  // Sources que falharam viram "inativas" para esse ciclo, mas não impedem
+  // a emissão dos matches. Cada match recebe sourceQuality conforme quantas
+  // das fontes RESTANTES concordaram com ele.
+  const liveSources = activeNames.filter((n) => sources[n]?.ok);
+  if (failedSources.length) {
+    console.warn(
+      `[CONSENSUS RELAX] sources indisponíveis: ${failedSources.join(',')} — seguindo com ${liveSources.join('+') || '(nenhuma)'}`
+    );
+  }
+  return resolveMatches(matches, sources, liveSources, { mode: 'relaxed', failedSources });
+}
+
+/**
+ * Núcleo de resolução. Para cada match calcula:
+ *   - quantas fontes ATIVAS o confirmam
+ *   - spread de timestamp entre as fontes que confirmam
+ *   - sourceQuality (verified / partial / single-source)
+ *   - consensus.score (0..100)  — % de fontes que confirmam, descontado spread
+ *
+ * Em modo STRICT: rejeita match se alguma source faltar ou spread > tolerância.
+ * Em modo RELAXED: aceita TUDO, só anota a qualidade.
+ */
+function resolveMatches(matches, sources, activeNames, { mode, failedSources = [] }) {
+  const totalActive = activeNames.length;
   const confirmed = [];
   const divergences = [];
+  let verifiedCount = 0, partialCount = 0, singleCount = 0;
 
   for (const m of matches) {
     const key = matchKey(m);
     const perSource = {};
-    let missingSource = null;
+    const matchedNames = [];
+    const missingNames = [];
 
     for (const name of activeNames) {
       const entry = sources[name].data.get(key);
       perSource[name] = entry || null;
-      if (!entry) { missingSource = name; break; }
+      if (entry) matchedNames.push(name);
+      else missingNames.push(name);
     }
 
-    if (missingSource) {
-      divergences.push({
-        match: `${m.home} x ${m.away}`,
-        reason: `não encontrado em source "${missingSource}"`,
-      });
-      continue;
+    const tsList = matchedNames.map((n) => perSource[n].timestamp).filter(Number.isFinite);
+    const spread = tsList.length > 1 ? (Math.max(...tsList) - Math.min(...tsList)) : 0;
+
+    // === STRICT: descarta match em qualquer ausência ou spread excedente
+    if (mode === 'strict') {
+      if (missingNames.length) {
+        divergences.push({
+          match: `${m.home} x ${m.away}`,
+          reason: `não encontrado em source "${missingNames[0]}"`,
+          missingSources: missingNames,
+          matchedSources: matchedNames,
+        });
+        continue;
+      }
+      if (spread > TS_TOLERANCE_MS) {
+        divergences.push({
+          match: `${m.home} x ${m.away}`,
+          reason: `timestamp spread ${(spread / 1000).toFixed(1)}s > ${TS_TOLERANCE_MS / 1000}s`,
+          spreadMs: spread,
+          timestamps: tsList,
+        });
+        continue;
+      }
     }
 
-    const tsList = activeNames.map((n) => perSource[n].timestamp);
-    const spread = Math.max(...tsList) - Math.min(...tsList);
-    if (spread > TS_TOLERANCE_MS) {
-      divergences.push({
-        match: `${m.home} x ${m.away}`,
-        reason: `timestamp spread ${(spread/1000).toFixed(1)}s > ${TS_TOLERANCE_MS/1000}s`,
-        timestamps: tsList,
-      });
-      continue;
+    // === RELAXED (ou STRICT já validado): anota e aceita
+    const quality = deriveSourceQuality({
+      matchedSources: matchedNames.length,
+      totalSources: totalActive,
+      spreadMs: spread,
+    });
+    if (quality === 'verified') verifiedCount++;
+    else if (quality === 'partial') partialCount++;
+    else singleCount++;
+
+    // Em RELAXED, registra divergência sem descartar — pra o user ver no log
+    if (mode === 'relaxed' && missingNames.length) {
+      console.log(`[CONSENSUS RELAX] aceito ${quality}: ${m.home} x ${m.away} (faltou em: ${missingNames.join(',')}, achado em: ${matchedNames.join(',') || 'nenhum'})`);
     }
+
+    // Skip matches em RELAXED se NENHUMA fonte vier — match vem só do poller.
+    // Ainda assim emitimos com `single-source` para o painel mostrar.
+    const score = Math.round(
+      (matchedNames.length / Math.max(1, totalActive)) * 100
+      - Math.min(20, (spread / TS_TOLERANCE_MS) * 10)
+    );
 
     confirmed.push({
       ...m,
+      sourceQuality: quality,
       consensus: {
+        mode,
         confirmedAt: Date.now(),
-        sources: activeNames.slice(),
+        sources: matchedNames.length ? matchedNames : ['poller-cache'],
+        missingSources: missingNames,
         timestampSpreadMs: spread,
+        score: Math.max(0, Math.min(100, score)),
         oddsEnabled: ODDS_ENABLED,
+        failedSources: failedSources.length ? failedSources : undefined,
         perSource: Object.fromEntries(
-          activeNames.map((n) => [n, { status: perSource[n].status, timestamp: perSource[n].timestamp }])
+          activeNames.map((n) => [n, perSource[n] ? { status: perSource[n].status, timestamp: perSource[n].timestamp } : null])
         ),
       },
     });
   }
 
   if (divergences.length) {
-    console.warn(`[CONSENSUS DIVERGENCE] ${divergences.length} matches divergiram`);
+    console.warn(`[CONSENSUS DIVERGENCE] ${divergences.length} matches divergiram (modo: ${mode})`);
     for (const d of divergences.slice(0, 5)) {
       console.warn(`  - ${d.match}: ${d.reason}`);
     }
   }
 
-  console.log(`[CONSENSUS] ${confirmed.length}/${matches.length} matches confirmados pelas ${activeNames.length} fontes (${activeNames.join('+')})`);
-  return { confirmed, divergences, failedSources: [] };
+  const summary = mode === 'relaxed'
+    ? `verified=${verifiedCount} · partial=${partialCount} · single=${singleCount}`
+    : `${confirmed.length}/${matches.length}`;
+  console.log(
+    `[CONSENSUS] modo=${mode} → ${confirmed.length}/${matches.length} matches emitidos · ${summary} · fontes ativas: ${activeNames.join('+') || '(nenhuma)'}`
+  );
+
+  return { confirmed, divergences, failedSources, mode };
 }
 
 module.exports = {
   confirmMatches,
   fetchAllSources,
+  annotateSourceQuality,
+  deriveSourceQuality,
   matchKey,
   normalize,
   withRetry,
   STRICT_REAL_ONLY,
+  CONSENSUS_MODE,
   TS_TOLERANCE_MS,
   RETRIES,
   SOURCE_NAMES,

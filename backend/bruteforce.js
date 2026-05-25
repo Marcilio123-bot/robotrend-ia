@@ -57,6 +57,35 @@ function status(key) {
 }
 
 /**
+ * Reset por chave exata (`email:ip`) ou por prefix de email.
+ * Em dev, o endpoint /api/dev/reset-admin chama isto para destravar logins.
+ */
+function reset(keyOrEmail) {
+  if (!keyOrEmail) return 0;
+  if (attempts.has(keyOrEmail)) {
+    attempts.delete(keyOrEmail);
+    return 1;
+  }
+  // Permite passar só o email — limpa todas as entradas `email:*`
+  let count = 0;
+  const prefix = `${keyOrEmail.toLowerCase()}:`;
+  for (const k of Array.from(attempts.keys())) {
+    if (k.startsWith(prefix)) {
+      attempts.delete(k);
+      count++;
+    }
+  }
+  return count;
+}
+
+/** Reset GLOBAL — use só em dev. */
+function resetAll() {
+  const n = attempts.size;
+  attempts.clear();
+  return n;
+}
+
+/**
  * Wrap em login: chame antes/depois de verificar senha.
  *   const k = `${email}:${ip}`;
  *   if (bruteforce.isBlocked(k)) return res.status(429).json({...});
@@ -64,4 +93,4 @@ function status(key) {
  *   if (passwordWrong) bruteforce.recordFail(k);
  *   else bruteforce.recordSuccess(k);
  */
-module.exports = { isBlocked, recordFail, recordSuccess, status };
+module.exports = { isBlocked, recordFail, recordSuccess, status, reset, resetAll };
