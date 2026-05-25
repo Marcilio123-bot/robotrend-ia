@@ -80,6 +80,9 @@ services:
         sync: false
       - key: TELEGRAM_ENABLED
         value: "false"
+      # Providers live (failover automático). thesportsdb é o default (gratuito).
+      - key: FOOTBALL_PROVIDER_PRIORITY
+        value: thesportsdb,sofascore,apisports
       - key: API_FOOTBALL_KEY
         sync: false
       - key: ODDS_API_KEY

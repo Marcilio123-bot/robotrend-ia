@@ -11,7 +11,7 @@
 const { analyzeLiveMatch } = require('./analyzer');
 const freshness = require('./freshness');
 const consensus = require('./consensus');
-const apiFootball = require('./services/apiFootball');
+const apiFootball = require('./services/footballProvider');
 
 const DEMO = String(process.env.DEMO_MODE || 'false').toLowerCase() === 'true';
 const API_KEY = (process.env.API_FOOTBALL_KEY || '').trim();

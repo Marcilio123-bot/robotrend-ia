@@ -161,21 +161,23 @@
     sock.on('hello', (h) => { logEvent('hello', h); bumpRuntime({ socket: true }); });
     sock.on('tick', (p) => {
       state.poller = p.poller || state.poller;
-      replaceMatches(p.matches || []);
+      replaceMatches(p.matches || [], p.generatedAt);
       const isStale = p.source === 'stale-cache';
       updateConn(isStale ? 'stale' : 'online',
-        isStale ? 'cache (API instável)' : `realtime online · ${state.runtime.transport}`);
+        isStale ? '🟡 cache (API instável)' : `🟢 conectado · ${state.runtime.transport}`);
       logEvent('tick', { matches: p.matches?.length || 0, src: p.source });
       bumpRuntime({ poll: true, socket: true });
       render();
     });
     sock.on('match:upsert', ({ match }) => {
+      hydrateClockBase(match);
       state.matches.set(String(match.id), match); flash(match.id, 'update');
       logEvent('match:upsert', { id: match.id, teams: `${match.home} vs ${match.away}` });
       bumpRuntime({ poll: true });
       render();
     });
     sock.on('match:update', ({ match, deltas }) => {
+      hydrateClockBase(match);
       state.matches.set(String(match.id), match);
       const flashKind = deltas?.goalHome || deltas?.goalAway ? 'goal'
                       : deltas?.cornersTotal ? 'corner'
@@ -259,15 +261,22 @@
       }
     });
 
-    // Heartbeat watchdog: se 90s sem tick algum, marca como stale
+    // Heartbeat watchdog: com poll de 15s, 30s sem tick = 2 ciclos perdidos.
+    // → marca como offline (🔴). Volta a 'online' (🟢) no próximo tick recebido.
     setInterval(() => {
       const rt = state.runtime;
-      if (rt.lastPollAt && Date.now() - rt.lastPollAt > 90_000 && rt.conn === 'online') {
-        updateConn('stale', `sem ticks há ${Math.round((Date.now() - rt.lastPollAt)/1000)}s`);
+      const sinceTick = rt.lastPollAt ? Date.now() - rt.lastPollAt : Infinity;
+      if (rt.lastPollAt && sinceTick > 30_000 && rt.conn !== 'offline') {
+        updateConn('offline', `🔴 sem tick há ${Math.round(sinceTick/1000)}s`);
       }
       checkPipelineHealth();
       renderDebugPanel();
     }, 5_000);
+
+    // Clock local: localClockEngine() roda a cada 1s. Incrementa minute
+    // visualmente entre ticks do servidor, atualiza "tick há Xs" e marca
+    // matches FT como encerrando após 60s.
+    setInterval(() => localClockEngine(), 1_000);
   }
 
   // SSE fallback (caso WS bloqueado)
@@ -277,18 +286,38 @@
       state.sseFallback = es;
       es.addEventListener('tick', (e) => {
         const p = JSON.parse(e.data);
-        replaceMatches(p.matches || []);
-        updateConn('online', 'SSE online'); render();
+        replaceMatches(p.matches || [], p.generatedAt);
+        bumpRuntime({ poll: true, socket: true });
+        updateConn('online', '🟢 conectado · SSE'); render();
       });
       es.addEventListener('match:update', (e) => {
         const { match } = JSON.parse(e.data);
+        hydrateClockBase(match);
         state.matches.set(String(match.id), match);
         flash(match.id, 'update');
         render();
       });
-      es.addEventListener('fixture:goal',   (e) => { const p = JSON.parse(e.data); toast('goal', `⚽ GOL — ${p.match.home} x ${p.match.away}`); });
+      es.addEventListener('match:upsert', (e) => {
+        const { match } = JSON.parse(e.data);
+        hydrateClockBase(match);
+        state.matches.set(String(match.id), match);
+        flash(match.id, 'update');
+        render();
+      });
+      es.addEventListener('match:remove', (e) => {
+        const { matchId } = JSON.parse(e.data);
+        state.matches.delete(String(matchId));
+        render();
+      });
+      es.addEventListener('fixture:goal',   (e) => { const p = JSON.parse(e.data); flash(p.match?.id, 'goal'); toast('goal', `⚽ GOL — ${p.match.home} x ${p.match.away}`); });
       es.addEventListener('fixture:corner', (e) => { const p = JSON.parse(e.data); toast('corner', `🚩 Escanteio`); });
-      es.onerror = () => updateConn('offline', 'SSE desconectado');
+      es.onopen = () => updateConn('online', '🟢 conectado · SSE');
+      es.onerror = () => {
+        const ready = es.readyState;
+        // 0 = CONNECTING (auto-reconnect em progresso), 2 = CLOSED
+        if (ready === 0) updateConn('reconnecting', '🟡 reconectando SSE…');
+        else updateConn('offline', '🔴 SSE desconectado');
+      };
     } catch (e) { console.warn('SSE indisponível', e); }
   }
 
@@ -421,6 +450,7 @@
    *   - últimos eventos socket
    */
   function renderDebugPanel() {
+    if (!window.__ROBOTREND_DEBUG) return; // produção: skip silencioso
     const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
     const setHtml = (id, v) => { const el = document.getElementById(id); if (el) el.innerHTML = v; };
     const fmtAgo = (t) => t ? `${Math.round((Date.now() - t) / 1000)}s` : 'nunca';
@@ -529,17 +559,26 @@
     `;
   }
 
-  /** Painel debug é permanente — sem toggle. Só inicializa o display. */
+  /**
+   * Painel debug é OCULTO em produção. Só inicializa se o usuário fez opt-in
+   * explícito (window.__ROBOTREND_DEBUG = true via ?debug=1 / localStorage.fbDebug).
+   * Caso contrário, nem o `classList.add('open')` é aplicado para evitar qualquer
+   * reveal visual acidental por CSS de terceiros.
+   */
   function bindDebugPanel() {
+    if (!window.__ROBOTREND_DEBUG) return;
     const el = document.getElementById('fb-debug');
     if (!el) return;
-    el.classList.add('open'); // permanente
+    el.classList.add('open');
     renderDebugPanel();
   }
 
-  function bumpLastUpdated() {
+  function bumpLastUpdated(generatedAt) {
     const el = document.getElementById('last-updated');
-    if (el) el.textContent = `↻ ${new Date().toLocaleTimeString('pt-BR')}`;
+    if (!el) return;
+    const d = generatedAt ? new Date(generatedAt) : new Date();
+    const t = isNaN(d.getTime()) ? new Date() : d;
+    el.textContent = `Última atualização: ${t.toLocaleTimeString('pt-BR')}`;
   }
 
   function flash(id, kind) {
@@ -736,16 +775,128 @@
   // ============================================================
   //  DATA / FILTERS / RENDER
   // ============================================================
-  function replaceMatches(list) {
-    state.matches.clear();
-    for (const m of list) state.matches.set(String(m.id), m);
-    // Detecta se algum já veio enriquecido (REST pode trazer enrichment se cache hot)
+  /**
+   * Substitui o mapa de matches com a lista mais recente do servidor.
+   * - `generatedAt` (ISO ou epoch ms) vem do payload do tick e dita o
+   *   horário exibido em "Última atualização".
+   * - Marca `_serverMinute` / `_serverMinuteAt` em cada match para o
+   *   clock local saber a partir de qual minute incrementar.
+   * - Mantém matches em "encerrando" (>=120') por até 60s antes de remover.
+   */
+  function replaceMatches(list, generatedAt) {
+    const now = Date.now();
+    const incoming = new Set();
+    for (const m of list) {
+      const id = String(m.id);
+      incoming.add(id);
+      const prev = state.matches.get(id);
+      m._serverMinute = Number(m.minute || 0);
+      m._serverMinuteAt = now;
+      // Preserva flag de "encerrando" se já estava marcado e ainda na grace
+      if (prev?._finishingAt) m._finishingAt = prev._finishingAt;
+      state.matches.set(id, m);
+    }
+    // Para matches que sumiram do feed: se já estavam em grace, mantém;
+    // senão removem na próxima limpeza padrão.
+    for (const [id, m] of state.matches) {
+      if (!incoming.has(id) && !m._finishingAt) {
+        state.matches.delete(id);
+      }
+    }
     const anyEnriched = list.some((m) => m.enriched);
     rebuildLeagues();
-    bumpLastUpdated();
-    // Não bumpa poll/enriched aqui — quem chamou (tick/bootstrap/resync) decide.
-    // Mas refresca contadores:
+    bumpLastUpdated(generatedAt);
     if (anyEnriched) state.runtime.lastEnrichedAt = Date.now();
+  }
+
+  /**
+   * localClockEngine — clock visual roda a cada 1s. Atualiza:
+   *   1. m.minute (LIVE) baseado em (now - _serverMinuteAt) / 60s, cap 90
+   *   2. HT trava em 45, FT em 90 + marca para remover após 60s
+   *   3. Contador "tick há Xs" no header
+   *   4. DOM in-place do .min de cada card (sem full re-render — smooth)
+   * Re-render completo só quando partida é adicionada/removida.
+   */
+  const FT_STATUSES = new Set(['FT', 'AET', 'PEN', 'AWD', 'WO', 'ABD', 'CANC']);
+  const HT_STATUSES = new Set(['HT']);
+
+  /**
+   * Carrega base do clock no match recebido do servidor. Chamado por
+   * match:upsert e match:update para que o localClockEngine saiba a
+   * partir de qual minuto incrementar localmente.
+   */
+  function hydrateClockBase(match) {
+    if (!match || typeof match !== 'object') return;
+    const prev = state.matches.get(String(match.id));
+    match._serverMinute = Number(match.minute || 0);
+    match._serverMinuteAt = Date.now();
+    if (prev?._finishingAt) match._finishingAt = prev._finishingAt;
+  }
+
+  function localClockEngine() {
+    const now = Date.now();
+    let needsRender = false;
+
+    for (const [id, m] of state.matches) {
+      const status = String(m.status || '').toUpperCase();
+      const prevMinute = m.minute;
+
+      if (FT_STATUSES.has(status)) {
+        m.minute = 90;
+        m.flags = m.flags || {};
+        m.flags.isFinished = true;
+        m.flags.isLive = false;
+        if (!m._finishingAt) {
+          m._finishingAt = now;
+          m.statusLong = m.statusLong || 'Encerrado';
+        }
+        if (now - m._finishingAt > 60_000) {
+          state.matches.delete(id);
+          if (state.activeMatchId === id) state.activeMatchId = null;
+          needsRender = true;
+        }
+      } else if (HT_STATUSES.has(status)) {
+        m.minute = 45;
+        m.flags = m.flags || {};
+        m.flags.isLive = true;
+      } else {
+        // LIVE — minuto evolui suavemente, CAP em 90 (nunca 120)
+        const base = Number(m._serverMinute || 0);
+        const ageMs = now - (m._serverMinuteAt || now);
+        const localBump = Math.floor(ageMs / 60_000);
+        m.minute = Math.min(90, base + localBump);
+        m.flags = m.flags || {};
+        m.flags.isLive = true;
+      }
+
+      // Patch DOM in-place se o minuto mudou (sem rerender completo)
+      if (prevMinute !== m.minute) {
+        const el = document.querySelector(`[data-mid="${CSS.escape(String(id))}"] .min`);
+        if (el) {
+          const isLive = !!m.flags?.isLive;
+          el.className = `min${isLive ? ' live' : ''}`;
+          el.innerHTML = `${(m.minute || 0) + "'"}<br><span style="font-size:9px;color:var(--muted);font-weight:600;letter-spacing:.1em">${(m.status || '').replace(/[<>"']/g, '')}</span>`;
+        }
+      }
+    }
+
+    // Contador "tick há Xs"
+    const ageEl = document.getElementById('last-tick-age');
+    if (ageEl) {
+      const lp = state.runtime.lastPollAt;
+      if (lp) {
+        const sec = Math.round((Date.now() - lp) / 1000);
+        ageEl.textContent = `tick há ${sec}s`;
+        ageEl.style.color = sec > 30 ? 'var(--rt-red, #ef4444)' : '';
+      } else {
+        ageEl.textContent = 'aguardando tick…';
+      }
+    }
+
+    if (needsRender) {
+      rebuildLeagues();
+      try { render(); } catch (_) {}
+    }
   }
 
   function rebuildLeagues() {
@@ -1098,16 +1249,29 @@
     };
   }
 
+  /**
+   * "FT" só é exibido se o status REAL da partida for FT/AET/PEN. Caso
+   * contrário (jogo em andamento), os ranges são PROJEÇÕES IA — rotulamos
+   * como "Projeção IA — X" para não enganar o usuário com placar fake.
+   */
   function buildProjectionHTML(s) {
     const p = s.projection || {};
+    const status = String(s.match?.status || '').toUpperCase().trim();
+    const isReallyFT = /^(FT|AET|PEN|AWD|WO|ABD|CANC|FINISHED|MATCH FINISHED)$/i.test(status);
+    const ftSuffix = isReallyFT ? 'FT' : 'IA';
+
     const items = [];
-    if (p.corners)   items.push(`<div class="item"><span class="lbl">Corners FT</span><span class="val">${escapeHtml(p.corners)}</span></div>`);
-    if (p.goals)     items.push(`<div class="item"><span class="lbl">Gols FT</span><span class="val">${escapeHtml(p.goals)}</span></div>`);
-    if (p.cards)     items.push(`<div class="item"><span class="lbl">Cartões FT</span><span class="val">${escapeHtml(p.cards)}</span></div>`);
+    const labels = isReallyFT
+      ? { corners: 'Corners FT', goals: 'Gols FT', cards: 'Cartões FT' }
+      : { corners: 'Projeção IA — Corners', goals: 'Projeção IA — Gols', cards: 'Projeção IA — Cartões' };
+
+    if (p.corners) items.push(`<div class="item"><span class="lbl">${labels.corners}</span><span class="val">${escapeHtml(p.corners)}</span></div>`);
+    if (p.goals)   items.push(`<div class="item"><span class="lbl">${labels.goals}</span><span class="val">${escapeHtml(p.goals)}</span></div>`);
+    if (p.cards)   items.push(`<div class="item"><span class="lbl">${labels.cards}</span><span class="val">${escapeHtml(p.cards)}</span></div>`);
     if (typeof p.bttsPct === 'number') items.push(`<div class="item"><span class="lbl">BTTS prob.</span><span class="val">${p.bttsPct}%</span></div>`);
     if (typeof p.ratePerMin === 'number') items.push(`<div class="item"><span class="lbl">Ritmo/min</span><span class="val">${p.ratePerMin}</span></div>`);
     if (!items.length) return '';
-    return `<div class="sig-proj">${items.join('')}</div>`;
+    return `<div class="sig-proj" data-projection-kind="${ftSuffix}">${items.join('')}</div>`;
   }
 
   function matchCardHTML(m) {
@@ -1122,14 +1286,17 @@
     const sigBadge = top
       ? `<div class="fb-sig-badge" title="${escapeHtml(top.suggestion)} · ${escapeHtml(top.type)}">${top.classification?.emoji || '⚡'} ${top.confidence}%</div>`
       : '';
+    const partialBadge = (m.dataQuality === 'partial')
+      ? `<span class="fb-data-partial" title="Provider gratuito (${escapeHtml(m.provider || '')}) — sem stats avançadas (corners, posse, finalizações)">🟡 Dados limitados</span>`
+      : '';
     return `
-      <div class="fb-match ${isActive ? 'active' : ''} ${m.enriched ? 'enriched' : 'skeleton'} ${sigClass}" data-mid="${id}">
+      <div class="fb-match ${isActive ? 'active' : ''} ${m.enriched ? 'enriched' : 'skeleton'} ${m.dataQuality === 'partial' ? 'partial-data' : ''} ${sigClass}" data-mid="${id}">
         ${sigBadge}
         <div class="min ${isLive ? 'live' : ''}">${fmtMin(m.minute)}<br><span style="font-size:9px;color:var(--muted);font-weight:600;letter-spacing:.1em">${escapeHtml(m.status || '')}</span></div>
         <div class="teams">
           <div class="row"><span class="name ${winHome ? 'winning' : ''}">${escapeHtml(m.home)}</span><span class="score">${m.score.home}</span></div>
           <div class="row"><span class="name ${winAway ? 'winning' : ''}">${escapeHtml(m.away)}</span><span class="score">${m.score.away}</span></div>
-          <div style="font-size:10px;color:var(--muted);margin-top:2px">${escapeHtml(m.league?.name || '')}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${escapeHtml(m.league?.name || '')} ${partialBadge}</div>
         </div>
         <div class="stats" data-stats="${id}" title="🚩 escanteios · ⚡ ataques perigosos · 🔥 pressão · 🎯 BTTS likelihood">
           ${cardStatsHTML(m)}
@@ -1606,7 +1773,7 @@
     try {
       const r = await api('/api/football/poller/resync', { method: 'POST' });
       state.poller = r.poller || state.poller;
-      if (Array.isArray(r.matches)) replaceMatches(r.matches);
+      if (Array.isArray(r.matches)) replaceMatches(r.matches, r.generatedAt);
       state.runtime.reason = r.reason || null;
       logEvent('resync', { count: r.count, reason: r.reason });
       bumpRuntime({ poll: !!r.count });
@@ -1778,7 +1945,7 @@
       const r = await api('/api/football/live/panel');
       state.poller = r.poller;
       if (r.matches) {
-        replaceMatches(r.matches);
+        replaceMatches(r.matches, r.generatedAt);
         bumpRuntime({ poll: true });
       }
       // REST vazio → tenta resync para pegar motivo técnico
@@ -1787,7 +1954,7 @@
           const rr = await api('/api/football/poller/resync', { method: 'POST' });
           state.runtime.reason = rr.reason || null;
           if (Array.isArray(rr.matches) && rr.matches.length) {
-            replaceMatches(rr.matches);
+            replaceMatches(rr.matches, rr.generatedAt);
             bumpRuntime({ poll: true });
           }
         } catch (_) {}

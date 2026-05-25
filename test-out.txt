@@ -1,0 +1,53 @@
+{
+  "provider": "sofascore",
+  "configured": true,
+  "keyValid": true,
+  "hasKey": false,
+  "host": "www.sofascore.com",
+  "baseURL": "https://www.sofascore.com/api/v1",
+  "baseURLs": [
+    "https://www.sofascore.com/api/v1",
+    "https://api.sofascore.com/api/v1"
+  ],
+  "legacyRapidApi": false,
+  "httpClientReady": true,
+  "timeoutMs": 10000,
+  "retryMax": 3,
+  "rateLimit": {
+    "perMin": null,
+    "perDay": null,
+    "windowUsed": 0,
+    "dayUsed": 0
+  },
+  "quota": {
+    "dailyLimit": null,
+    "dailyRemaining": null,
+    "minuteLimit": null,
+    "minuteRemaining": null,
+    "lastUpdated": null,
+    "lastResponseAt": null,
+    "provider": "sofascore"
+  },
+  "cacheStore": {
+    "backend": "memory",
+    "size": 0
+  },
+  "inflight": 0,
+  "breaker": {
+    "name": "sofascore",
+    "state": "CLOSED",
+    "failures": 0,
+    "openedAt": null,
+    "lastError": null,
+    "totals": {
+      "exec": 0,
+      "fail": 0,
+      "shortCircuit": 0
+    }
+  },
+  "safeMode": {
+    "active": false,
+    "reason": null,
+    "since": null
+  }
+}

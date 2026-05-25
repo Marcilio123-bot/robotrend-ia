@@ -85,6 +85,38 @@
     .fb-match.active { border-left-color: var(--brand); background: var(--brand-soft); }
     .fb-match .min { font-family: 'JetBrains Mono', monospace; font-weight: 800; color: var(--brand); font-size: 14px; }
     .fb-match .min.live { color: var(--rt-green); }
+    .fb-match .min.live::before {
+      content: '';
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--rt-green);
+      margin-right: 5px;
+      vertical-align: middle;
+      animation: live-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes live-pulse {
+      0%, 100% { transform: scale(1);   opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.55); }
+      50%      { transform: scale(1.3); opacity: .7; box-shadow: 0 0 0 4px rgba(34, 197, 94, 0); }
+    }
+    .fb-match.flash-goal   { animation: flash-goal   1.5s ease-out; }
+    .fb-match.flash-corner { animation: flash-corner 1.0s ease-out; }
+    @keyframes flash-goal   { 0%{background:rgba(34,197,94,.35)} 100%{background:transparent} }
+    @keyframes flash-corner { 0%{background:rgba(59,130,246,.30)} 100%{background:transparent} }
+    .fb-data-partial {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 6px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .05em;
+      background: rgba(250, 204, 21, 0.15);
+      color: #facc15;
+      border: 1px solid rgba(250, 204, 21, 0.35);
+      border-radius: 999px;
+      vertical-align: middle;
+    }
+    .fb-match.partial-data { opacity: .96; }
     .fb-match .teams { display:flex; flex-direction: column; gap: 2px; min-width: 0; }
     .fb-match .teams .row { display:flex; align-items:center; justify-content:space-between; gap: 6px; font-size: 13px; }
     .fb-match .teams .row .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color: var(--text); font-weight: 600; }
@@ -197,7 +229,7 @@
     @keyframes rt-spin { to { transform: rotate(360deg); } }
     #last-updated { font-size: 10px; color: var(--muted); margin-left: 8px; font-family: 'JetBrains Mono', monospace; }
 
-    /* === Debug panel PERMANENTE (sempre visível) === */
+    /* === Debug panel (oculto por padrão — opt-in via ?debug=1) === */
     .fb-debug {
       position: fixed; bottom: 12px; right: 12px; width: 340px; max-height: 70vh;
       background: rgba(15,23,42,.97); color: #e2e8f0; font-family: 'JetBrains Mono', monospace;
@@ -460,6 +492,7 @@
             <span class="fb-status off" id="rt-pill"><span class="dot"></span><span id="rt-pill-label">conectando…</span></span>
             <span id="poller-meta" style="margin-left:8px;">—</span>
             · <span id="last-updated">aguardando…</span>
+            · <span id="last-tick-age" title="Tempo desde o último tick">tick há —</span>
           </p>
         </div>
         <div class="saas-page-actions">
@@ -557,9 +590,9 @@
 
   <div class="fb-toast-wrap" id="toasts"></div>
 
-  <!-- DEBUG PANEL — apenas para admins (debug técnico do poller) -->
-  <aside class="fb-debug" id="fb-debug" style="display:none;">
-    <div class="dh">Pipeline runtime <span style="margin-left:auto;font-weight:400;font-size:10px;color:#94a3b8">debug · permanente</span></div>
+  <!-- DEBUG PANEL — oculto em produção. Opt-in via ?debug=1 ou localStorage.fbDebug='1' -->
+  <aside class="fb-debug" id="fb-debug" hidden style="display:none;" aria-hidden="true">
+    <div class="dh">Pipeline runtime <span style="margin-left:auto;font-weight:400;font-size:10px;color:#94a3b8">debug</span></div>
 
     <div class="pipeline-block">
       <div class="head">
@@ -603,14 +636,29 @@
   <script src="/js/pwa.js"></script>
   <script src="/js/saas-nav.js"></script>
   <script>
-    // Mostra o painel de debug técnico apenas para admins (separação CLIENT/ADMIN)
+    // Painel de debug do pipeline — OCULTO em produção.
+    // Opt-in explícito apenas para troubleshooting:
+    //   • URL:           ?debug=1      (persiste em localStorage até ?debug=0)
+    //   • Programático:  localStorage.fbDebug = '1'
+    // Nenhum role/admin/flag global libera automaticamente — evita vazar UI técnica para usuário final.
     (function () {
       try {
-        const u = window.RobotrendAuth?.getUser?.();
-        const isAdmin = u && (u.role === 'admin' || u.role === 'owner' || u.isAdmin === true);
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('debug') === '1') {
+          try { localStorage.setItem('fbDebug', '1'); } catch (_) {}
+        } else if (params.get('debug') === '0') {
+          try { localStorage.removeItem('fbDebug'); } catch (_) {}
+        }
+        let opted = false;
+        try { opted = localStorage.getItem('fbDebug') === '1'; } catch (_) {}
+        if (!opted) return; // produção: nunca renderiza
         const dbg = document.getElementById('fb-debug');
-        if (dbg && isAdmin) dbg.style.display = '';
-      } catch (_) { /* silent */ }
+        if (!dbg) return;
+        dbg.hidden = false;
+        dbg.removeAttribute('aria-hidden');
+        dbg.style.display = '';
+        window.__ROBOTREND_DEBUG = true;
+      } catch (_) { /* silent — falha aqui = painel continua oculto */ }
     })();
   </script>
   <script src="/js/football.js" defer></script>

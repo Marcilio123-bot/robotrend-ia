@@ -40,7 +40,7 @@
 'use strict';
 
 const express = require('express');
-const af = require('../services/apiFootball');
+const af = require('../services/footballProvider');
 const history = require('../services/footballHistory');
 const events = require('../services/footballEvents');
 const metrics = require('../services/metrics');
@@ -181,9 +181,25 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
         matches = poller.getMatches();
       }
     }
+    // Filtro de segurança final: só matches realmente LIVE. Mesmo que o
+    // cache contenha algum FT por race condition, NUNCA expomos pelo REST.
+    matches = matches.filter((m) => {
+      const status = String(m?.status || '').toUpperCase().trim();
+      const long = String(m?.statusLong || '').toUpperCase().trim();
+      const ftSet = new Set(['FT','AET','PEN','AWD','WO','ABD','CANC','FINISHED','MATCH FINISHED']);
+      if (ftSet.has(status) || ftSet.has(long)) return false;
+      if (Number(m?.minute || 0) >= 120) return false;
+      return true;
+    });
     matches = applyFilters(matches, req.query);
     ensureAllMinimal(matches);
-    res.json({ ok: true, count: matches.length, matches, safeMode: af.isSafeMode?.() || false });
+    res.json({
+      ok: true,
+      count: matches.length,
+      matches,
+      generatedAt: new Date().toISOString(),
+      safeMode: af.isSafeMode?.() || false,
+    });
   }));
 
   /**
@@ -855,7 +871,9 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       if (apiStatus.safeMode?.active) reason = 'safe-mode';
       else if (apiStatus.breaker?.state === 'OPEN') reason = 'circuit-open';
       else if ((apiStatus.quota?.dailyRemaining ?? 1) <= 0) reason = 'quota-exhausted';
-      else if (!snap.lastTickAt) reason = 'poller-not-ticked-yet';
+      else if (snap.lastFallbackReason === 'api_not_configured') reason = 'api-not-configured';
+      else if (snap.health === 'degraded') reason = `poller-degraded:${snap.lastFallbackReason || snap.lastError || 'unknown'}`;
+      else if (!snap.lastTickAt) reason = 'poller-warming-up';
       else reason = 'no-live-matches';
     }
     ensureAllMinimal(matches);

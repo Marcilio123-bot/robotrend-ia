@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const apiFootball = require('./apiFootball');
+const apiFootball = require('./footballProvider');
 const events = require('./footballEvents');
 const { getJobs } = require('./jobs');
 const { logger } = require('../logger');
@@ -49,7 +49,8 @@ function tick() {
   const q = apiFootball.quota();
   const safe = apiFootball.safeMode ? apiFootball.safeMode() : { active: false };
   events.emit('quota', { quota: q, safeMode: safe });
-  appendDailyLog(q);
+  // Sofascore não tem headers de quota — skipa o log diário com nulls.
+  if (q.dailyLimit != null) appendDailyLog(q);
   if (q.dailyLimit && q.dailyRemaining != null) {
     const pct = q.dailyRemaining / q.dailyLimit;
     if (pct <= LOW_PCT) {

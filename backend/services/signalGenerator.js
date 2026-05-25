@@ -327,7 +327,20 @@ function buildCardsSignal(m) {
    PUBLIC API
    ============================================================ */
 function generateSignals(match) {
-  if (!match || !match.enriched || !match.stats) return [];
+  if (!match) return [];
+  // Bloqueios duros: FT/0' nunca produzem sinal, em qualquer modo.
+  if (isFinishedStatus(match)) return [];
+  if (n(match.minute) === 0) return [];
+
+  const FREE_MODE = String(process.env.FREE_PROVIDER_MODE || 'true').toLowerCase() === 'true';
+  const isPartial = !match.enriched || !match.stats || match.dataQuality === 'partial';
+
+  // Provider FREE / dados parciais → usa lógica FREE_PROVIDER_MODE (sem stats)
+  if (isPartial) {
+    if (!FREE_MODE) return [];
+    return generatePartialSignals(match);
+  }
+
   const out = [];
   try { out.push(buildCornersSignal(match)); } catch (_) {}
   try { out.push(buildGoalsSignal(match));   } catch (_) {}
@@ -336,65 +349,146 @@ function generateSignals(match) {
   return out.filter(Boolean);
 }
 
+/* ============================================================
+   FREE PROVIDER MODE
+   ------------------------------------------------------------
+   Sinais quando o provider só fornece placar + minuto + status
+   (TheSportsDB livescore, ScoreBat, etc.). NÃO usamos corners,
+   dangerousAttacks, shotsOnTarget, possession aqui.
+
+   Regras (lista oficial):
+     OVER 1.5
+       - minuto < 70 e gols >= 2 → 70..85 (sobe com gols/atraso)
+     OVER 2.5
+       - gols >= 2 até 55' → confiança dinâmica
+     BTTS Sim
+       - ambos marcaram → 90+
+     UNDER (1.5/2.5)
+       - 0×0 → confiança progressiva pelo minuto
+
+   Bloqueios:
+     - status FT/AET/PEN  → []  (nenhum sinal)
+     - minute == 0        → []
+     - sem projeções absurdas (range cap = max(gols, 1)..gols+2)
+   ============================================================ */
+
+/** Status que bloqueiam emissão de sinal. */
+const FT_STATUS_RX = /^(FT|AET|PEN|AWD|WO|ABD|CANC|FINISHED|MATCH FINISHED|POSTPONED|PST|SUSP)$/i;
+function isFinishedStatus(m) {
+  return FT_STATUS_RX.test(String(m?.status || '').toUpperCase().trim())
+      || FT_STATUS_RX.test(String(m?.statusLong || '').toUpperCase().trim());
+}
+
+function buildOver15FreeSignal(m) {
+  const min = n(m.minute);
+  const gh = n(m.score?.home), ga = n(m.score?.away);
+  const total = gh + ga;
+  if (min >= 70 || total < 2) return null;
+  // Base 70..85 — cresce com gols extras e quanto mais cedo (mais tempo p/ +1)
+  let conf = 70 + (total - 2) * 4 + Math.max(0, 60 - min) * 0.15;
+  conf = clamp(Math.round(conf), 70, 85);
+  return {
+    market: 'goals',
+    signal: 'Over 1.5 gols',
+    confidence: conf,
+    risk: riskFromConf(conf),
+    reasoning: `${total} gols aos ${min}′ — Over 1.5 já resolvido se o mercado for live, válido como leitura de ritmo ofensivo.`,
+    projection: { goals: `${total}–${Math.min(total + 2, total + 2)}`, currentTotal: total, target: 1.5, direction: 'over', dataQuality: 'partial' },
+    match: matchHeader(m),
+    profile: profileFromRisk(riskFromConf(conf)),
+    dataQuality: 'partial',
+    partial: true,
+    generatedAt: Date.now(),
+  };
+}
+
+function buildOver25FreeSignal(m) {
+  const min = n(m.minute);
+  const gh = n(m.score?.home), ga = n(m.score?.away);
+  const total = gh + ga;
+  if (min > 55 || total < 2) return null;
+  // Quanto antes 2+ gols, mais alta a confiança (Poisson-ish heurístico)
+  const earliness = clamp(1 - min / 55, 0, 1);  // 1.0 aos 0', 0.0 aos 55'
+  let conf = 60 + earliness * 25 + (total - 2) * 4;
+  conf = clamp(Math.round(conf), 60, 88);
+  return {
+    market: 'goals',
+    signal: 'Over 2.5 gols',
+    confidence: conf,
+    risk: riskFromConf(conf),
+    reasoning: `${total} gols já em apenas ${min}′ — ritmo elevado favorece Over 2.5.`,
+    projection: { goals: `${total}–${Math.max(total + 1, total + 2)}`, currentTotal: total, target: 2.5, direction: 'over', dataQuality: 'partial' },
+    match: matchHeader(m),
+    profile: profileFromRisk(riskFromConf(conf)),
+    dataQuality: 'partial',
+    partial: true,
+    generatedAt: Date.now(),
+  };
+}
+
+function buildBttsFreeSignal(m) {
+  const gh = n(m.score?.home), ga = n(m.score?.away);
+  if (gh === 0 || ga === 0) return null;
+  // Ambos já marcaram → mercado resolvido. 90+ por design.
+  return {
+    market: 'btts',
+    signal: 'BTTS Sim',
+    confidence: 95,
+    risk: 'low',
+    reasoning: `Ambos marcaram (${gh}×${ga}) — BTTS resolvido.`,
+    projection: { bttsPct: 100, direction: 'sim', status: 'resolved', dataQuality: 'partial' },
+    match: matchHeader(m),
+    profile: 'conservative',
+    dataQuality: 'partial',
+    partial: true,
+    generatedAt: Date.now(),
+  };
+}
+
+function buildUnderFreeSignal(m) {
+  const min = n(m.minute);
+  const gh = n(m.score?.home), ga = n(m.score?.away);
+  const total = gh + ga;
+  if (total > 0 || min < 60) return null;
+  // 0×0 até 60'+ — Under 1.5 progressivo. Aos 60' começa em 60%; sobe ~1pt/min.
+  let conf = 60 + (min - 60) * 1.2;
+  if (min >= 75) conf += 5;
+  conf = clamp(Math.round(conf), 60, 92);
+  const target = min >= 75 ? 1.5 : 2.5;
+  return {
+    market: 'goals',
+    signal: `Under ${target} gols`,
+    confidence: conf,
+    risk: riskFromConf(conf),
+    reasoning: `0×0 aos ${min}′ — Tendência de Under (${95 - min}′ restantes).`,
+    projection: { goals: `0–1`, currentTotal: 0, target, direction: 'under', dataQuality: 'partial' },
+    match: matchHeader(m),
+    profile: profileFromRisk(riskFromConf(conf)),
+    dataQuality: 'partial',
+    partial: true,
+    generatedAt: Date.now(),
+  };
+}
+
 /**
- * Sinais parciais quando stats API indisponíveis — só placar + minuto.
- * Garante UI acionável mesmo com enrichmentPartial.
+ * Sinais parciais (FREE provider mode). Usa apenas placar/minuto/status.
+ *
+ * NÃO depende de stats avançadas (corners, dangerousAttacks, shotsOnTarget,
+ * possession). Bloqueia FT/0'. Garante UI acionável quando o pipeline
+ * está rodando com TheSportsDB ou outro provider gratuito.
  */
 function generatePartialSignals(match) {
   if (!match) return [];
-  const min = Math.max(1, n(match.minute));
-  const gh = n(match.score?.home);
-  const ga = n(match.score?.away);
-  const totalGoals = gh + ga;
-  const rate = totalGoals / min;
-  const projGoals = clamp(Math.round(rate * 90), totalGoals, 6);
-  const btts = gh > 0 && ga > 0;
+  // Bloqueios de segurança
+  if (isFinishedStatus(match)) return [];
+  if (n(match.minute) === 0) return [];
+
   const out = [];
-
-  const goalsConf = clamp(Math.round(55 + totalGoals * 14 + min * 0.15), 72, 85);
-  out.push({
-    market: 'goals',
-    signal: totalGoals >= 2 ? `Over 1.5 gols (${totalGoals} no placar)` : `Under 2.5 gols`,
-    confidence: goalsConf,
-    risk: 'high',
-    reasoning: `Leitura parcial (sem stats API): ${gh}×${ga} aos ${min}′. Projeção ~${projGoals} gols.`,
-    projection: { goals: `${totalGoals}–${projGoals}`, partial: true },
-    match: matchHeader(match),
-    profile: 'balanced',
-    partial: true,
-    generatedAt: Date.now(),
-  });
-
-  const bttsConf = clamp(btts ? 88 : Math.round(35 + min * 0.4), 35, 75);
-  out.push({
-    market: 'btts',
-    signal: btts ? 'BTTS Sim (já ocorreu)' : 'BTTS — aguardar 2º gol',
-    confidence: bttsConf,
-    risk: btts ? 'low' : 'high',
-    reasoning: btts
-      ? 'Ambas já marcaram — leitura parcial confirmada.'
-      : `Apenas um lado marcou (${gh}×${ga}) — sem dados de finalizações.`,
-    projection: { bttsPct: btts ? 100 : bttsConf, partial: true },
-    match: matchHeader(match),
-    profile: profileFromRisk(btts ? 'low' : 'high'),
-    partial: true,
-    generatedAt: Date.now(),
-  });
-
-  const cornersConf = clamp(40 + min * 0.25, 38, 55);
-  out.push({
-    market: 'corners',
-    signal: 'Observar escanteios (stats indisponíveis)',
-    confidence: cornersConf,
-    risk: 'high',
-    reasoning: 'Enrichment parcial — aguardando statistics da API.',
-    projection: { corners: '—', partial: true },
-    match: matchHeader(match),
-    profile: 'balanced',
-    partial: true,
-    generatedAt: Date.now(),
-  });
-
+  const tryAdd = (fn) => { try { const s = fn(match); if (s) out.push(s); } catch (_) {} };
+  tryAdd(buildOver15FreeSignal);
+  tryAdd(buildOver25FreeSignal);
+  tryAdd(buildBttsFreeSignal);
+  tryAdd(buildUnderFreeSignal);
   return out;
 }
 

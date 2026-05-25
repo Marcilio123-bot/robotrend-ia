@@ -750,7 +750,7 @@ async function main() {
   try { await footballHistory.init(); }
   catch (e) { log.warn('footballHistory init falhou', { err: e.message }); }
 
-  const af = require('./services/apiFootball');
+  const af = require('./services/footballProvider');
   const afStatus = af.status();
   log.info('API-Football boot', {
     configured: afStatus.configured,

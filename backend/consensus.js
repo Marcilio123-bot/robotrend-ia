@@ -35,7 +35,7 @@
 'use strict';
 
 const axios = require('axios');
-const apiFootball = require('./services/apiFootball');
+const apiFootball = require('./services/footballProvider');
 const { logExternalRequest } = require('./services/externalApiGuard');
 
 const ENV = process.env.NODE_ENV || 'development';

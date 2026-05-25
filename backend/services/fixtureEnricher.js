@@ -33,7 +33,7 @@
 
 'use strict';
 
-const apiFootball = require('./apiFootball');
+const apiFootball = require('./footballProvider');
 const events      = require('./footballEvents');
 const metrics     = require('./metrics');
 const { applyEnrichment, applyMinimalEnrichment } = require('./fixtureNormalizer');
