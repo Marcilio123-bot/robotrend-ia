@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <title>Backtest · Robotrend IA Master</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="admin-backtest"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">⧗ Backtest</h1>
+          <p class="saas-page-sub">Performance histórica do motor IA · ROI / winrate / drawdown</p>
+        </div>
+        <div class="saas-page-actions">
+          <a href="/backtest.html" class="btn-primary">▶ Abrir backtest interativo</a>
+        </div>
+      </header>
+
+      <!-- KPIs históricos -->
+      <section class="saas-kpis">
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">ROI consolidado</div>
+          <div class="saas-kpi-value" id="bt-roi" style="color:#22c55e;">—</div>
+          <div class="saas-kpi-foot">unidades acumuladas</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Winrate</div>
+          <div class="saas-kpi-value" id="bt-winrate">—</div>
+          <div class="saas-kpi-foot" id="bt-winloss">— / —</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Sinais analisados</div>
+          <div class="saas-kpi-value" id="bt-signals">—</div>
+          <div class="saas-kpi-foot">amostra histórica</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Sharpe estimado</div>
+          <div class="saas-kpi-value" id="bt-sharpe">—</div>
+          <div class="saas-kpi-foot">qualidade do edge</div>
+        </div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Filtros rápidos</div>
+        </div>
+        <div class="saas-card">
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <div>
+              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Mercado</label>
+              <select id="bt-market" class="input-field w-full mt-1">
+                <option value="">Todos</option>
+                <option value="corners">Escanteios</option>
+                <option value="goals">Gols</option>
+                <option value="btts">BTTS</option>
+                <option value="win">Vitória</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Confiança mín.</label>
+              <input id="bt-conf" type="number" min="60" max="99" value="75" class="input-field w-full mt-1" />
+            </div>
+            <div>
+              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Período</label>
+              <select id="bt-period" class="input-field w-full mt-1">
+                <option value="7">Últimos 7 dias</option>
+                <option value="30" selected>Últimos 30 dias</option>
+                <option value="90">Últimos 90 dias</option>
+              </select>
+            </div>
+            <div class="md:col-span-2 flex items-end gap-2">
+              <button id="bt-run" class="btn-primary w-full">▶ Rodar backtest</button>
+              <a href="/backtest.html" class="btn-ghost">avançado →</a>
+            </div>
+          </div>
+          <div id="bt-feedback" class="mt-3 text-sm" style="color: var(--muted);">—</div>
+        </div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Atalhos</div>
+        </div>
+        <div class="saas-card">
+          <div class="flex gap-2 flex-wrap">
+            <a href="/backtest.html" class="btn-primary">⧗ Backtest avançado</a>
+            <a href="/results.html" class="btn-ghost">$ Resultados</a>
+            <a href="/quality.html" class="btn-ghost">◊ Qualidade IA</a>
+            <a href="/api/admin/overview" target="_blank" class="btn-ghost">📡 overview JSON</a>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+
+  <script>
+    (function () {
+      'use strict';
+      const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+      async function loadStats() {
+        try {
+          const o = await window.RobotrendAuth.api('/api/admin/overview');
+          const s = o.signalsStats || {};
+          setText('bt-winrate', (s.winrate ?? 0) + '%');
+          setText('bt-winloss', `${s.wins ?? 0} / ${s.losses ?? 0}`);
+          setText('bt-signals', String(o.signals ?? '—'));
+          // ROI/Sharpe — estimativa básica (winrate >= 50% considerado positivo)
+          const wr = Number(s.winrate || 0);
+          setText('bt-roi',    wr > 0 ? '+' + ((wr - 50) * 0.04).toFixed(2) + 'u' : '—');
+          setText('bt-sharpe', wr > 0 ? ((wr - 50) / 20).toFixed(2) : '—');
+        } catch (e) {
+          setText('bt-roi', 'erro');
+          console.warn('[bt]', e);
+        }
+      }
+
+      document.getElementById('bt-run')?.addEventListener('click', () => {
+        const m  = document.getElementById('bt-market').value;
+        const c  = document.getElementById('bt-conf').value;
+        const p  = document.getElementById('bt-period').value;
+        const fb = document.getElementById('bt-feedback');
+        fb.textContent = 'Abrindo backtest avançado com filtros…';
+        fb.style.color = 'var(--brand)';
+        const qs = new URLSearchParams({ market: m, conf: c, days: p }).toString();
+        setTimeout(() => { location.href = '/backtest.html?' + qs; }, 500);
+      });
+
+      loadStats();
+      setInterval(loadStats, 60_000);
+    })();
+  </script>
+</body>
+</html>

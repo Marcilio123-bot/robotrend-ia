@@ -62,12 +62,12 @@
     {
       label: 'Master',
       items: [
-        { id: 'admin',          label: 'Painel',          icon: '◉', href: '/admin.html' },
-        { id: 'admin-users',    label: 'Usuários',        icon: '◇', href: '/admin.html#users' },
-        { id: 'admin-billing',  label: 'Financeiro',      icon: '◈', href: '/admin.html#billing' },
-        { id: 'admin-football', label: 'Sistema',         icon: '⚙', href: '/admin-football.html' },
+        { id: 'admin',          label: 'Painel',          icon: '◉', href: '/admin' },
+        { id: 'admin-users',    label: 'Usuários',        icon: '◇', href: '/admin/users' },
+        { id: 'admin-finance',  label: 'Financeiro',      icon: '◈', href: '/admin/finance' },
+        { id: 'admin-system',   label: 'Sistema',         icon: '⚙', href: '/admin/system' },
         { id: 'ops-live',       label: 'Operacional IA',  icon: '▤', href: '/ops/live' },
-        { id: 'backtest',       label: 'Backtest',        icon: '⧗', href: '/backtest.html' },
+        { id: 'admin-backtest', label: 'Backtest',        icon: '⧗', href: '/admin/backtest' },
       ],
     },
   ];

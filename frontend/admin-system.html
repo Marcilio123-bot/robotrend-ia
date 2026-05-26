@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <title>Sistema · Robotrend IA Master</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .sys-row { display: grid; grid-template-columns: 200px 1fr auto; gap: 12px; padding: 10px 12px;
+               border-bottom: 1px solid var(--line); align-items: center; font-size: 13px; }
+    .sys-row:last-child { border-bottom: 0; }
+    .sys-row .label { color: var(--muted); font-weight: 600; }
+    .sys-row .val   { font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+    .sys-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; font-weight: 800;
+      padding: 4px 10px; border-radius: 999px;
+    }
+    .sys-pill.ok   { background: rgba(20,184,94,.18);  color: #14b85e; }
+    .sys-pill.warn { background: rgba(255,181,71,.18); color: #ffb547; }
+    .sys-pill.err  { background: rgba(255,85,102,.18); color: #ff5566; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="admin-system"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">⚙ Sistema</h1>
+          <p class="saas-page-sub">Status dos serviços, infra e providers</p>
+        </div>
+        <div class="saas-page-actions">
+          <button id="btn-refresh" class="saas-status-pill">↻ atualizar</button>
+        </div>
+      </header>
+
+      <!-- KPIs de sistema -->
+      <section class="saas-kpis">
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">PostgreSQL</div>
+          <div class="saas-kpi-value" id="sys-pg" style="font-size:20px;">—</div>
+          <div class="saas-kpi-foot" id="sys-pg-sub">verificando…</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">WebSocket</div>
+          <div class="saas-kpi-value" id="sys-ws" style="font-size:20px;">—</div>
+          <div class="saas-kpi-foot" id="sys-ws-sub">socket.io</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Provider live</div>
+          <div class="saas-kpi-value" id="sys-provider" style="font-size:20px;">—</div>
+          <div class="saas-kpi-foot" id="sys-provider-sub">failover chain</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Uptime</div>
+          <div class="saas-kpi-value" id="sys-uptime" style="font-size:20px;">—</div>
+          <div class="saas-kpi-foot">desde o boot</div>
+        </div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Status detalhado</div>
+          <div style="color: var(--muted); font-size: 12px;">fonte: /api/health</div>
+        </div>
+        <div class="saas-card" style="padding: 0;">
+          <div class="sys-row"><span class="label">Serviço</span> <span class="val" id="d-service">—</span> <span></span></div>
+          <div class="sys-row"><span class="label">Versão</span> <span class="val" id="d-version">—</span> <span></span></div>
+          <div class="sys-row"><span class="label">Ambiente</span> <span class="val" id="d-env">—</span> <span id="d-render"></span></div>
+          <div class="sys-row"><span class="label">URL pública</span> <span class="val" id="d-public-url">—</span> <span></span></div>
+          <div class="sys-row"><span class="label">CORS origens</span> <span class="val" id="d-cors">—</span> <span></span></div>
+          <div class="sys-row"><span class="label">PostgreSQL</span> <span class="val" id="d-pg">—</span> <span id="d-pg-pill"></span></div>
+          <div class="sys-row"><span class="label">Football provider ativo</span> <span class="val" id="d-fp">—</span> <span id="d-fp-pill"></span></div>
+          <div class="sys-row"><span class="label">Football chain</span> <span class="val" id="d-fp-chain">—</span> <span></span></div>
+          <div class="sys-row"><span class="label">Telegram</span> <span class="val" id="d-telegram">—</span> <span></span></div>
+          <div class="sys-row"><span class="label">Demo mode</span> <span class="val" id="d-demo">—</span> <span></span></div>
+          <div class="sys-row"><span class="label">PID</span> <span class="val" id="d-pid">—</span> <span></span></div>
+          <div class="sys-row"><span class="label">Memória RSS</span> <span class="val" id="d-mem">—</span> <span></span></div>
+        </div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Ferramentas operacionais</div>
+        </div>
+        <div class="saas-card">
+          <div class="flex gap-2 flex-wrap">
+            <a href="/ops/live" class="btn-primary">▤ Operacional IA (live)</a>
+            <a href="/admin-football.html" class="btn-ghost">⚙ Painel técnico football</a>
+            <a href="/quality.html" class="btn-ghost">◊ Qualidade IA</a>
+            <a href="/api/health" target="_blank" class="btn-ghost">📡 /api/health (raw)</a>
+            <a href="/api/metrics" target="_blank" class="btn-ghost">📊 Métricas</a>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+
+  <script>
+    (function () {
+      'use strict';
+      const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      const setHTML = (id, v) => { const el = document.getElementById(id); if (el) el.innerHTML = v; };
+
+      function fmtUptime(secs) {
+        if (!Number.isFinite(secs)) return '—';
+        const d = Math.floor(secs / 86400);
+        const h = Math.floor((secs % 86400) / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        if (d > 0) return `${d}d ${h}h`;
+        if (h > 0) return `${h}h ${m}m`;
+        return `${m}m`;
+      }
+
+      async function refresh() {
+        try {
+          const headers = {};
+          const tok = window.RobotrendAuth?.getToken?.();
+          if (tok) headers.Authorization = 'Bearer ' + tok;
+          const h = await fetch('/api/health', { headers, credentials: 'include' }).then((r) => r.json());
+
+          // KPIs
+          setText('sys-pg',          h.postgres ? 'CONECTADO' : 'OFFLINE');
+          setText('sys-pg-sub',      h.postgres ? 'ativo'      : 'verifique DATABASE_URL');
+          setText('sys-ws',          'ONLINE');
+          setText('sys-ws-sub',      h.render ? 'wss://… (Render)' : 'ws local');
+          setText('sys-provider',    h.football?.activeProvider || '—');
+          setText('sys-provider-sub', (h.football?.priority || []).join(' → '));
+          setText('sys-uptime',      fmtUptime(Number(h.uptime)));
+
+          // Detalhes
+          setText('d-service',  h.service || '—');
+          setText('d-version',  h.version || '—');
+          setText('d-env',      h.demo ? 'demo' : 'real');
+          setText('d-render',   h.render ? '☁ Render' : '');
+          setText('d-public-url', h.publicUrl || '(local)');
+          setText('d-cors',     String(h.corsOrigins ?? '—'));
+          setText('d-pg',       h.postgres ? 'PostgreSQL ON' : 'in-memory');
+          setHTML('d-pg-pill',  h.postgres
+            ? '<span class="sys-pill ok">● healthy</span>'
+            : '<span class="sys-pill warn">● fallback</span>');
+          setText('d-fp',       h.football?.activeProvider || '—');
+          setHTML('d-fp-pill',  h.football?.configured
+            ? '<span class="sys-pill ok">● configurado</span>'
+            : '<span class="sys-pill err">● desligado</span>');
+          setText('d-fp-chain', (h.football?.priority || []).join(' → '));
+          setText('d-telegram', h.telegram ? 'ativo' : 'desligado');
+          setText('d-demo',     h.demo ? 'SIM (atenção)' : 'não');
+          setText('d-pid',      String(h.pid || '—'));
+          // memória vem do /api/metrics se quisermos; aqui um placeholder
+          setText('d-mem',      '(via /api/metrics)');
+        } catch (e) {
+          setText('sys-pg', 'ERRO');
+          setText('sys-pg-sub', e.message);
+          console.warn('[sys]', e);
+        }
+      }
+
+      document.getElementById('btn-refresh')?.addEventListener('click', refresh);
+      refresh();
+      setInterval(refresh, 15000);
+    })();
+  </script>
+</body>
+</html>

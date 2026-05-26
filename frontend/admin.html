@@ -4,10 +4,27 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robotrend-guard" content="admin" />
-  <title>Robotrend IA — Admin</title>
+  <title>Robotrend IA — Painel Master</title>
   <link rel="stylesheet" href="/output.css">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
+  <style>
+    .hub-tile {
+      display: flex; flex-direction: column; gap: 8px;
+      padding: 18px; border-radius: 14px;
+      background: var(--card-bg); border: 1px solid var(--card-border);
+      transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+      text-decoration: none; color: inherit;
+    }
+    .hub-tile:hover {
+      transform: translateY(-2px);
+      border-color: var(--brand);
+      box-shadow: 0 6px 18px rgba(20,184,94,.15);
+    }
+    .hub-tile-icon { font-size: 28px; line-height: 1; }
+    .hub-tile-title { font-size: 14px; font-weight: 800; color: var(--text); }
+    .hub-tile-sub   { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  </style>
 </head>
 <body class="font-display antialiased">
   <div class="bg-aurora"></div>
@@ -18,165 +35,68 @@
     <main class="saas-content">
       <header class="saas-page-header">
         <div>
-          <h1 class="saas-page-title">Painel administrativo</h1>
-          <p class="saas-page-sub">Gestão de usuários, pagamentos e operação</p>
+          <h1 class="saas-page-title">◉ Painel Master</h1>
+          <p class="saas-page-sub">Visão geral da plataforma · selecione uma seção abaixo</p>
         </div>
         <div class="saas-page-actions">
-          <span id="me" class="saas-status-pill"></span>
+          <span id="me" class="saas-status-pill ok">MASTER</span>
         </div>
       </header>
 
+      <!-- KPIs globais (overview) -->
       <section class="saas-kpis">
-        <div class="saas-kpi"><div class="saas-kpi-label">Total usuários</div><div class="saas-kpi-value" id="kpi-users">—</div></div>
-        <div class="saas-kpi"><div class="saas-kpi-label">🆓 Clientes FREE</div><div class="saas-kpi-value" id="kpi-free" style="color:#94a3b8;">—</div></div>
-        <div class="saas-kpi"><div class="saas-kpi-label">💎 Clientes PREMIUM</div><div class="saas-kpi-value" id="kpi-premium" style="color:#fbbf24;">—</div></div>
-        <div class="saas-kpi"><div class="saas-kpi-label">Conversão</div><div class="saas-kpi-value" id="kpi-conversion" style="color:#22c55e;">—</div></div>
-        <div class="saas-kpi"><div class="saas-kpi-label">Receita estimada</div><div class="saas-kpi-value" id="kpi-revenue">—</div></div>
-        <div class="saas-kpi"><div class="saas-kpi-label">Sinais</div><div class="saas-kpi-value" id="kpi-signals">—</div></div>
-        <div class="saas-kpi"><div class="saas-kpi-label">Winrate</div><div class="saas-kpi-value" id="kpi-winrate">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Total usuários</div><div class="saas-kpi-value" id="kpi-users">—</div><div class="saas-kpi-foot">cadastrados</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">💎 Premium</div><div class="saas-kpi-value" id="kpi-premium" style="color:#fbbf24;">—</div><div class="saas-kpi-foot">assinantes</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Receita</div><div class="saas-kpi-value" id="kpi-revenue" style="color:#22c55e;">—</div><div class="saas-kpi-foot">total acumulado</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Sinais</div><div class="saas-kpi-value" id="kpi-signals">—</div><div class="saas-kpi-foot">emitidos</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Winrate</div><div class="saas-kpi-value" id="kpi-winrate">—</div><div class="saas-kpi-foot">global</div></div>
       </section>
 
+      <!-- Hub: navegação visual para as sub-páginas -->
       <section class="saas-section">
         <div class="saas-section-head">
-          <div class="saas-section-title">Criar novo cliente</div>
-          <div style="color: var(--muted); font-size: 12px;">SaaS multi-tenant</div>
+          <div class="saas-section-title">Áreas administrativas</div>
+          <div style="color: var(--muted); font-size: 12px;">cada seção tem sua própria página dedicada</div>
         </div>
-        <div class="saas-card">
-          <form id="form-create-user" class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-            <div class="md:col-span-2">
-              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">E-mail</label>
-              <input id="cu-email" type="email" required class="input-field w-full mt-1" placeholder="cliente@email.com" />
-            </div>
-            <div>
-              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Senha</label>
-              <input id="cu-password" type="text" required minlength="6" class="input-field w-full mt-1" placeholder="mín. 6 chars" />
-            </div>
-            <div>
-              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Plano</label>
-              <select id="cu-plan" class="input-field w-full mt-1">
-                <option value="FREE">FREE</option>
-                <option value="VIP">VIP</option>
-                <option value="PREMIUM" selected>PREMIUM</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Role</label>
-              <select id="cu-role" class="input-field w-full mt-1">
-                <option value="user">user</option>
-                <option value="premium" selected>premium</option>
-                <option value="admin">admin</option>
-              </select>
-            </div>
-            <div class="md:col-span-3">
-              <label class="text-xs uppercase tracking-wider font-bold" style="color: var(--muted);">Nome (opcional)</label>
-              <input id="cu-name" type="text" class="input-field w-full mt-1" placeholder="Nome de exibição" />
-            </div>
-            <div class="md:col-span-2">
-              <button type="submit" class="btn-primary w-full justify-center py-3">+ Criar cliente</button>
-            </div>
-          </form>
-          <div id="cu-feedback" class="mt-3 text-sm" style="display:none;"></div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <a class="hub-tile" href="/admin/users">
+            <div class="hub-tile-icon">◇</div>
+            <div class="hub-tile-title">Usuários</div>
+            <div class="hub-tile-sub">Criar clientes, gerir planos (FREE/PREMIUM/VIP), promover roles, listar admins</div>
+          </a>
+          <a class="hub-tile" href="/admin/finance">
+            <div class="hub-tile-icon">◈</div>
+            <div class="hub-tile-title">Financeiro</div>
+            <div class="hub-tile-sub">Receita, MRR, pagamentos recentes, ticket médio, cupons de desconto</div>
+          </a>
+          <a class="hub-tile" href="/admin/system">
+            <div class="hub-tile-icon">⚙</div>
+            <div class="hub-tile-title">Sistema</div>
+            <div class="hub-tile-sub">PostgreSQL, WebSocket, provider live ativo, uptime, /api/health detalhado</div>
+          </a>
+          <a class="hub-tile" href="/ops/live">
+            <div class="hub-tile-icon">▤</div>
+            <div class="hub-tile-title">Operacional IA</div>
+            <div class="hub-tile-sub">Painel técnico — poller, breakers, throughput socket.io, quota providers</div>
+          </a>
+          <a class="hub-tile" href="/admin/backtest">
+            <div class="hub-tile-icon">⧗</div>
+            <div class="hub-tile-title">Backtest</div>
+            <div class="hub-tile-sub">ROI consolidado, winrate, Sharpe estimado, simulações com filtros</div>
+          </a>
+          <a class="hub-tile" href="/quality.html">
+            <div class="hub-tile-icon">◊</div>
+            <div class="hub-tile-title">Qualidade IA</div>
+            <div class="hub-tile-sub">Performance por mercado, ajuste fino de pesos, auto-tuning de scores</div>
+          </a>
         </div>
       </section>
 
-      <!-- ============================================================
-           CLIENTES PREMIUM
-           ============================================================ -->
+      <!-- Sinais recentes (resumo — versão completa em /admin/system ou /quality) -->
       <section class="saas-section">
         <div class="saas-section-head">
-          <div class="saas-section-title">💎 Clientes PREMIUM</div>
-          <div style="color: var(--muted); font-size: 12px;">
-            <span id="premium-count">0</span> assinantes ativos
-            · <span id="premium-revenue" style="color: var(--brand); font-weight: 700;">R$ 0,00</span> em receita estimada/mês
-          </div>
-        </div>
-        <div class="saas-card" style="padding:0; overflow:hidden;">
-          <table class="w-full text-sm">
-            <thead><tr class="table-head">
-              <th class="py-3 px-4 text-left">E-mail</th>
-              <th class="py-3 px-4 text-left">Nome</th>
-              <th class="py-3 px-4 text-left">Plano</th>
-              <th class="py-3 px-4 text-left">Role</th>
-              <th class="py-3 px-4 text-left">Criado em</th>
-              <th class="py-3 px-4 text-left">Status</th>
-              <th class="py-3 px-4 text-left">Ações</th>
-            </tr></thead>
-            <tbody id="premium-body"><tr><td colspan="7" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ============================================================
-           CLIENTES FREE
-           ============================================================ -->
-      <section class="saas-section">
-        <div class="saas-section-head">
-          <div class="saas-section-title">🆓 Clientes FREE</div>
-          <div style="color: var(--muted); font-size: 12px;">
-            <span id="free-count">0</span> usuários gratuitos
-            · <span id="free-conversion" style="color: var(--warn); font-weight: 700;">0%</span> conversão atual
-          </div>
-        </div>
-        <div class="saas-card" style="padding:0; overflow:hidden;">
-          <table class="w-full text-sm">
-            <thead><tr class="table-head">
-              <th class="py-3 px-4 text-left">E-mail</th>
-              <th class="py-3 px-4 text-left">Nome</th>
-              <th class="py-3 px-4 text-left">Criado em</th>
-              <th class="py-3 px-4 text-left">Última atividade</th>
-              <th class="py-3 px-4 text-left">Converter</th>
-              <th class="py-3 px-4 text-left">Ações</th>
-            </tr></thead>
-            <tbody id="free-body"><tr><td colspan="6" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ============================================================
-           ADMINS (compacto)
-           ============================================================ -->
-      <section class="saas-section" id="admins-section" style="display:none;">
-        <div class="saas-section-head">
-          <div class="saas-section-title">🛡️ Administradores</div>
-          <div style="color: var(--muted); font-size: 12px;">
-            <span id="admin-count">0</span> com acesso ao painel master
-          </div>
-        </div>
-        <div class="saas-card" style="padding:0; overflow:hidden;">
-          <table class="w-full text-sm">
-            <thead><tr class="table-head">
-              <th class="py-3 px-4 text-left">E-mail</th>
-              <th class="py-3 px-4 text-left">Nome</th>
-              <th class="py-3 px-4 text-left">Role</th>
-              <th class="py-3 px-4 text-left">Criado em</th>
-              <th class="py-3 px-4 text-left">Ações</th>
-            </tr></thead>
-            <tbody id="admin-body"><tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">—</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="saas-section">
-        <div class="saas-section-head">
-          <div class="saas-section-title">Pagamentos</div>
-        </div>
-        <div class="saas-card" style="padding:0; overflow:hidden;">
-          <table class="w-full text-sm">
-            <thead><tr class="table-head">
-              <th class="py-3 px-4 text-left">Data</th>
-              <th class="py-3 px-4 text-left">Provedor</th>
-              <th class="py-3 px-4 text-left">Plano</th>
-              <th class="py-3 px-4 text-left">Valor</th>
-              <th class="py-3 px-4 text-left">Status</th>
-            </tr></thead>
-            <tbody id="payments-body"><tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="saas-section">
-        <div class="saas-section-head">
-          <div class="saas-section-title">Sinais recentes</div>
+          <div class="saas-section-title">📡 Sinais recentes</div>
+          <a href="/signals.html" class="saas-status-pill">ver todos →</a>
         </div>
         <div class="saas-card" style="padding:0; overflow:hidden;">
           <table class="w-full text-sm">
@@ -192,39 +112,12 @@
           </table>
         </div>
       </section>
-
-      <section class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
-        <div class="saas-card">
-          <div class="saas-section-title mb-3">Cupons</div>
-          <div class="grid grid-cols-3 gap-2 mb-3">
-            <input id="coup-code" class="input-field" placeholder="CODE (opcional)" />
-            <input id="coup-percent" class="input-field" placeholder="% off" type="number" value="10" />
-            <button id="btn-create-coupon" class="btn-primary">+ Criar</button>
-          </div>
-          <div id="coupons-list" class="text-sm space-y-1" style="max-height:300px; overflow-y:auto;">—</div>
-        </div>
-        <div class="saas-card">
-          <div class="saas-section-title mb-3">Feedback dos usuários</div>
-          <div id="feedback-stats" class="text-sm mb-3" style="color: var(--muted);">—</div>
-          <div id="feedback-list" class="text-sm space-y-2" style="max-height:400px; overflow-y:auto;">—</div>
-        </div>
-        <div class="saas-card lg:col-span-2">
-          <div class="saas-section-title mb-3">Backtest e Qualidade</div>
-          <div class="flex gap-2 flex-wrap">
-            <a href="/backtest.html" class="btn-primary">Rodar Backtest</a>
-            <a href="/quality.html" class="btn-ghost">Painel Qualidade IA</a>
-            <a href="/results.html" class="btn-ghost">Resultados (lucro/ROI)</a>
-            <a href="/admin-football.html" class="btn-ghost">Sistema (operação técnica)</a>
-          </div>
-        </div>
-      </section>
     </main>
   </div>
 
   <script src="/js/auth.js"></script>
   <script src="/js/auth-guard.js"></script>
   <script src="/js/user-state.js"></script>
-  <script src="/js/upgrade-celebration.js"></script>
   <script src="/js/pwa.js"></script>
   <script src="/js/saas-nav.js"></script>
   <script src="/js/admin.js"></script>

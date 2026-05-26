@@ -24,13 +24,19 @@
   // Preço promo do PREMIUM (usado para estimativa de receita FREE→PREMIUM)
   const PREMIUM_PRICE = 199.99;
 
+  /** Helper defensivo: páginas admin sub-rota nem sempre tem todos os IDs. */
+  function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
   async function loadOverview() {
     try {
       const o = await RobotrendAuth.api('/api/admin/overview');
-      document.getElementById('kpi-users').textContent    = o.users ?? '—';
-      document.getElementById('kpi-revenue').textContent  = 'R$ ' + (o.revenue || 0).toFixed(2);
-      document.getElementById('kpi-signals').textContent  = o.signals ?? '—';
-      document.getElementById('kpi-winrate').textContent  = (o.signalsStats?.winrate ?? 0) + '%';
+      setText('kpi-users',   o.users ?? '—');
+      setText('kpi-revenue', 'R$ ' + (Number(o.revenue) || 0).toFixed(2));
+      setText('kpi-signals', o.signals ?? '—');
+      setText('kpi-winrate', (o.signalsStats?.winrate ?? 0) + '%');
       // kpi-free, kpi-premium, kpi-conversion → preenchidos por loadUsers()
     } catch (e) { console.error(e); }
   }

@@ -7,7 +7,7 @@
      - Assets estáticos → Cache-first com expulsão automática no bump
      - API/Socket.io    → bypass total
 */
-const VERSION = 'v6.5.0';
+const VERSION = 'v6.6.0';
 const CACHE_STATIC = `robotrend-static-${VERSION}`;
 
 // Apenas assets estáticos (não-HTML). HTML é sempre network-only.

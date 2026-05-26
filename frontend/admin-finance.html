@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <title>Financeiro · Robotrend IA Master</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="admin-finance"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">◈ Financeiro</h1>
+          <p class="saas-page-sub">Receita, assinaturas, pagamentos e cupons</p>
+        </div>
+        <div class="saas-page-actions">
+          <span class="saas-status-pill ok">MASTER</span>
+        </div>
+      </header>
+
+      <!-- KPIs financeiros -->
+      <section class="saas-kpis">
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Receita total</div>
+          <div class="saas-kpi-value" id="kpi-revenue" style="color:#22c55e;">—</div>
+          <div class="saas-kpi-foot">somatório pagamentos confirmados</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">MRR estimado</div>
+          <div class="saas-kpi-value" id="kpi-mrr" style="color:#22c55e;">—</div>
+          <div class="saas-kpi-foot">premium × R$ 199,99</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Assinantes ativos</div>
+          <div class="saas-kpi-value" id="kpi-premium" style="color:#fbbf24;">—</div>
+          <div class="saas-kpi-foot">premium pagantes</div>
+        </div>
+        <div class="saas-kpi">
+          <div class="saas-kpi-label">Ticket médio</div>
+          <div class="saas-kpi-value" id="kpi-ticket">—</div>
+          <div class="saas-kpi-foot">por pagamento</div>
+        </div>
+      </section>
+
+      <!-- Pagamentos -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">💳 Pagamentos recentes</div>
+          <div style="color: var(--muted); font-size: 12px;">últimos eventos MP/Stripe/Pix</div>
+        </div>
+        <div class="saas-card" style="padding:0; overflow:hidden;">
+          <table class="w-full text-sm">
+            <thead><tr class="table-head">
+              <th class="py-3 px-4 text-left">Data</th>
+              <th class="py-3 px-4 text-left">Provedor</th>
+              <th class="py-3 px-4 text-left">Plano</th>
+              <th class="py-3 px-4 text-left">Valor</th>
+              <th class="py-3 px-4 text-left">Status</th>
+            </tr></thead>
+            <tbody id="payments-body"><tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Cupons -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">🎟 Cupons de desconto</div>
+          <div style="color: var(--muted); font-size: 12px;">códigos aplicáveis no checkout</div>
+        </div>
+        <div class="saas-card">
+          <div class="grid grid-cols-3 gap-2 mb-3">
+            <input id="coup-code" class="input-field" placeholder="CODE (opcional)" />
+            <input id="coup-percent" class="input-field" placeholder="% off" type="number" value="10" />
+            <button id="btn-create-coupon" class="btn-primary">+ Criar</button>
+          </div>
+          <div id="coupons-list" class="text-sm space-y-1" style="max-height:300px; overflow-y:auto;">—</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/admin.js"></script>
+  <script>
+    // Cálculo de MRR e ticket médio específicos desta página (reusa /api/admin/overview).
+    (async function () {
+      try {
+        const o = await window.RobotrendAuth.api('/api/admin/overview');
+        const premium = Number(o.paidUsers || 0);
+        const revenue = Number(o.revenue || 0);
+        const payments = Number(o.payments || 0);
+        const PREMIUM_PRICE = 199.99;
+        document.getElementById('kpi-mrr').textContent =
+          'R$ ' + (premium * PREMIUM_PRICE).toFixed(2);
+        document.getElementById('kpi-premium').textContent = String(premium);
+        document.getElementById('kpi-ticket').textContent =
+          payments > 0 ? 'R$ ' + (revenue / payments).toFixed(2) : '—';
+      } catch (e) { console.warn('[finance kpis]', e.message); }
+    })();
+  </script>
+</body>
+</html>

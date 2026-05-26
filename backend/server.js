@@ -124,14 +124,24 @@ for (const [legacy, target] of Object.entries(HTML_PAGE_ALIASES)) {
 }
 
 /**
- * Alias `/ops/live` e `/admin/live` → painel operacional técnico (admin-football.html).
- * Mantém `/football.html` como view do cliente; aqui é a versão "ferramenta interna"
- * que aparece na seção MASTER do sidebar.
+ * URLs limpas das páginas MASTER (sem extensão .html no sidebar).
+ * Cada rota serve um HTML DIFERENTE — sem hash, sem reuso de página.
  */
-app.get(['/ops/live', '/ops/live.html', '/admin/live', '/admin/live.html'], (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-  res.sendFile(path.join(__dirname, '..', 'frontend', 'admin-football.html'));
-});
+const ADMIN_CLEAN_ROUTES = {
+  '/admin':            'admin.html',
+  '/admin/users':      'admin-users.html',
+  '/admin/finance':    'admin-finance.html',
+  '/admin/system':     'admin-system.html',
+  '/admin/backtest':   'admin-backtest.html',
+  '/ops/live':         'admin-football.html',
+  '/admin/live':       'admin-football.html',
+};
+for (const [route, file] of Object.entries(ADMIN_CLEAN_ROUTES)) {
+  app.get([route, route + '.html'], (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.sendFile(path.join(__dirname, '..', 'frontend', file));
+  });
+}
 
 /**
  * ROTAS HTML EXPLÍCITAS (garantia anti-fallback)
@@ -146,7 +156,9 @@ app.get(['/ops/live', '/ops/live.html', '/admin/live', '/admin/live.html'], (req
 const PUBLIC_PAGES = [
   'index.html', 'login.html', 'register.html', 'forgot.html', 'reset.html',
   'pricing.html', 'signals.html', 'analytics.html', 'football.html',
-  'results.html', 'quality.html', 'backtest.html', 'admin.html', 'admin-football.html',
+  'results.html', 'quality.html', 'backtest.html',
+  'admin.html', 'admin-football.html',
+  'admin-users.html', 'admin-finance.html', 'admin-system.html', 'admin-backtest.html',
   'account.html',
 ];
 
