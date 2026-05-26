@@ -168,15 +168,23 @@
       return initSSE();
     }
     updateConn('connecting', 'conectando…');
-    const sock = io('/football', {
+    // URL absoluta garante WSS em produção (Render) e HTTP em localhost.
+    // Sem isso, alguns navegadores tratam '/football' como path do origin atual
+    // e podem cair em proxies/extensions que bloqueiam o handshake.
+    const origin = window.location.origin;
+    const sock = io(`${origin}/football`, {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 800,
       reconnectionDelayMax: 5000,
-      timeout: 8000,
+      timeout: 10000,
+      withCredentials: true,
+      // upgrade WS→polling em caso de falha persistente é o default;
+      // mantemos polling no array para fallback automático.
     });
     state.socket = sock;
+    console.log('[LIVE] socket.io → ' + origin + '/football (transports: websocket→polling)');
 
     sock.on('connect', () => {
       state.runtime.transport = sock.io?.engine?.transport?.name || 'ws';
@@ -209,8 +217,11 @@
       console.log('[LIVE] socket disconnect — grace de remoção ativo por', RECONNECT_GRACE_MS / 1000, 's');
     });
     sock.on('connect_error', (err) => {
-      updateConn('offline', `erro de conexão: ${err?.message || 'unknown'}`);
-      logEvent('connect_error', { msg: err?.message });
+      const msg = err?.message || 'unknown';
+      const transport = sock.io?.engine?.transport?.name || '?';
+      updateConn('offline', `erro de conexão (${transport}): ${msg}`);
+      logEvent('connect_error', { msg, transport, type: err?.type });
+      console.warn(`[LIVE] connect_error transport=${transport} msg=${msg} — socket.io retry automático ativo`);
     });
 
     sock.on('hello', (h) => { logEvent('hello', h); bumpRuntime({ socket: true }); });

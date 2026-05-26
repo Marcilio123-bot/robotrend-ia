@@ -1,9 +1,10 @@
 /* ============================================================
    ROBOTREND IA — SaaS Navigation (sidebar compartilhada)
-   Renderiza a navegação coerente em todas as páginas, com 3 áreas:
-     CLIENT      (Dashboard, Sinais, Jogos)
-     ANALYTICS   (Performance, Resultados)
-     ADMIN       (Painel, Sistema)  ← só aparece se role=admin
+   Renderiza a navegação coerente em todas as páginas:
+     CLIENTE      (Dashboard premium, Sinais, Jogos, Analytics, Minha Assinatura)
+     PERFORMANCE  (Resultados, Qualidade IA)        ← visível p/ todos
+     MASTER       (Painel SaaS, Usuários, Financeiro, Sistema, Operacional IA, Backtest)
+                  ← só aparece se role ∈ {master, admin, owner, super_admin}
    Uso: <div id="saas-nav" data-active="dashboard"></div> + <script src="/js/saas-nav.js"></script>
    ============================================================ */
 (function () {
@@ -11,37 +12,38 @@
 
   const SECTIONS = [
     {
-      label: 'Operação',
+      label: 'Cliente',
       items: [
-        { id: 'dashboard',  label: 'Dashboard',    icon: '◧', href: '/index.html' },
-        { id: 'signals',    label: 'Sinais',       icon: '◆', href: '/signals.html', badge: 'live' },
-        { id: 'football',   label: 'Jogos',        icon: '⚽', href: '/football.html' },
+        { id: 'dashboard',  label: 'Dashboard',        icon: '◧', href: '/index.html' },
+        { id: 'signals',    label: 'Sinais',           icon: '◆', href: '/signals.html', badge: 'live' },
+        { id: 'football',   label: 'Jogos',            icon: '⚽', href: '/football.html' },
+        { id: 'analytics',  label: 'Analytics',        icon: '▲', href: '/analytics.html' },
+        { id: 'account',    label: 'Minha Assinatura', icon: '◆', href: '/account.html' },
       ],
     },
     {
       label: 'Performance',
       items: [
-        { id: 'analytics',  label: 'Analytics',    icon: '▲', href: '/analytics.html' },
         { id: 'results',    label: 'Resultados',   icon: '$', href: '/results.html' },
         { id: 'quality',    label: 'Qualidade IA', icon: '◊', href: '/quality.html' },
       ],
     },
     {
-      label: 'Conta',
-      items: [
-        { id: 'account', label: 'Minha Assinatura', icon: '◆', href: '/account.html' },
-      ],
-    },
-    {
-      label: 'Admin',
+      label: 'Master',
       adminOnly: true,
       items: [
-        { id: 'admin',          label: 'Painel',     icon: '◉', href: '/admin.html' },
-        { id: 'admin-football', label: 'Sistema',    icon: '⚙', href: '/admin-football.html' },
-        { id: 'backtest',       label: 'Backtest',   icon: '⧗', href: '/backtest.html' },
+        { id: 'admin',          label: 'Painel',          icon: '◉', href: '/admin.html' },
+        { id: 'admin-users',    label: 'Usuários',        icon: '◇', href: '/admin.html#users' },
+        { id: 'admin-billing',  label: 'Financeiro',      icon: '◈', href: '/admin.html#billing' },
+        { id: 'admin-football', label: 'Sistema',         icon: '⚙', href: '/admin-football.html' },
+        { id: 'ops-live',       label: 'Operacional IA',  icon: '▤', href: '/ops/live' },
+        { id: 'backtest',       label: 'Backtest',        icon: '⧗', href: '/backtest.html' },
       ],
     },
   ];
+
+  /** Roles consideradas master-level (alinhado com backend/auth.js). */
+  const MASTER_ROLES = new Set(['master', 'admin', 'owner', 'super_admin']);
 
   function getUser() {
     try {
@@ -61,13 +63,14 @@
     if (!u) return false;
     if (u.isAdmin === true) return true;
     const r = String(u.role || '').toLowerCase();
-    return r === 'admin' || r === 'owner';
+    return MASTER_ROLES.has(r);
   }
 
   function planLabel(u) {
     if (!u) return 'Visitante';
     const r = String(u.role || '').toLowerCase();
-    if (r === 'admin' || r === 'owner') return 'Admin';
+    if (r === 'master' || r === 'super_admin' || r === 'owner') return 'Master';
+    if (r === 'admin') return 'Admin';
     if (r === 'premium') return 'Premium';
     const p = String(u.plan || '').toUpperCase();
     if (p === 'PRO' || p === 'PREMIUM') return 'Premium';
@@ -79,7 +82,7 @@
   function isFreeUser(u) {
     if (!u) return false;
     const r = String(u.role || '').toLowerCase();
-    if (r === 'admin' || r === 'owner' || r === 'premium') return false;
+    if (MASTER_ROLES.has(r) || r === 'premium') return false;
     const p = String(u.plan || '').toUpperCase();
     return !(p === 'PREMIUM' || p === 'VIP' || p === 'PRO' || p === 'TRIAL');
   }

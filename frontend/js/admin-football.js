@@ -234,7 +234,13 @@
 
   function initSocket() {
     if (!window.io) return;
-    const sock = io('/football', { transports: ['websocket', 'polling'] });
+    const sock = io(`${window.location.origin}/football`, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      timeout: 10000,
+      withCredentials: true,
+    });
     sock.on('hello',           (p) => appendStream('hello', p));
     sock.on('tick',            (p) => appendStream('tick', { matches: p.matches?.length, src: p.source }));
     sock.on('match:upsert',    (p) => appendStream('match:upsert', { id: p.match?.id, home: p.match?.home }));

@@ -124,6 +124,16 @@ for (const [legacy, target] of Object.entries(HTML_PAGE_ALIASES)) {
 }
 
 /**
+ * Alias `/ops/live` e `/admin/live` → painel operacional técnico (admin-football.html).
+ * Mantém `/football.html` como view do cliente; aqui é a versão "ferramenta interna"
+ * que aparece na seção MASTER do sidebar.
+ */
+app.get(['/ops/live', '/ops/live.html', '/admin/live', '/admin/live.html'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.sendFile(path.join(__dirname, '..', 'frontend', 'admin-football.html'));
+});
+
+/**
  * ROTAS HTML EXPLÍCITAS (garantia anti-fallback)
  * --------------------------------------------------
  * Em vez de depender só do `express.static`, registramos cada página real

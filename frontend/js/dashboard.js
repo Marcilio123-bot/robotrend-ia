@@ -511,12 +511,14 @@
   /* ============================================================
      SOCKET.IO
      ============================================================ */
-  const socket = io({
+  const socket = io(window.location.origin, {
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1500,
     reconnectionDelayMax: 10000,
     reconnectionAttempts: Infinity,
+    timeout: 10000,
+    withCredentials: true,
     auth: { token: window.RobotrendAuth?.getToken() || '' },
   });
 
