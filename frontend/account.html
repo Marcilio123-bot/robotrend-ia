@@ -13,6 +13,36 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 
+  <!--
+    GUARD: master/admin/owner NÃO acessa /account.html (página de cliente).
+    Redireciona imediatamente para /admin.html antes de renderizar o billing.
+    Roda antes do <body> para evitar flash da UI de cliente.
+  -->
+  <script>
+    (function () {
+      'use strict';
+      try {
+        // 1) Cache local mais rápido (RobotrendUser pode não ter inicializado ainda)
+        const raw = localStorage.getItem('rb_user') || sessionStorage.getItem('rb_user');
+        if (raw) {
+          const u = JSON.parse(raw);
+          const role = String(u?.user?.role || u?.role || '').toLowerCase();
+          if (['master', 'admin', 'owner', 'super_admin'].includes(role)) {
+            location.replace('/admin.html');
+            return;
+          }
+        }
+        // 2) Fallback: checar via API quando RobotrendUser carregar
+        window.addEventListener('robotrend:user-ready', function (ev) {
+          const role = String(ev.detail?.role || '').toLowerCase();
+          if (['master', 'admin', 'owner', 'super_admin'].includes(role)) {
+            location.replace('/admin.html');
+          }
+        });
+      } catch (_) { /* segue para a página normal */ }
+    })();
+  </script>
+
   <style>
     .plan-hero {
       background: linear-gradient(135deg, rgba(20,184,94,.18), rgba(0,217,126,.04));
@@ -198,6 +228,13 @@
           // Fonte canônica: RobotrendUser (já tem cache + polling).
           // Refresh força hit no /api/me/subscription.
           const data = await window.RobotrendUser.refresh({ force: true });
+          // 3º layer de defesa: se o user revelado pela API é master,
+          // redireciona em vez de renderizar UI de billing.
+          const role = String(data?.role || data?.user?.role || '').toLowerCase();
+          if (['master','admin','owner','super_admin'].includes(role)) {
+            location.replace('/admin.html');
+            return;
+          }
           if (data) render(data);
         } catch (err) {
           $('#plan-title').textContent = 'Falha ao carregar';

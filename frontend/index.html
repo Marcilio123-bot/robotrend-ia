@@ -59,7 +59,26 @@
         </div>
       </section>
 
-      <!-- MELHOR APOSTA DO MOMENTO (PREMIUM only) -->
+      <!-- MASTER SNAPSHOT — só renderiza para role master/admin/owner.
+           Substitui o card "Melhor Aposta do Momento" por KPIs operacionais
+           da plataforma. Esconde-se sozinho se o usuário for cliente. -->
+      <section class="saas-section" id="master-snapshot" style="display:none;">
+        <div class="saas-section-head">
+          <div>
+            <div class="saas-section-title">⚡ Snapshot Master</div>
+            <div class="saas-section-sub">Visão administrativa em tempo real · usuários · receita · operação</div>
+          </div>
+          <a href="/admin.html" class="saas-status-pill ok">painel completo →</a>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="saas-kpi"><div class="saas-kpi-label">Total usuários</div><div class="saas-kpi-value" id="ms-users">—</div><div class="saas-kpi-foot">cadastrados</div></div>
+          <div class="saas-kpi"><div class="saas-kpi-label">💎 Premium ativos</div><div class="saas-kpi-value" id="ms-premium" style="color:#fbbf24;">—</div><div class="saas-kpi-foot">assinantes pagos</div></div>
+          <div class="saas-kpi"><div class="saas-kpi-label">Receita estimada</div><div class="saas-kpi-value" id="ms-revenue" style="color:#22c55e;">—</div><div class="saas-kpi-foot">MRR aproximado</div></div>
+          <div class="saas-kpi"><div class="saas-kpi-label">Provider ativo</div><div class="saas-kpi-value" id="ms-provider" style="font-size:18px;">—</div><div class="saas-kpi-foot" id="ms-provider-sub">live football</div></div>
+        </div>
+      </section>
+
+      <!-- MELHOR APOSTA DO MOMENTO (CLIENTE only — escondida para master) -->
       <section class="saas-section" id="best-bet-section">
         <div class="saas-section-head">
           <div>
@@ -243,5 +262,66 @@
   <script src="/js/payments.js"></script>
   <script src="/js/promo-banner.js"></script>
   <script src="/js/dashboard.js"></script>
+
+  <!-- Master view toggle: esconde card "Melhor Aposta" para admins
+       e carrega snapshot administrativo a partir de /api/admin/stats. -->
+  <script>
+    (function () {
+      'use strict';
+      const MASTER_ROLES = new Set(['master', 'admin', 'owner', 'super_admin']);
+
+      function fmtBRL(n) {
+        if (!Number.isFinite(n)) return '—';
+        return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+      }
+
+      async function loadMasterSnapshot() {
+        const headers = {};
+        const tok = window.RobotrendAuth?.getToken?.();
+        if (tok) headers.Authorization = 'Bearer ' + tok;
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        try {
+          const [ovRes, healthRes] = await Promise.allSettled([
+            fetch('/api/admin/overview', { headers, credentials: 'include' }),
+            fetch('/api/health',         { headers, credentials: 'include' }),
+          ]);
+          if (ovRes.status === 'fulfilled' && ovRes.value.ok) {
+            const o = await ovRes.value.json();
+            set('ms-users',   String(o.users ?? '—'));
+            set('ms-premium', String(o.paidUsers ?? '—'));
+            set('ms-revenue', fmtBRL(Number(o.revenue || 0)));
+          }
+          if (healthRes.status === 'fulfilled' && healthRes.value.ok) {
+            const h = await healthRes.value.json();
+            const prov = h.football?.activeProvider || '—';
+            const cfg  = h.football?.configured ? 'configurado' : 'desligado';
+            set('ms-provider',     prov);
+            set('ms-provider-sub', cfg);
+          }
+        } catch (e) {
+          console.warn('[master-snapshot]', e.message);
+        }
+      }
+
+      function applyRole(role) {
+        const isMaster = MASTER_ROLES.has(String(role || '').toLowerCase());
+        const snap = document.getElementById('master-snapshot');
+        const best = document.getElementById('best-bet-section');
+        if (snap) snap.style.display = isMaster ? '' : 'none';
+        if (best) best.style.display = isMaster ? 'none' : '';
+        if (isMaster) loadMasterSnapshot();
+      }
+
+      // Tenta resolver role imediatamente (cache) — depois re-aplica quando o user-ready confirmar.
+      try {
+        const u = window.RobotrendUser?.get?.() || window.RobotrendAuth?.getUser?.();
+        if (u) applyRole(u.role || u.user?.role);
+      } catch (_) {}
+      window.addEventListener('robotrend:user-ready', (ev) => applyRole(ev.detail?.role));
+      if (window.RobotrendUser?.onChange) {
+        window.RobotrendUser.onChange((u) => applyRole(u?.role));
+      }
+    })();
+  </script>
 </body>
 </html>

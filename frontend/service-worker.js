@@ -1,16 +1,13 @@
 /* Robotrend IA — Service Worker
    ---------------------------------------------------------------
-   v5.2.0 — Estratégia ROTEAMENTO-SAFE:
-     - Navegações HTML  → NETWORK-ONLY  (sem cache, sem fallback p/ index)
-     - Assets estáticos → Cache-first (CSS/JS/imagens)
-     - API/Socket.io    → bypass total (browser nativo)
-
-   Motivação: versões anteriores pré-cacheavam HTMLs no install,
-   o que pode reservir páginas erradas se o servidor estiver instável.
-   Agora HTML SEMPRE vem fresco do servidor — assim cada rota
-   (/admin.html, /signals.html, etc) abre o arquivo real correspondente.
+   v6.5.0 — Bump para invalidar cache de dashboard.js (guard master),
+            saas-nav.js (sidebar Cliente/Master) e index.html
+            (snapshot master). Estratégia mantida:
+     - Navegações HTML  → NETWORK-ONLY
+     - Assets estáticos → Cache-first com expulsão automática no bump
+     - API/Socket.io    → bypass total
 */
-const VERSION = 'v6.2.0';
+const VERSION = 'v6.5.0';
 const CACHE_STATIC = `robotrend-static-${VERSION}`;
 
 // Apenas assets estáticos (não-HTML). HTML é sempre network-only.

@@ -292,17 +292,36 @@
   }
 
   /* ============================================================
+     ROLE GUARDS — separa MASTER (admin/owner/super_admin) de CLIENTE
+     ============================================================ */
+  const MASTER_ROLES_DASH = new Set(['master', 'admin', 'owner', 'super_admin']);
+
+  function getCurrentRole() {
+    try {
+      const us = window.RobotrendUser?.get?.();
+      if (us) return String(us.role || us.user?.role || '').toLowerCase();
+      const u = window.RobotrendAuth?.getUser?.();
+      return String(u?.role || '').toLowerCase();
+    } catch { return ''; }
+  }
+  function isMasterUser() {
+    return MASTER_ROLES_DASH.has(getCurrentRole());
+  }
+
+  /* ============================================================
      BEST BET — "Melhor Aposta do Momento" (PREMIUM)
      ============================================================ */
   function isPremiumUser() {
-    // Fonte canônica: RobotrendUser (vem de /api/me/subscription, server-side).
-    // Fallback para o cache local do auth.js para compatibilidade.
+    // Master também passa neste check para que features premium funcionem
+    // tecnicamente — porém o card best-bet é OCULTADO inteiro para master
+    // pelo bloco master-snapshot do index.html. Mantemos true por compat.
+    if (isMasterUser()) return true;
     if (window.RobotrendUser?.get?.()) return window.RobotrendUser.isPremium();
     const u = (window.RobotrendAuth?.getUser?.() || null);
     if (!u) return false;
     const role = String(u.role || '').toLowerCase();
     const plan = String(u.plan || '').toUpperCase();
-    return role === 'admin' || role === 'owner' || role === 'premium'
+    return role === 'premium'
         || plan === 'PREMIUM' || plan === 'VIP' || plan === 'PRO' || plan === 'TRIAL';
   }
 
@@ -311,6 +330,10 @@
   }
 
   function renderBestBet(signal) {
+    // MASTER não vê card "Melhor Aposta" — toda a section está com display:none
+    // (controlado por index.html via #master-snapshot). Saímos silenciosamente.
+    if (isMasterUser()) return;
+
     const loading = $('#best-bet-loading');
     const card    = $('#best-bet-card');
     const locked  = $('#best-bet-locked');

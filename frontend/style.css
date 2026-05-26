@@ -881,6 +881,39 @@ canvas { max-width: 100%; }
 .saas-upgrade-btn:hover { transform: translateY(-1px); filter: brightness(1.1); }
 .saas-upgrade-btn:disabled { opacity: .65; cursor: progress; transform: none; }
 
+/* === MASTER MODE CARD (sidebar) — substitui upgrade CTA para admins ===
+   Estilo distinto (gradient âmbar/verde) que indica acesso privilegiado,
+   sem qualquer chamada para compra. */
+.saas-master-card {
+  display: flex; align-items: center; gap: 10px;
+  margin: 14px 4px 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(251,191,36,.16), rgba(20,184,94,.08));
+  border: 1px solid rgba(251,191,36,.35);
+  box-shadow: 0 0 18px rgba(251,191,36,.12);
+}
+.saas-master-card-icon {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #1a1300;
+  font-weight: 900; font-size: 16px;
+  flex-shrink: 0;
+}
+.saas-master-card-text { min-width: 0; }
+.saas-master-card-title {
+  font-size: 12px; font-weight: 900;
+  color: #fbbf24;
+  letter-spacing: 0.04em;
+}
+.saas-master-card-sub {
+  font-size: 10px;
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
 .saas-user {
   display: flex; align-items: center; gap: 10px;
   padding: 10px;

@@ -10,7 +10,14 @@
 (function () {
   'use strict';
 
-  const SECTIONS = [
+  /** Roles consideradas master-level (alinhado com backend/auth.js). */
+  const MASTER_ROLES = new Set(['master', 'admin', 'owner', 'super_admin']);
+
+  /**
+   * SIDEBAR DO CLIENTE (PREMIUM/FREE) — visível quando NÃO é master.
+   * Inclui "Minha Assinatura" porque é um produto de assinatura.
+   */
+  const CLIENT_SECTIONS = [
     {
       label: 'Cliente',
       items: [
@@ -28,9 +35,32 @@
         { id: 'quality',    label: 'Qualidade IA', icon: '◊', href: '/quality.html' },
       ],
     },
+  ];
+
+  /**
+   * SIDEBAR DO MASTER ADMIN — substitui o do cliente quando role ∈ MASTER_ROLES.
+   * NÃO inclui "Minha Assinatura" / "Plano" — master é dono, não cliente.
+   * NÃO inclui upgrade CTA. NÃO inclui /account.html.
+   */
+  const MASTER_SECTIONS = [
+    {
+      label: 'Operação',
+      items: [
+        { id: 'dashboard',  label: 'Dashboard',        icon: '◧', href: '/index.html' },
+        { id: 'football',   label: 'Jogos',            icon: '⚽', href: '/football.html' },
+        { id: 'analytics',  label: 'Analytics',        icon: '▲', href: '/analytics.html' },
+        { id: 'signals',    label: 'Sinais',           icon: '◆', href: '/signals.html' },
+      ],
+    },
+    {
+      label: 'Performance',
+      items: [
+        { id: 'results',    label: 'Resultados',   icon: '$', href: '/results.html' },
+        { id: 'quality',    label: 'Qualidade IA', icon: '◊', href: '/quality.html' },
+      ],
+    },
     {
       label: 'Master',
-      adminOnly: true,
       items: [
         { id: 'admin',          label: 'Painel',          icon: '◉', href: '/admin.html' },
         { id: 'admin-users',    label: 'Usuários',        icon: '◇', href: '/admin.html#users' },
@@ -41,9 +71,6 @@
       ],
     },
   ];
-
-  /** Roles consideradas master-level (alinhado com backend/auth.js). */
-  const MASTER_ROLES = new Set(['master', 'admin', 'owner', 'super_admin']);
 
   function getUser() {
     try {
@@ -93,8 +120,11 @@
     const user = getUser();
     const admin = isAdmin(user);
 
-    const sectionsHtml = SECTIONS
-      .filter((s) => !s.adminOnly || admin)
+    // Master tem a própria sidebar — sem "Minha Assinatura" / billing.
+    // Cliente (PREMIUM/FREE) usa a sidebar com Account.
+    const sections = admin ? MASTER_SECTIONS : CLIENT_SECTIONS;
+
+    const sectionsHtml = sections
       .map((s) => `
         <div class="saas-nav-group">
           <div class="saas-nav-title">${s.label}</div>
@@ -122,7 +152,7 @@
           ${sectionsHtml}
         </nav>
 
-        ${isFreeUser(user) ? `
+        ${(!admin && isFreeUser(user)) ? `
           <div class="saas-upgrade-card">
             <div class="promo-pill" style="margin-bottom:8px;">
               <span class="promo-pill-badge">OFERTA</span>
@@ -131,6 +161,15 @@
             <div class="saas-upgrade-title">💎 Desbloqueie o Premium</div>
             <div class="saas-upgrade-desc">Sinais sem delay, Melhor Aposta do Momento e análise IA completa.</div>
             <button type="button" class="saas-upgrade-btn" id="saas-upgrade-btn">Virar Premium — R$ 199,99 →</button>
+          </div>
+        ` : ''}
+        ${admin ? `
+          <div class="saas-master-card">
+            <div class="saas-master-card-icon">⚡</div>
+            <div class="saas-master-card-text">
+              <div class="saas-master-card-title">Modo Master</div>
+              <div class="saas-master-card-sub">Acesso total à plataforma</div>
+            </div>
           </div>
         ` : ''}
 
