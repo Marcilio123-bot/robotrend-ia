@@ -6,12 +6,18 @@
      clientNav  → usuário FREE / PREMIUM (sidebar comercial)
      masterNav  → administrador da plataforma (sidebar operacional)
 
-   A escolha do menu obedece, nesta ordem:
-     1) ?asClient=1                     → força clientNav (preview do master)
-     2) user.role ∈ MASTER_ROLES        → masterNav
-     3) location.pathname ∈ /admin|/ops → masterNav (consistência visual
-                                            dentro das páginas master)
-     4) caso contrário                  → clientNav
+   REGRA DE ESCOLHA — PATH-BASED (anti-duplicação):
+     1) path ∈ /admin|/ops              → masterNav  (kind=master)
+        (o auth-guard já bloqueou acesso pra não-master antes deste ponto)
+     2) ?asClient=1                     → clientNav  (kind=client)
+        (preview opcional, sobrescreve o cliente padrão)
+     3) qualquer outra rota             → clientNav  (kind=client)
+
+   Antes desta regra, masters em /index.html viam masterNav lá dentro,
+   misturando UI cliente com sidebar master. Agora a sidebar segue
+   estritamente a URL. Para masters acessarem o painel admin a partir
+   do client sidebar, injetamos um atalho "→ Painel Master" SOMENTE
+   quando o user logado tem role master/admin/owner.
 
    Uso: <div id="saas-nav" data-active="dashboard"></div>
         <script src="/js/saas-nav.js"></script>
@@ -135,23 +141,42 @@
   }
 
   /**
-   * Decide qual menu mostrar e qual "kind" identificar.
+   * Decide qual menu mostrar e qual "kind" identificar — PATH-BASED.
+   * A intenção é evitar mistura entre UI cliente e sidebar master numa
+   * mesma página. O atalho "Painel Master" aparece dentro do clientNav
+   * via injectMasterShortcut() quando o user logado é master, então o
+   * admin nunca perde acesso ao painel administrativo.
    * Retorna { nav, kind: 'client' | 'master' }.
    */
   function pickNav(user) {
-    // Override explícito: master quer ver a perspectiva cliente.
-    if (location.search.includes('asClient=1')) {
-      return { nav: clientNav, kind: 'client' };
+    const isMasterPath = /^\/(admin|ops)(\/|$|\.html?$)/i.test(location.pathname);
+    if (isMasterPath && !location.search.includes('asClient=1')) {
+      return { nav: masterNav, kind: 'master' };
     }
+    // Default: clientNav em qualquer outra rota (inclusive ?asClient=1
+    // dentro de /admin, para preview).
     if (isMasterRole(user)) {
-      return { nav: masterNav, kind: 'master' };
-    }
-    // Páginas master forçam masterNav (consistência visual). O auth-guard já
-    // bloqueou acesso de não-admin antes de chegarmos aqui.
-    if (/^\/(admin|ops)(\/|$|\.html?$)/i.test(location.pathname)) {
-      return { nav: masterNav, kind: 'master' };
+      // Master logado vendo a perspectiva cliente: injeta um atalho ao
+      // painel master no topo do clientNav (sem reescrever clientNav).
+      return { nav: injectMasterShortcut(clientNav), kind: 'client' };
     }
     return { nav: clientNav, kind: 'client' };
+  }
+
+  /**
+   * Injeta uma seção "Painel administrativo" no topo do clientNav,
+   * permitindo que o master volte rapidamente ao /admin a partir
+   * de qualquer página cliente. Não muta o array original.
+   */
+  function injectMasterShortcut(nav) {
+    const shortcut = {
+      section: 'Painel administrativo',
+      items: [
+        { id: 'go-master', label: 'Painel Master',    icon: '◉', href: '/admin' },
+        { id: 'go-ops',    label: 'Operacional IA',   icon: '▤', href: '/ops/live' },
+      ],
+    };
+    return [shortcut, ...nav];
   }
 
   /* ============================================================

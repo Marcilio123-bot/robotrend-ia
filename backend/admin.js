@@ -120,10 +120,16 @@ function buildAdminRoutes(app, db, requireAuth, requireAdmin) {
       if (VALID_PLANS.includes(plan)) patch.plan = plan;
       if (VALID_ROLES.includes(role)) patch.role = role;
       if (nameRaw) patch.name = nameRaw.slice(0, 60);
+      // active explícito (true/false). Não aceita string casual.
+      if (typeof body.active === 'boolean') patch.active = body.active;
 
       // Segurança: impede self-demote
       if (role && role !== 'admin' && req.user.id === req.params.id) {
         return res.status(400).json({ error: 'você não pode remover seu próprio role admin' });
+      }
+      // Segurança: impede self-block
+      if (patch.active === false && req.user.id === req.params.id) {
+        return res.status(400).json({ error: 'você não pode bloquear sua própria conta' });
       }
 
       const user = await db.updateUser(req.params.id, patch);

@@ -219,6 +219,15 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_users_plan        ON users(plan);
     `,
   },
+  {
+    // Coluna usada pelo admin pra bloquear/desbloquear usuários sem deletar.
+    // auth.js rejeita login com active=false. updateUser aceita patch.active.
+    name: '003_users_active',
+    sql: `
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+      CREATE INDEX IF NOT EXISTS idx_users_active ON users(active);
+    `,
+  },
 ];
 
 async function init() {
@@ -300,6 +309,7 @@ async function createUser({ email, name, passwordHash, plan = 'FREE', role = 'us
     const id = uuid();
     const user = {
       id, email, name, passwordHash, plan, role,
+      active: true,
       createdAt: new Date().toISOString(),
     };
     mem.users.set(id, user);
@@ -308,7 +318,7 @@ async function createUser({ email, name, passwordHash, plan = 'FREE', role = 'us
   }
   const id = uuid();
   await pool.query(
-    `INSERT INTO users (id,email,name,password_hash,plan,role) VALUES ($1,$2,$3,$4,$5,$6)`,
+    `INSERT INTO users (id,email,name,password_hash,plan,role,active) VALUES ($1,$2,$3,$4,$5,$6,TRUE)`,
     [id, email, name, passwordHash, plan, role]
   );
   return findUserById(id);
@@ -369,6 +379,8 @@ async function updateUser(userId, patch) {
     plan: 'plan',
     role: 'role',
     name: 'name',
+    active: 'active',
+    email: 'email',
   };
   const sets = [];
   const vals = [];
@@ -413,6 +425,8 @@ function mapUserRow(r) {
     id: r.id, email: r.email, name: r.name,
     passwordHash: r.password_hash,
     plan: r.plan, role: r.role,
+    // active default true para users criados antes da migration 003.
+    active: r.active == null ? true : !!r.active,
     resetToken: r.reset_token, resetTokenExpires: Number(r.reset_expires),
     createdAt: r.created_at,
   };

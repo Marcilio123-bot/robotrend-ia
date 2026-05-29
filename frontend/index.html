@@ -335,10 +335,11 @@
         const best = document.getElementById('best-bet-section');
         if (snap) snap.style.display = isMaster ? '' : 'none';
         if (best) best.style.display = isMaster ? 'none' : '';
-        // Reflete o modo no <body> (mantém em sincronia com saas-nav.js mesmo
-        // se o saas-nav booteu antes do user-ready chegar).
-        document.body.classList.remove('saas-mode-master', 'saas-mode-client');
-        document.body.classList.add(isMaster ? 'saas-mode-master' : 'saas-mode-client');
+        // NÃO mexemos em .saas-mode-master aqui — quem manda é o
+        // saas-nav.js + layouts/{client,master}-layout.js. Em /index.html
+        // o body fica sempre em saas-mode-client (a sidebar é cliente).
+        // O snapshot master é apenas um widget inline embedado na página
+        // cliente quando o user tem role master; não muda o "modo" da casca.
         if (isMaster) loadMasterSnapshot();
       }
 

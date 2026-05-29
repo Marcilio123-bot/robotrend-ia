@@ -115,6 +115,11 @@ function requireAuth(db) {
     if (!payload || !payload.sub) return res.status(401).json({ error: 'Token inválido' });
     const user = await db.findUserById(payload.sub);
     if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
+    // Usuários bloqueados pelo admin não podem usar nenhuma rota autenticada.
+    // O frontend deve interpretar 'USER_BLOCKED' como logout forçado.
+    if (user.active === false) {
+      return res.status(403).json({ error: 'Conta bloqueada pelo administrador', code: 'USER_BLOCKED' });
+    }
     req.user = sanitizeUser(user);
     next();
   };
@@ -368,6 +373,12 @@ function buildAuthRoutes(app, db) {
         console.log(`[AUTH LOGIN] FALHOU email="${email}" ip=${ip} motivo=INVALID_PASSWORD fails=${e.fails}`);
         logger.warn('login fail', { email, ip, fails: e.fails });
         return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+      }
+      // Conta bloqueada pelo admin — credenciais corretas, mas acesso negado.
+      if (user.active === false) {
+        console.log(`[AUTH LOGIN] BLOQUEADO email="${email}" ip=${ip} motivo=USER_BLOCKED`);
+        logger.warn('login blocked', { email, userId: user.id });
+        return res.status(403).json({ error: 'Conta bloqueada pelo administrador', code: 'USER_BLOCKED' });
       }
       if (bruteforceEnabled) bruteforce.recordSuccess(bfKey);
 

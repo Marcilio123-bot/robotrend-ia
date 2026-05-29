@@ -81,6 +81,20 @@
   // Roda guard ANTES de qualquer DOM ready, sincronamente.
   if (!runGuard()) return;
 
+  /**
+   * IMPORTANTE — separação total client/master:
+   *   - Este layout SÓ ativa init() em páginas master (declaradas via
+   *     meta robotrend-guard="admin", meta robotrend-layout="master" OU
+   *     path /admin* | /ops*). Em páginas cliente o script carrega mas
+   *     fica inerte — sem aplicar saas-mode-master, sem mountar topbar,
+   *     sem carregar ops-status.
+   *   - Quem identifica páginas master é shouldGuard(); reusamos.
+   *   - Antes desse gate, o master-topbar e o body class apareciam em
+   *     /index.html (cliente) quando o user era admin, causando a
+   *     duplicação visual com a sidebar do saas-nav.
+   */
+  const IS_MASTER_PAGE = shouldGuard();
+
   /* ============================================================
      BODY MODE
      ============================================================ */
@@ -162,29 +176,38 @@
   }
 
   /* ============================================================
-     INIT
+     INIT — só roda em páginas master, evitando duplicação visual
+     com o saas-nav.js em /index.html, /signals.html, etc.
      ============================================================ */
   function init() {
+    if (!IS_MASTER_PAGE) return;
     applyBodyMode();
     mountMasterBar();
     ensureOpsWidget();
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
+  if (IS_MASTER_PAGE) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+
+    // Re-aplica modo quando a role do user é confirmada (ex: depois do /me).
+    // Sai de fininho se o user confirmado NÃO for master — auth-guard já
+    // está redirecionando, mas duplicamos a defesa.
+    window.addEventListener('robotrend:user-ready', (ev) => {
+      const role = ev.detail?.role;
+      if (role && !MASTER_ROLES.has(String(role).toLowerCase())) {
+        location.replace(HOME);
+        return;
+      }
+      applyBodyMode();
+    });
   }
 
-  // Re-aplica modo quando a role do user é confirmada (ex: depois do /me).
-  window.addEventListener('robotrend:user-ready', (ev) => {
-    const role = ev.detail?.role;
-    if (role && !MASTER_ROLES.has(String(role).toLowerCase())) {
-      location.replace(HOME);
-      return;
-    }
-    applyBodyMode();
-  });
-
-  window.RobotrendMasterLayout = { init, isMasterRole, getCachedUser };
+  window.RobotrendMasterLayout = {
+    init, isMasterRole, getCachedUser,
+    isMasterPage: () => IS_MASTER_PAGE,
+  };
 })();

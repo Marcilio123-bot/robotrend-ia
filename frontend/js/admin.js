@@ -47,7 +47,8 @@
     if (plan === 'VIP') return '<span class="plan-badge vip">VIP</span>';
     return '<span class="plan-badge free">FREE</span>';
   }
-  function statusBadge(active) {
+  function statusBadge(active, isBlocked) {
+    if (isBlocked) return '<span class="plan-badge inactive" style="background:rgba(255,85,102,.12);color:#ffadb5;border-color:rgba(255,85,102,.4);">⛔ BLOQUEADO</span>';
     return active
       ? '<span class="plan-badge active">● ATIVO</span>'
       : '<span class="plan-badge inactive">○ inativo</span>';
@@ -136,9 +137,10 @@
     }
     body.innerHTML = users.map(u => {
       const isMe = u.id === me.id;
-      const active = !!(u.plan === 'PREMIUM' || u.plan === 'VIP'); // todos aqui são ativos por definição
+      const isBlocked = u.active === false;
+      const active = !isBlocked;
       return `
-        <tr data-user-id="${u.id}">
+        <tr data-user-id="${u.id}" ${isBlocked ? 'style="opacity:.55;"' : ''}>
           <td class="py-3 px-4 font-mono text-xs">${escapeHtml(u.email)}${isMe ? ' <span style="color:var(--brand);">(você)</span>' : ''}</td>
           <td class="py-3 px-4">${escapeHtml(u.name || '—')}</td>
           <td class="py-3 px-4">
@@ -154,11 +156,12 @@
             </select>
           </td>
           <td class="py-3 px-4 text-xs" style="color: var(--muted);">${fmtDate(u.createdAt)}</td>
-          <td class="py-3 px-4">${statusBadge(active)}</td>
+          <td class="py-3 px-4">${statusBadge(active, isBlocked)}</td>
           <td class="py-3 px-4">
             <div class="flex gap-1 flex-wrap">
               <button class="btn-ghost btn-save text-xs" data-id="${u.id}">Salvar</button>
               <button class="btn-ghost btn-reset-pw text-xs" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Senha</button>
+              ${isMe ? '' : `<button class="btn-ghost btn-toggle-active text-xs" data-id="${u.id}" data-email="${escapeHtml(u.email)}" data-active="${isBlocked ? 'false' : 'true'}">${isBlocked ? 'Desbloquear' : 'Bloquear'}</button>`}
               ${isMe ? '' : `<button class="btn-ghost btn-del text-xs" data-id="${u.id}" data-email="${escapeHtml(u.email)}" style="color:#ff6677;">Remover</button>`}
             </div>
           </td>
@@ -177,9 +180,10 @@
     }
     body.innerHTML = users.map(u => {
       const lastSeen = u.updatedAt || u.lastSeenAt || u.createdAt;
+      const isBlocked = u.active === false;
       return `
-        <tr data-user-id="${u.id}">
-          <td class="py-3 px-4 font-mono text-xs">${escapeHtml(u.email)}</td>
+        <tr data-user-id="${u.id}" ${isBlocked ? 'style="opacity:.55;"' : ''}>
+          <td class="py-3 px-4 font-mono text-xs">${escapeHtml(u.email)} ${isBlocked ? statusBadge(false, true) : ''}</td>
           <td class="py-3 px-4">${escapeHtml(u.name || '—')}</td>
           <td class="py-3 px-4 text-xs" style="color: var(--muted);">${fmtDate(u.createdAt)}</td>
           <td class="py-3 px-4 text-xs" style="color: var(--muted);">${relTime(lastSeen)}</td>
@@ -192,6 +196,7 @@
           <td class="py-3 px-4">
             <div class="flex gap-1 flex-wrap">
               <button class="btn-ghost btn-reset-pw text-xs" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Senha</button>
+              <button class="btn-ghost btn-toggle-active text-xs" data-id="${u.id}" data-email="${escapeHtml(u.email)}" data-active="${isBlocked ? 'false' : 'true'}">${isBlocked ? 'Desbloquear' : 'Bloquear'}</button>
               <button class="btn-ghost btn-del text-xs" data-id="${u.id}" data-email="${escapeHtml(u.email)}" style="color:#ff6677;">Remover</button>
             </div>
           </td>
@@ -233,15 +238,17 @@
     }
     body.innerHTML = users.map(u => {
       const isMe = u.id === me.id;
+      const isBlocked = u.active === false;
       return `
-        <tr data-user-id="${u.id}">
-          <td class="py-3 px-4 font-mono text-xs">${escapeHtml(u.email)}${isMe ? ' <span style="color:var(--brand);">(você)</span>' : ''}</td>
+        <tr data-user-id="${u.id}" ${isBlocked ? 'style="opacity:.55;"' : ''}>
+          <td class="py-3 px-4 font-mono text-xs">${escapeHtml(u.email)}${isMe ? ' <span style="color:var(--brand);">(você)</span>' : ''} ${isBlocked ? statusBadge(false, true) : ''}</td>
           <td class="py-3 px-4">${escapeHtml(u.name || '—')}</td>
           <td class="py-3 px-4">${planBadge(u.plan, u.role)}</td>
           <td class="py-3 px-4 text-xs" style="color: var(--muted);">${fmtDate(u.createdAt)}</td>
           <td class="py-3 px-4">
             <div class="flex gap-1 flex-wrap">
               <button class="btn-ghost btn-reset-pw text-xs" data-id="${u.id}" data-email="${escapeHtml(u.email)}">Senha</button>
+              ${isMe ? '' : `<button class="btn-ghost btn-toggle-active text-xs" data-id="${u.id}" data-email="${escapeHtml(u.email)}" data-active="${isBlocked ? 'false' : 'true'}">${isBlocked ? 'Desbloquear' : 'Bloquear'}</button>`}
               ${isMe ? '' : `<button class="btn-ghost btn-del text-xs" data-id="${u.id}" data-email="${escapeHtml(u.email)}" style="color:#ff6677;">Remover</button>`}
             </div>
           </td>
@@ -294,6 +301,33 @@
           await loadUsers();
           loadOverview();
         } catch (e) { alert(e.message); }
+      });
+    });
+
+    // Bloquear / Desbloquear (toggle active). O backend rejeita login com
+    // active=false (USER_BLOCKED). updateUser aceita patch.active boolean.
+    body.querySelectorAll('.btn-toggle-active').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        const email = btn.dataset.email;
+        const wasActive = btn.dataset.active === 'true';
+        const willBlock = wasActive; // se estava ativo, vamos bloquear
+        const verb = willBlock ? 'bloquear' : 'desbloquear';
+        if (!confirm(`Tem certeza que deseja ${verb} ${email}?`)) return;
+        try {
+          btn.disabled = true;
+          const original = btn.textContent;
+          btn.textContent = '⏳';
+          await RobotrendAuth.api(`/api/admin/users/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ active: !willBlock }),
+          });
+          await loadUsers();
+          window.RobotrendToast?.success?.(`Usuário ${email} ${willBlock ? 'bloqueado' : 'desbloqueado'}.`);
+        } catch (e) {
+          alert(e.message);
+          btn.disabled = false;
+        }
       });
     });
   }

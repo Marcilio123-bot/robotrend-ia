@@ -35,11 +35,23 @@
     const data = ct.includes('application/json') ? await res.json() : await res.text();
     if (!res.ok) {
       const msg = (data && data.error) || res.statusText;
+      const code = data && data.code;
       if (res.status === 401 && /usuário não encontrado|não autenticado|token inválido/i.test(msg)) {
         clearSession();
       }
+      // Conta bloqueada pelo admin — limpa sessão e força redirect ao login
+      // com aviso (a página de login lê ?reason=blocked para mostrar mensagem).
+      if (res.status === 403 && code === 'USER_BLOCKED') {
+        clearSession();
+        try {
+          if (!location.pathname.startsWith('/login')) {
+            location.replace('/login.html?reason=blocked');
+          }
+        } catch (_) {}
+      }
       const err = new Error(msg);
       err.payload = data;
+      err.code = code;
       err.status = res.status;
       throw err;
     }

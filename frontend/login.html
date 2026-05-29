@@ -59,6 +59,22 @@
     const errEl = document.getElementById('err');
     const btn   = form.querySelector('button[type="submit"]');
 
+    // Mensagens contextuais por query param (?reason=...). Atualmente:
+    //   blocked → admin bloqueou a conta; explica que precisa contatar suporte.
+    (function showReasonHint() {
+      const reason = new URLSearchParams(location.search).get('reason');
+      if (!reason) return;
+      const messages = {
+        blocked: 'Sua conta foi bloqueada pelo administrador. Entre em contato com o suporte.',
+        session: 'Sua sessão expirou. Faça login novamente.',
+        denied:  'Você não tem permissão para acessar essa área.',
+      };
+      const msg = messages[reason];
+      if (!msg) return;
+      errEl.textContent = msg;
+      errEl.classList.remove('hidden');
+    })();
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       errEl.classList.add('hidden');
@@ -83,9 +99,10 @@
         const next = new URLSearchParams(location.search).get('next') || '/';
         location.href = next;
       } catch (ex) {
-        const code = ex?.payload?.error || ex?.message || '';
+        const code = ex?.payload?.code || ex?.payload?.error || ex?.message || '';
         let msg = 'Erro ao entrar.';
-        if (/INVALID_CREDENTIALS|credenciais/i.test(code)) msg = 'Email ou senha incorretos.';
+        if (code === 'USER_BLOCKED')                       msg = 'Sua conta foi bloqueada pelo administrador. Entre em contato com o suporte.';
+        else if (/INVALID_CREDENTIALS|credenciais/i.test(code)) msg = 'Email ou senha incorretos.';
         else if (/EMAIL_PASSWORD_REQUIRED/i.test(code))    msg = 'Informe email e senha.';
         else if (ex?.status === 429)                         msg = 'Muitas tentativas. Aguarde um momento.';
         else if (code) msg = code;
