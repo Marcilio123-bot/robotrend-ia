@@ -775,7 +775,7 @@ app.get('/api/admin/ops', async (req, res) => {
      - live.tick       (freshness + consensus)
      - bot.runOnce     (checkFn + pre-emit)
    ============================================================ */
-app.get('/api/admin/match-debug', async (req, res) => {
+app.get('/api/admin/match-debug', auth.requireAuth(db), auth.requireAdmin, async (req, res) => {
   try {
     const af = require('./services/footballProvider');
     const poller = getPoller();

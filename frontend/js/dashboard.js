@@ -329,6 +329,14 @@
     window.__RT_DEBUG__?.tickRender?.('match-grid');
     // Observability: emite resumo da render
     try { window.RobotrendBus?.emit('robotrend:matches-render', { inserts, updates, skips, total: safe.length }); } catch (_) {}
+
+    // Quando há matches mas o feed de sinais ainda está vazio, repintamos
+    // o painel de sinais para que ele caia no preview de análises IA
+    // (anti-empty UX). Idempotente: se já há sinais, renderBetSignals
+    // mantém o conteúdo atual.
+    if (safe.length && !lastBetSignals.length) {
+      try { renderBetSignals(); } catch (_) {}
+    }
   }
 
   /* ============================================================
@@ -400,15 +408,77 @@
     `;
   }
 
+  /**
+   * Renderiza o feed de sinais ao vivo. Política do painel:
+   *   - Há sinais válidos → exibe top 6.
+   *   - Sem sinais MAS há matches ao vivo → exibe um preview compacto
+   *     com pressão/momentum/BTTS/IA% para nunca aparecer vazio.
+   *   - Sem nada → ainda assim mostra "Aguardando…" (último recurso).
+   */
   function renderBetSignals() {
     const host = $('#live-signals');
     if (!host) return;
     const top = lastBetSignals.slice(0, 6);
-    if (!top.length) {
+    if (top.length) {
+      host.innerHTML = top.map(betSignalCardHTML).join('');
+      return;
+    }
+    // Sem sinais — desce para preview de análises IA inline (anti-empty UX).
+    const previewMatches = filterValidMatches(lastMatches).slice(0, 6);
+    if (!previewMatches.length) {
       host.innerHTML = `<div class="col-span-full saas-card saas-empty">Aguardando o próximo sinal…</div>`;
       return;
     }
-    host.innerHTML = top.map(betSignalCardHTML).join('');
+    const byId = new Map(lastAnalyses.map((a) => [a.matchId, a]));
+    const intro = `
+      <div class="col-span-full" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:4px;">
+        <span class="badge live" style="background:rgba(34,197,94,.16);color:#22c55e;border:1px solid rgba(34,197,94,.30);">
+          📊 Análises IA em andamento
+        </span>
+        <span class="text-[11px]" style="color:var(--muted);">
+          ${previewMatches.length} partida${previewMatches.length === 1 ? '' : 's'} sob monitoramento — sinais operáveis aparecerão aqui em tempo real.
+        </span>
+        ${isMasterUser()
+          ? `<a href="/football.html" class="badge" style="margin-left:auto;background:linear-gradient(135deg,#ffd166,#ffb547);color:#2a1a05;font-weight:900;letter-spacing:1px;">
+              MASTER • abrir scanner completo →
+            </a>`
+          : ''}
+      </div>`;
+    host.innerHTML = intro + previewMatches.map((m) => analysisPreviewCardHTML(m, byId.get(m.id))).join('');
+  }
+
+  /**
+   * Card compacto que substitui "Aguardando sinal" quando há matches ao vivo
+   * mas nenhum sinal acima do threshold. Mostra mini stats + IA% sem prometer
+   * uma aposta — apenas dá a sensação de painel vivo.
+   */
+  function analysisPreviewCardHTML(match, a) {
+    const sc = match.score || { home: 0, away: 0 };
+    const conf = a?.confidence ?? 0;
+    const press = a?.pressure ?? 0;
+    const verdict = a?.verdict || 'IA em análise…';
+    return `
+      <article class="saas-card" style="border-left:3px solid #06b6d4;opacity:.92;">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <span class="badge live" style="background:rgba(6,182,212,.18); color:#06b6d4; border:1px solid rgba(6,182,212,.30);">Análise IA</span>
+            <span class="badge" style="background:var(--surface-2);color:var(--muted);">monitorando</span>
+          </div>
+          <span class="text-[11px]" style="color: var(--muted); font-family:'JetBrains Mono', monospace;">${esc(match.minute || 0)}'</span>
+        </div>
+        <div class="text-sm font-bold mb-1">${esc(match.home)} <span style="color:var(--muted);">×</span> ${esc(match.away)}</div>
+        <div class="text-[11px] mb-3" style="color: var(--muted);">${esc(match.league || 'Live')} · ${esc(sc.home)}–${esc(sc.away)}</div>
+        <div class="grid grid-cols-4 gap-2 text-center mt-2">
+          <div><div class="text-[10px]" style="color:var(--muted);">Pressão</div><div class="font-mono font-bold">${press}</div></div>
+          <div><div class="text-[10px]" style="color:var(--muted);">IA</div><div class="font-mono font-bold">${conf}%</div></div>
+          <div><div class="text-[10px]" style="color:var(--muted);">Esc</div><div class="font-mono font-bold">${esc(match.corners ?? 0)}</div></div>
+          <div><div class="text-[10px]" style="color:var(--muted);">Fin</div><div class="font-mono font-bold">${esc(match.shots ?? 0)}</div></div>
+        </div>
+        <div class="mt-3 text-[11px]" style="color: var(--text-2); line-height:1.5;">
+          🧠 ${esc(verdict)}
+        </div>
+      </article>
+    `;
   }
 
   /* ============================================================
@@ -609,7 +679,13 @@
   }
   async function loadBetSignals() {
     try {
-      const r = await fetch('/api/football/bet-signals?limit=6&minConfidence=70');
+      // Master vê o pipeline inteiro (threshold baixo) — frontend rotula
+      // sinais abaixo do limite com badge. Cliente comum vê apenas
+      // sinais operáveis (>=70%) como antes.
+      const isMaster = isMasterUser();
+      const min = isMaster ? 0 : 70;
+      const limit = isMaster ? 12 : 6;
+      const r = await fetch(`/api/football/bet-signals?limit=${limit}&minConfidence=${min}`);
       if (!r.ok) return;
       const data = await r.json();
       lastBetSignals = data.signals || [];

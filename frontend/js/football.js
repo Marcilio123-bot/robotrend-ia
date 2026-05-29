@@ -69,6 +69,20 @@
     markets: new Set(loadJSON('rt:fb:markets', [])),
     minConfidence: Number(loadJSON('rt:fb:minConf', 70)),
     profile: loadJSON('rt:fb:profile', 'balanced'),
+    /**
+     * showAll: bypass dos filtros de confiança/mercado/perfil.
+     *   - Cliente regular: false (toggle manual)
+     *   - Master/admin: força true por default (mas pode desligar)
+     *   - Demo mode: força true (provider=demo é só visualização)
+     * Quando ativo, sinais abaixo do threshold aparecem com badge LOW
+     * CONFIDENCE / BELOW TARGET / FILTERED em vez de serem escondidos.
+     * O dashboard nunca pode parecer vazio se há matches enriquecidos.
+     */
+    showAll: Boolean(loadJSON('rt:fb:showAll', false)),
+    /** Role do user logado (resolvida via RobotrendUser / RobotrendAuth). */
+    role: '',
+    /** Provider ativo (preenchido por feedMeta) — usado para auto-relax em demo. */
+    activeProvider: '',
     // Signals indexados por matchId → array de signals recentes (max 5)
     signalsByMatch: new Map(),
     // Toasts: total emitidos & filtrados (debug)
@@ -682,6 +696,59 @@
   }
 
   // ============================================================
+  //  ROLE / SHOW-ALL — controles de UX por perfil
+  // ============================================================
+  /** Roles com privilégios de "ver tudo" mesmo abaixo do threshold. */
+  const MASTER_ROLES_FB = new Set(['master', 'admin', 'owner', 'super_admin']);
+
+  function resolveCurrentRole() {
+    try {
+      const us = window.RobotrendUser?.get?.();
+      if (us) return String(us.role || us.user?.role || '').toLowerCase();
+      const u = window.RobotrendAuth?.getUser?.();
+      return String(u?.role || '').toLowerCase();
+    } catch { return ''; }
+  }
+  function isMasterRoleFb(role) {
+    return MASTER_ROLES_FB.has(String(role || '').toLowerCase());
+  }
+  function isDemoActive() {
+    return String(state.activeProvider || '').toLowerCase() === 'demo';
+  }
+  /**
+   * Master e modo demo SEMPRE veem tudo. Cliente regular respeita o toggle
+   * "Mostrar tudo" persistido. Use isShowAllActive() em renderSignalBoard
+   * e collectSignals para decidir se aplica filtros rígidos.
+   */
+  function isShowAllActive() {
+    if (isMasterRoleFb(state.role)) return true;
+    if (isDemoActive()) return true;
+    return !!state.showAll;
+  }
+  function setShowAll(v) {
+    state.showAll = !!v;
+    saveJSON('rt:fb:showAll', state.showAll);
+    updateShowAllButton();
+    render();
+  }
+  function updateShowAllButton() {
+    const btn = document.getElementById('btn-show-all');
+    if (!btn) return;
+    const forced = isMasterRoleFb(state.role) || isDemoActive();
+    const active = isShowAllActive();
+    btn.classList.toggle('active', active);
+    btn.disabled = forced; // master/demo não desligam
+    btn.title = forced
+      ? (isDemoActive()
+          ? 'Modo demo: análises completas sempre visíveis'
+          : 'Master admin: análises completas sempre visíveis')
+      : (active
+          ? 'Mostrando análises IA completas (inclusive abaixo do threshold)'
+          : 'Apenas sinais operáveis acima do threshold');
+    btn.textContent = active ? '👁 Mostrar tudo' : '🎯 Apenas operáveis';
+  }
+
+  // ============================================================
   //  MERCADOS / RADAR — filtro de operação
   // ============================================================
   /** true se o mercado está habilitado (vazio = todos). */
@@ -690,13 +757,39 @@
     return state.markets.has(market);
   }
 
-  /** true se um signal pode passar pelo filtro atual de mercados + confiança. */
+  /**
+   * Avaliação do sinal contra os filtros atuais. Devolve sempre um objeto
+   * com:
+   *   - allowed: true se o sinal passa em modo cliente strict
+   *   - reasons: lista de chaves explicando por que foi filtrado, usadas
+   *     para badges no modo "Mostrar tudo" / master.
+   * Reasons possíveis:
+   *   - 'confidence_low'    confidence < state.minConfidence
+   *   - 'market_mismatch'   sinal não bate com nenhum mercado ativo
+   *   - 'profile_filtered'  perfil conservador/agressivo rejeita
+   *   - 'no_edge'           IA marcou sem edge (s.noEdge / s.edge<=0)
+   */
+  function evaluateSignal(s) {
+    const reasons = [];
+    if (!s) return { allowed: false, reasons: ['invalid'] };
+    if ((s.confidence || 0) < state.minConfidence) reasons.push('confidence_low');
+    if (state.markets.size) {
+      const markets = s.markets || (s.market ? [s.market] : []);
+      if (!markets.some((m) => state.markets.has(m))) reasons.push('market_mismatch');
+    }
+    if (state.profile === 'conservative') {
+      const p = s.profile || 'balanced';
+      if (p !== 'conservative' && p !== 'balanced') reasons.push('profile_filtered');
+    } else if (state.profile === 'aggressive' && (s.confidence || 0) < 50) {
+      reasons.push('profile_filtered');
+    }
+    if (s.noEdge === true || (typeof s.edge === 'number' && s.edge <= 0)) reasons.push('no_edge');
+    return { allowed: reasons.length === 0, reasons };
+  }
+
+  /** true se um signal pode passar pelo filtro atual (compat). */
   function signalAllowed(s) {
-    if (!s) return false;
-    if ((s.confidence || 0) < state.minConfidence) return false;
-    if (!state.markets.size) return true;
-    const markets = s.markets || [];
-    return markets.some((m) => state.markets.has(m));
+    return evaluateSignal(s).allowed;
   }
 
   function onSignalFire(s) {
@@ -746,12 +839,23 @@
     card.appendChild(b);
   }
 
-  /** Retorna o sinal mais forte e permitido pelo filtro de mercados para um match. */
+  /**
+   * Retorna o sinal mais forte e permitido pelo filtro de mercados para um
+   * match. Em modo "Mostrar tudo" (master/demo/toggle) cai para o sinal
+   * de maior confiança mesmo abaixo do threshold — para que os mini-cards
+   * exibam algo informativo ao invés de ficarem "—".
+   */
   function topSignalFor(matchId) {
     const arr = state.signalsByMatch.get(String(matchId)) || [];
+    if (!arr.length) return null;
     const allowed = arr.filter(signalAllowed);
-    if (!allowed.length) return null;
-    return allowed.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
+    if (allowed.length) {
+      return allowed.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
+    }
+    if (isShowAllActive()) {
+      return arr.slice().sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
+    }
+    return null;
   }
 
   function updateRadarStatus() {
@@ -1313,13 +1417,16 @@
       const totalEnriched = Array.from(state.matches.values()).filter((m) => m.enriched).length;
       const filterActive = !!(state.filters.search || state.filters.scored || state.filters.minute || state.filters.pressureOnly || state.filters.onlyFavorites || state.filters.bttsNear || state.activeLeague);
       const tech = buildTechReason({ totalLive, totalEnriched, filterActive });
+      const inlineMatches = totalLive ? buildInlineMatchGridHTML() : '';
       root.innerHTML = `
         <div class="fb-empty" style="text-align:center;padding:28px 16px">
           <div style="font-size:32px;margin-bottom:8px">${tech.icon}</div>
           <strong>${tech.title}</strong><br>
           <span style="opacity:.85">${tech.body}</span>
           ${tech.action ? `<br><button class="btn btn-ghost" style="margin-top:10px" onclick="document.getElementById('btn-refresh').click()">${tech.action}</button>` : ''}
-        </div>`;
+        </div>
+        ${inlineMatches}`;
+      wireInlineMatchCards(root);
       return;
     }
     root.innerHTML = arr.map((m) => matchCardHTML(m)).join('');
@@ -1375,23 +1482,25 @@
     bumpRuntime({ enriched: true });
   }
 
+  /**
+   * Coleta sinais para o board.
+   *   - cliente strict: devolve apenas os que passam em todos os filtros
+   *   - master/showAll/demo: devolve TODOS os sinais com flag _filterReasons
+   *     populada (vazia se passa). O caller decide rotular como
+   *     LOW CONFIDENCE / FILTERED etc.
+   *
+   * Filtros estruturais (liga selecionada, busca, favoritos, minute) seguem
+   * sempre ativos — afinal o user pediu para focar nesse subset.
+   */
   function collectSignals() {
+    const showAll = isShowAllActive();
     const out = [];
     const minConf = state.runtime.fallbackMode
       ? Math.min(state.minConfidence, 35)
       : state.minConfidence;
     for (const m of state.matches.values()) {
       if (!m.enriched || !Array.isArray(m.signals)) continue;
-      // aplica filtros do usuário
-      let allowed = m.signals.slice();
-      if (state.markets.size) allowed = allowed.filter((s) => state.markets.has(s.market));
-      if (minConf) allowed = allowed.filter((s) => s.confidence >= minConf);
-      if (state.profile === 'conservative') {
-        allowed = allowed.filter((s) => s.profile === 'conservative' || s.profile === 'balanced');
-      } else if (state.profile === 'aggressive') {
-        allowed = allowed.filter((s) => s.confidence >= 50);
-      }
-      // filtros adicionais já existentes (favoritos, liga, busca, minuto)
+      // filtros estruturais — aplicados SEMPRE (mesmo em showAll)
       if (state.activeLeague && (m.league?.id || m.league?.name) !== state.activeLeague) continue;
       if (state.filters.search) {
         const q = state.filters.search.toLowerCase();
@@ -1402,21 +1511,63 @@
         const [a, b] = state.filters.minute.split('-').map(Number);
         if (!(m.minute >= a && m.minute <= b)) continue;
       }
-      for (const s of allowed) out.push(s);
+      for (const s of m.signals) {
+        const reasons = [];
+        if ((s.confidence || 0) < minConf) reasons.push('confidence_low');
+        if (state.markets.size) {
+          const mk = s.market;
+          if (mk && !state.markets.has(mk)) reasons.push('market_mismatch');
+        }
+        if (state.profile === 'conservative'
+            && s.profile && s.profile !== 'conservative' && s.profile !== 'balanced') {
+          reasons.push('profile_filtered');
+        } else if (state.profile === 'aggressive' && (s.confidence || 0) < 50) {
+          reasons.push('profile_filtered');
+        }
+        if (s.noEdge === true || (typeof s.edge === 'number' && s.edge <= 0)) reasons.push('no_edge');
+        if (reasons.length && !showAll) continue;
+        // Clona para não mutar estado; anexa motivo p/ badges
+        out.push({ ...s, _filterReasons: reasons });
+      }
     }
     out.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
     return out;
   }
 
+  /**
+   * Renderiza o painel de sinais (decision board).
+   *   1) Master/demo/showAll → mostra TODOS os sinais coletados com badge
+   *      por motivo de filtro (LOW CONFIDENCE, FILTERED, etc).
+   *   2) Cliente strict → mostra apenas operáveis; quando vazio, em vez de
+   *      "Selecione/aguarde", desce para um GRID DE MATCH CARDS com mini
+   *      analytics (pressão, momentum, BTTS, projeções) para que o painel
+   *      nunca pareça morto.
+   */
   function renderSignalBoard(root) {
     const all = collectSignals();
     const totalEnriched = Array.from(state.matches.values()).filter((m) => m.enriched).length;
     const totalLive = state.matches.size;
+    const showAll = isShowAllActive();
+
+    // Header sumário do board — mostra contagem por estado quando em
+    // showAll, ajudando master a entender o pipeline rapidamente.
+    const operable = all.filter((s) => !s._filterReasons || !s._filterReasons.length).length;
+    const filtered = all.length - operable;
+    const headerHtml = (all.length || totalEnriched)
+      ? `<div class="sig-board-head">
+          <span class="sig-board-pill">🎯 ${operable} operáveis</span>
+          ${showAll && filtered ? `<span class="sig-board-pill warn">⚠ ${filtered} abaixo do filtro</span>` : ''}
+          ${totalEnriched ? `<span class="sig-board-pill ghost">${totalEnriched}/${totalLive} jogos enriquecidos</span>` : ''}
+          ${isMasterRoleFb(state.role) ? `<span class="sig-board-pill master">MASTER • ver tudo</span>` : ''}
+        </div>` : '';
 
     if (!all.length) {
+      // Nada que mostrar pelo board → cai para o grid de matches inline (nunca vazio).
       const filterActive = state.markets.size > 0 || state.profile !== 'balanced' || state.minConfidence > 50;
       const techReason = buildTechReason({ totalLive, totalEnriched, filterActive });
+      const inlineMatches = buildInlineMatchGridHTML();
       root.innerHTML = `
+        ${headerHtml}
         <div class="sig-empty">
           <div style="font-size:32px;margin-bottom:8px">${techReason.icon}</div>
           <strong>${techReason.title}</strong><br>
@@ -1426,14 +1577,113 @@
             ${state.profile} · ≥${state.minConfidence}%
           </span>
           ${techReason.action ? `<br><button class="btn btn-ghost" style="margin-top:10px" onclick="document.getElementById('btn-refresh').click()">${techReason.action}</button>` : ''}
-        </div>`;
+          ${!showAll && totalEnriched ? `<br><button class="btn btn-ghost" style="margin-top:8px" onclick="window.RobotrendFB && window.RobotrendFB.setShowAll(true)">👁 Mostrar análises IA completas</button>` : ''}
+        </div>
+        ${inlineMatches}
+      `;
+      wireInlineMatchCards(root);
       return;
     }
 
-    root.innerHTML = `<div class="sig-grid">${all.map(signalCardHTML).join('')}</div>`;
+    root.innerHTML = `
+      ${headerHtml}
+      <div class="sig-grid">${all.map(signalCardHTML).join('')}</div>
+    `;
     $$('.sig-card', root).forEach((el) => {
       el.addEventListener('click', () => selectMatch(el.dataset.mid));
     });
+  }
+
+  /**
+   * Constrói um grid inline com os match cards "leves" (mini analytics)
+   * usado em duas situações:
+   *   - sigBoard ficou vazio mas há matches enriquecidos
+   *   - detail panel sem activeMatchId
+   * Mostra: liga, score, minuto, pressão, momentum, BTTS%, top signal (se houver)
+   */
+  function buildInlineMatchGridHTML() {
+    const matches = Array.from(state.matches.values());
+    if (!matches.length) return '';
+    const enriched = matches.filter((m) => m.enriched);
+    // Prioriza enriquecidos com sinais, depois enriquecidos sem sinal, depois cru.
+    const sorted = matches.slice().sort((a, b) => {
+      const sa = (a.signals?.length || 0);
+      const sb = (b.signals?.length || 0);
+      if (sa !== sb) return sb - sa;
+      const ea = a.enriched ? 1 : 0;
+      const eb = b.enriched ? 1 : 0;
+      if (ea !== eb) return eb - ea;
+      const ga = (a.score?.home || 0) + (a.score?.away || 0);
+      const gb = (b.score?.home || 0) + (b.score?.away || 0);
+      return gb - ga;
+    });
+    const top = sorted.slice(0, 12);
+    return `
+      <div class="sig-board-head" style="margin-top:14px">
+        <span class="sig-board-pill ghost">📊 Análises IA em andamento</span>
+        <span class="sig-board-pill ghost">${enriched.length}/${matches.length} jogos enriquecidos</span>
+      </div>
+      <div class="sig-mini-grid">${top.map(miniMatchCardHTML).join('')}</div>
+    `;
+  }
+
+  function wireInlineMatchCards(root) {
+    $$('.sig-mini-card', root).forEach((el) => {
+      el.addEventListener('click', () => selectMatch(el.dataset.mid));
+    });
+  }
+
+  function miniMatchCardHTML(m) {
+    const press = Math.round(m.perMinute?.pressureIndex || 0);
+    const mom = m.momentum || { home: 50, away: 50 };
+    const btts = Math.round(m.bttsLikelihood || 0);
+    const corners = m.stats?.corners?.total ?? '—';
+    const shots = m.stats?.shots?.total ?? '—';
+    const top = topSignalFor(m.id);
+    const sigPill = top
+      ? `<span class="sig-mini-pill ok">${top.classification?.emoji || '⚡'} ${top.confidence}%</span>`
+      : (m.signals?.length
+          ? `<span class="sig-mini-pill warn">${m.signals.length} análise${m.signals.length > 1 ? 's' : ''} IA</span>`
+          : `<span class="sig-mini-pill ghost">aguardando setup</span>`);
+    return `
+      <article class="sig-mini-card" data-mid="${escapeHtml(String(m.id))}">
+        <header>
+          <span class="lg">${escapeHtml(m.league?.name || '')}</span>
+          <span class="mn">${m.minute || 0}'</span>
+        </header>
+        <div class="tt">
+          <span class="tm">${escapeHtml(m.home || '—')}</span>
+          <span class="sc">${m.score?.home ?? 0} – ${m.score?.away ?? 0}</span>
+          <span class="tm rt">${escapeHtml(m.away || '—')}</span>
+        </div>
+        <div class="kpis">
+          <div><span>Pressão</span><strong>${press}</strong></div>
+          <div><span>Mom H</span><strong>${mom.home}</strong></div>
+          <div><span>Mom A</span><strong>${mom.away}</strong></div>
+          <div><span>BTTS</span><strong>${btts}%</strong></div>
+          <div><span>Esc</span><strong>${corners}</strong></div>
+          <div><span>Fin</span><strong>${shots}</strong></div>
+        </div>
+        <footer>${sigPill}</footer>
+      </article>
+    `;
+  }
+
+  /** Label humano para cada motivo de filtro emitido por collectSignals. */
+  const FILTER_REASON_BADGES = {
+    confidence_low:   { label: 'LOW CONFIDENCE', cls: 'low' },
+    market_mismatch:  { label: 'FILTERED',       cls: 'filtered' },
+    profile_filtered: { label: 'BELOW TARGET',   cls: 'filtered' },
+    no_edge:          { label: 'NO EDGE',        cls: 'low' },
+    invalid:          { label: 'INVALID',        cls: 'low' },
+  };
+
+  function reasonBadgesHTML(reasons) {
+    if (!Array.isArray(reasons) || !reasons.length) return '';
+    return reasons.map((r) => {
+      const b = FILTER_REASON_BADGES[r] || { label: r.toUpperCase(), cls: 'low' };
+      return `<span class="sig-reason-badge ${b.cls}" title="motivo: ${escapeHtml(r)}">${escapeHtml(b.label)}</span>`;
+    }).join('');
   }
 
   function signalCardHTML(s) {
@@ -1441,13 +1691,17 @@
     const markets = { corners: '🚩 CORNERS', goals: '⚽ GOALS', btts: '🤝 BTTS', cards: '🟨 CARDS' };
     const riskLabel = { low: '🟢 BAIXO', medium: '🟡 MÉDIO', high: '🔴 ALTO' };
     const projHtml = buildProjectionHTML(s);
+    const reasons = Array.isArray(s._filterReasons) ? s._filterReasons : [];
+    const filteredCls = reasons.length ? 'is-filtered' : '';
+    const badgesHtml = reasonBadgesHTML(reasons);
     return `
-      <div class="sig-card market-${s.market}" data-mid="${escapeHtml(String(m.id))}" data-market="${escapeHtml(s.market)}">
+      <div class="sig-card market-${s.market} ${filteredCls}" data-mid="${escapeHtml(String(m.id))}" data-market="${escapeHtml(s.market)}">
         <div class="sig-h">
           <span class="mkt">${markets[s.market] || s.market}</span>
           <span class="risk ${s.risk}">${riskLabel[s.risk] || s.risk}</span>
           <span class="conf">${s.confidence}%</span>
         </div>
+        ${badgesHtml ? `<div class="sig-reason-badges">${badgesHtml}</div>` : ''}
         <div class="sig-signal">${escapeHtml(s.signal)}</div>
         <div class="sig-match">
           <span>${escapeHtml(m.home || '')} <span style="color:var(--muted)">×</span> ${escapeHtml(m.away || '')}</span>
@@ -1681,7 +1935,30 @@
   function renderDetail() {
     const root = $('#detail');
     const id = state.activeMatchId;
-    if (!id) { root.innerHTML = `<div class="fb-empty">Selecione uma partida</div>`; return; }
+    if (!id) {
+      // UX premium: em vez de mensagem fria, mostra um preview compacto dos
+      // top jogos enriquecidos com mini stats (pressão, momentum, BTTS, top
+      // sinal). O usuário clica no card → vira active e renderDetail completo.
+      const matches = Array.from(state.matches.values());
+      if (!matches.length) {
+        root.innerHTML = `<div class="fb-empty">
+          <div style="font-size:24px;margin-bottom:6px">⏳</div>
+          aguardando jogos ao vivo<br>
+          <span style="font-size:11px;opacity:.7">stats, timeline, IA e predictions assim que houver partida no ar</span>
+        </div>`;
+        return;
+      }
+      const grid = buildInlineMatchGridHTML();
+      root.innerHTML = `
+        <div class="fb-empty" style="padding:14px 6px">
+          <div style="font-size:22px;margin-bottom:4px">🎯</div>
+          <strong>Análises IA em tempo real</strong><br>
+          <span style="font-size:11px;opacity:.75">Toque em qualquer jogo para timeline, pressão, momentum e predictions</span>
+        </div>
+        ${grid}`;
+      wireInlineMatchCards(root);
+      return;
+    }
     const m = state.matches.get(String(id));
     if (!m) { root.innerHTML = `<div class="fb-empty">partida indisponível</div>`; return; }
 
@@ -2156,6 +2433,9 @@
       lastUpdate: generatedAt || new Date().toISOString(),
       lastSource: source || 'unknown',
     };
+    // Mantém state.activeProvider sincronizado para isShowAllActive()/demo.
+    state.activeProvider = state.runtime.feedMeta.provider || state.activeProvider;
+    if (state.activeProvider) updateShowAllButton();
     if (window.__ROBOTREND_DEBUG) {
       console.log('[FEED META synced]', source, state.runtime.feedMeta);
     }
@@ -2319,6 +2599,16 @@
       });
     }
 
+    // SHOW-ALL toggle ("Apenas operáveis" ↔ "Mostrar tudo")
+    const showAllBtn = $('#btn-show-all');
+    if (showAllBtn) {
+      showAllBtn.addEventListener('click', () => {
+        if (isMasterRoleFb(state.role) || isDemoActive()) return; // travado
+        setShowAll(!state.showAll);
+      });
+    }
+    updateShowAllButton();
+
     updateRadarStatus();
   }
 
@@ -2326,6 +2616,20 @@
   //  BOOT
   // ============================================================
   async function boot() {
+    // Resolve role do usuário cedo — master = sempre showAll, demo idem.
+    state.role = resolveCurrentRole();
+    // Atualiza role quando o user-ready event chegar (cache miss inicial).
+    try {
+      window.RobotrendBus?.on?.('robotrend:user-ready', () => {
+        const r = resolveCurrentRole();
+        if (r !== state.role) {
+          state.role = r;
+          updateShowAllButton();
+          render();
+        }
+      });
+    } catch (_) {}
+
     bindToolbar();
     bindRadarBar();
     bindDebugPanel();
@@ -2400,6 +2704,16 @@
 
     bumpRuntime({});
   }
+
+  // API pública mínima — usada pelos botões inline e por debug no console.
+  //   window.RobotrendFB.setShowAll(true)  → libera análises IA completas
+  //   window.RobotrendFB.state             → ponteiro para o estado runtime
+  window.RobotrendFB = Object.freeze({
+    setShowAll,
+    isShowAllActive,
+    isMaster: () => isMasterRoleFb(state.role),
+    state,
+  });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();

@@ -556,6 +556,107 @@
     .fb-match.enriched .stats span { transition: background-color .25s ease; }
     .fb-match .stats span { display:inline-block; padding: 1px 4px; border-radius: 4px; }
     .fb-skeleton { display: block; }
+
+    /* === SHOW-ALL toggle === */
+    .fb-show-all-btn {
+      margin-left: auto;
+      background: var(--surface-2);
+      color: var(--text-2);
+      border: 1px solid var(--line);
+      font-weight: 700;
+      transition: background .15s ease, color .15s ease, border-color .15s ease;
+    }
+    .fb-show-all-btn.active {
+      background: linear-gradient(135deg, rgba(34,197,94,.18), rgba(6,182,212,.16));
+      color: var(--text);
+      border-color: var(--brand);
+    }
+    .fb-show-all-btn:disabled { cursor: not-allowed; opacity: .9; }
+
+    /* === Board head — pills com sumário do pipeline === */
+    .sig-board-head {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      padding: 6px 2px 10px; border-bottom: 1px solid var(--line); margin-bottom: 10px;
+    }
+    .sig-board-pill {
+      font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+      padding: 4px 9px; border-radius: 999px;
+      background: rgba(34,197,94,.16); color: #22c55e; border: 1px solid rgba(34,197,94,.30);
+    }
+    .sig-board-pill.warn { background: rgba(250,204,21,.16); color: #facc15; border-color: rgba(250,204,21,.30); }
+    .sig-board-pill.ghost { background: var(--surface-2); color: var(--muted); border-color: var(--line); }
+    .sig-board-pill.master {
+      background: linear-gradient(135deg, rgba(255,209,71,.22), rgba(255,144,71,.18));
+      color: #ffd84d; border-color: rgba(255,209,71,.38);
+    }
+
+    /* === Reason badges em sinais filtrados (modo Mostrar tudo / master) === */
+    .sig-card.is-filtered {
+      opacity: .82;
+      background: linear-gradient(180deg, var(--surface) 0%, rgba(0,0,0,.06) 100%);
+      border-style: dashed;
+    }
+    .sig-card.is-filtered:hover { opacity: 1; }
+    .sig-reason-badges {
+      display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px;
+    }
+    .sig-reason-badge {
+      font-size: 9px; font-weight: 800; letter-spacing: .05em;
+      padding: 2px 6px; border-radius: 3px; text-transform: uppercase;
+    }
+    .sig-reason-badge.low {
+      background: rgba(250,204,21,.18); color: #facc15; border: 1px solid rgba(250,204,21,.30);
+    }
+    .sig-reason-badge.filtered {
+      background: rgba(148,163,184,.18); color: #cbd5e1; border: 1px solid rgba(148,163,184,.30);
+    }
+
+    /* === MINI MATCH GRID (empty state premium) === */
+    .sig-mini-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 8px;
+      padding: 4px 2px 12px;
+    }
+    .sig-mini-card {
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: 10px; padding: 10px 12px; cursor: pointer;
+      transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+      display: grid; gap: 6px;
+    }
+    .sig-mini-card:hover { transform: translateY(-2px); border-color: var(--brand); box-shadow: 0 6px 14px rgba(0,0,0,.18); }
+    .sig-mini-card > header {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em;
+    }
+    .sig-mini-card > header .mn {
+      font-family: 'JetBrains Mono', monospace; color: var(--brand); font-weight: 800;
+    }
+    .sig-mini-card .tt {
+      display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: center;
+      font-size: 12px; font-weight: 700; color: var(--text);
+    }
+    .sig-mini-card .tt .tm.rt { text-align: right; }
+    .sig-mini-card .tt .sc {
+      font-family: 'JetBrains Mono', monospace; font-weight: 800;
+      padding: 2px 7px; border-radius: 4px; background: var(--surface-2); color: var(--brand);
+    }
+    .sig-mini-card .kpis {
+      display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;
+      font-size: 9px; color: var(--muted); text-align: center;
+    }
+    .sig-mini-card .kpis > div { display: grid; gap: 2px; padding: 3px 0; background: var(--surface-2); border-radius: 4px; }
+    .sig-mini-card .kpis strong {
+      font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text); font-weight: 800;
+    }
+    .sig-mini-card > footer { display: flex; justify-content: flex-end; }
+    .sig-mini-pill {
+      font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 999px;
+      letter-spacing: .04em;
+    }
+    .sig-mini-pill.ok { background: rgba(34,197,94,.18); color: #22c55e; }
+    .sig-mini-pill.warn { background: rgba(250,204,21,.16); color: #facc15; }
+    .sig-mini-pill.ghost { background: var(--surface-2); color: var(--muted); }
   </style>
 </head>
 <body class="font-display antialiased">
@@ -602,6 +703,10 @@
             📈 Radar
           </button>
           <span class="fb-mode-pill" id="radar-status">—</span>
+          <button class="fb-mode-btn fb-show-all-btn" id="btn-show-all"
+                  title="Alterna entre 'Apenas operáveis' e 'Mostrar tudo (análises IA completas)'">
+            🎯 Apenas operáveis
+          </button>
         </div>
         <!-- Grupo IA — escondido em modo Scanner via JS -->
         <div class="fb-radar-group fb-ia-group">

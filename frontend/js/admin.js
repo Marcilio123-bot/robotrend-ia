@@ -564,6 +564,147 @@
     } catch (e) { console.error('[ADMIN UI] loadFeedback', e); }
   }
 
+  /* ============================================================
+     PIPELINE OPERACIONAL (visão master)
+     Consome /api/admin/match-debug → mostra contagens por estágio
+     (poller / scanner / bot) + lista os matches enriquecidos com o
+     motivo de cada drop pelo filtro de sinais.
+     ============================================================ */
+  const FILTER_REASON_LABELS_ADMIN = {
+    confidence_low:   { label: 'CONFIDENCE LOW',   cls: 'warn' },
+    market_mismatch:  { label: 'MARKET MISMATCH',  cls: 'muted' },
+    profile_filtered: { label: 'PROFILE FILTERED', cls: 'muted' },
+    no_edge:          { label: 'NO EDGE',          cls: 'warn' },
+    invalid:          { label: 'INVALID',          cls: 'warn' },
+  };
+
+  function pipelineBadge(text, cls = 'ok') {
+    const colors = {
+      ok:    'background:rgba(34,197,94,.16);color:#22c55e;border-color:rgba(34,197,94,.30);',
+      warn:  'background:rgba(250,204,21,.16);color:#facc15;border-color:rgba(250,204,21,.30);',
+      err:   'background:rgba(239,68,68,.18);color:#fca5a5;border-color:rgba(239,68,68,.30);',
+      muted: 'background:var(--surface-2);color:var(--muted);border-color:var(--card-border);',
+    };
+    return `<span class="badge" style="${colors[cls] || colors.ok} font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;border:1px solid;">${escapeHtml(text)}</span>`;
+  }
+
+  function renderMasterPipeline(data) {
+    const host = document.getElementById('master-pipeline');
+    if (!host) return;
+    if (!data || (data.ok === false)) {
+      host.innerHTML = `<div style="color:var(--muted);font-size:13px;">Pipeline indisponível: ${escapeHtml(data?.error || 'sem dados')}</div>`;
+      return;
+    }
+    const stages = data.stages || {};
+    const poller   = stages.poller   || {};
+    const liveTick = stages.liveTick || {};
+    const bot      = stages.bot      || {};
+    const provider = data.provider?.active || liveTick.provider || poller.provider || bot.provider || '—';
+    const strict   = String(data.env?.STRICT_REAL_ONLY || '').toLowerCase() === 'true' || !!bot.strict;
+
+    const pollerIn   = poller.beforeFilter ?? poller.scannerIn ?? null;
+    const pollerOut  = poller.afterFilter  ?? poller.tracked   ?? null;
+    const liveIn     = liveTick.scannerIn  ?? liveTick.beforeFilter ?? null;
+    const liveOut    = liveTick.afterConsensus ?? liveTick.afterFreshness ?? liveTick.afterFilter ?? null;
+    const botIn      = bot.scannerIn ?? bot.afterCheckFn ?? null;
+    const botOut     = bot.finalEmitted ?? bot.afterPreEmit ?? null;
+    const filtered   = (botIn != null && botOut != null) ? Math.max(0, botIn - botOut) : null;
+
+    // emitted = matches que sobreviveram TODO o pipeline. drops = mapa
+    // id → motivos por estágio. Unimos ambos para mostrar uma linha por
+    // match enriquecido — incluindo os que foram filtrados.
+    const emitted = Array.isArray(bot.emitted) ? bot.emitted : [];
+    const checkFnDrops = Array.isArray(bot.drops?.checkFn) ? bot.drops.checkFn : [];
+    const preEmitDrops = Array.isArray(bot.drops?.preEmit) ? bot.drops.preEmit : [];
+    const allDrops = [...checkFnDrops, ...preEmitDrops];
+    const emittedIds = new Set(emitted.map((m) => String(m.id)));
+
+    const rowsEmitted = emitted.slice(0, 12).map((m) => `
+      <tr>
+        <td class="py-2 px-3 font-mono" style="font-size:11px;color:var(--muted);">${escapeHtml(String(m.id))}</td>
+        <td class="py-2 px-3" style="font-size:12px;">—</td>
+        <td class="py-2 px-3 font-mono">${escapeHtml(String(m.status || '—'))}</td>
+        <td class="py-2 px-3 font-mono">${m.minute ?? '—'}'</td>
+        <td class="py-2 px-3" style="font-size:11px;color:var(--muted);">${escapeHtml(m.provider || provider)}</td>
+        <td class="py-2 px-3">${pipelineBadge('OPERÁVEL', 'ok')}</td>
+      </tr>
+    `).join('');
+
+    const rowsDropped = allDrops
+      .filter((d) => !emittedIds.has(String(d.id)))
+      .slice(0, 12)
+      .map((d) => {
+        const reasons = Array.isArray(d.reasons) ? d.reasons : (d.reason ? [d.reason] : []);
+        const reasonHtml = reasons.length
+          ? reasons.map((r) => {
+              const b = FILTER_REASON_LABELS_ADMIN[r] || { label: String(r).toUpperCase(), cls: 'muted' };
+              return pipelineBadge(b.label, b.cls);
+            }).join(' ')
+          : pipelineBadge('FILTRADO', 'muted');
+        return `
+          <tr style="opacity:.78;">
+            <td class="py-2 px-3 font-mono" style="font-size:11px;color:var(--muted);">${escapeHtml(String(d.id || '—'))}</td>
+            <td class="py-2 px-3" style="font-size:12px;">${escapeHtml(d.label || d.match || '—')}</td>
+            <td class="py-2 px-3 font-mono">${escapeHtml(String(d.status || '—'))}</td>
+            <td class="py-2 px-3 font-mono">${d.minute ?? '—'}'</td>
+            <td class="py-2 px-3" style="font-size:11px;color:var(--muted);">${escapeHtml(d.provider || provider)}</td>
+            <td class="py-2 px-3" style="display:flex;flex-wrap:wrap;gap:4px;">${reasonHtml}</td>
+          </tr>`;
+      }).join('');
+
+    const tableRows = rowsEmitted + rowsDropped;
+
+    host.innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;">
+        ${pipelineBadge(`Provider: ${provider}`)}
+        ${pollerIn != null ? pipelineBadge(`Poller in: ${pollerIn}`, 'muted') : ''}
+        ${pollerOut != null ? pipelineBadge(`Poller out: ${pollerOut}`, 'muted') : ''}
+        ${liveIn != null ? pipelineBadge(`Scanner in: ${liveIn}`, 'muted') : ''}
+        ${liveOut != null ? pipelineBadge(`Scanner out: ${liveOut}`, 'muted') : ''}
+        ${botOut != null ? pipelineBadge(`Operáveis: ${botOut}`) : ''}
+        ${filtered != null && filtered > 0 ? pipelineBadge(`Filtrados: ${filtered}`, 'warn') : ''}
+        ${strict ? pipelineBadge('STRICT MODE', 'warn') : ''}
+      </div>
+      ${tableRows ? `
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="table-head">
+                <th class="py-2 px-3 text-left">ID</th>
+                <th class="py-2 px-3 text-left">Partida</th>
+                <th class="py-2 px-3 text-left">Status</th>
+                <th class="py-2 px-3 text-left">Min</th>
+                <th class="py-2 px-3 text-left">Provider</th>
+                <th class="py-2 px-3 text-left">Estado</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+      ` : `
+        <div style="color:var(--muted);font-size:13px;">
+          Pipeline em silêncio — nenhum match enriquecido no último tick do bot.
+        </div>
+      `}
+    `;
+  }
+
+  async function loadMasterPipeline() {
+    const host = document.getElementById('master-pipeline');
+    if (!host) return;
+    try {
+      const data = await RobotrendAuth.api('/api/admin/match-debug');
+      renderMasterPipeline(data);
+    } catch (e) {
+      host.innerHTML = `<div style="color:var(--muted);font-size:13px;">Pipeline indisponível: ${escapeHtml(e.message || 'erro')}</div>`;
+      console.warn('[ADMIN UI] loadMasterPipeline', e);
+    }
+  }
+
+  document.getElementById('btn-refresh-pipeline')?.addEventListener('click', () => {
+    loadMasterPipeline();
+  });
+
   document.getElementById('btn-create-coupon')?.addEventListener('click', async () => {
     const code = (document.getElementById('coup-code')?.value || '').trim().toUpperCase();
     const percent = Number(document.getElementById('coup-percent')?.value || 0);
@@ -594,12 +735,16 @@
       loadSignals(),
       loadCoupons(),
       loadFeedback(),
+      loadMasterPipeline(),
     ]);
 
     setInterval(loadOverview, 30000);
     setInterval(() => { loadUsers().catch(() => {}); }, 60000);
     if (document.getElementById('feedback-list')) {
       setInterval(loadFeedback, 60000);
+    }
+    if (document.getElementById('master-pipeline')) {
+      setInterval(() => { loadMasterPipeline().catch(() => {}); }, 8000);
     }
   })();
 })();

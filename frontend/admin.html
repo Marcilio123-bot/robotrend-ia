@@ -187,6 +187,26 @@
         </div>
       </section>
 
+      <!-- ====== PIPELINE OPERACIONAL — visão master ======
+           Lista TODOS os matches enriquecidos (operáveis + filtrados) com
+           o motivo de cada drop (confidence_low / market_mismatch /
+           profile_filtered / no_edge). Consome /api/admin/match-debug. -->
+      <section class="saas-section" id="master-pipeline-section">
+        <div class="saas-section-head">
+          <div>
+            <div class="saas-section-title">🛰 Pipeline IA — análises enriquecidas</div>
+            <div class="saas-section-sub">
+              inclusive sinais rejeitados pelos filtros · auto-refresh 8s ·
+              <a href="/football.html" style="color:var(--brand);">abrir scanner →</a>
+            </div>
+          </div>
+          <button class="btn-ghost" id="btn-refresh-pipeline" title="Atualizar agora">↻</button>
+        </div>
+        <div id="master-pipeline" class="saas-card" style="padding:14px;">
+          <div style="color:var(--muted); font-size:13px;">Carregando pipeline…</div>
+        </div>
+      </section>
+
       <!-- Central operacional — providers, scanner, uptime, memória, erros -->
       <section class="saas-section">
         <div class="saas-section-head">
