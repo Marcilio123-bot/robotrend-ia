@@ -35,7 +35,10 @@
     if (el) el.textContent = val;
   }
 
-  const USER_TABLE_IDS = ['premium-body', 'free-body', 'admin-body', 'form-create-user'];
+  const USER_TABLE_IDS = [
+    'premium-body', 'free-body', 'admin-body', 'form-create-user',
+    'users-summary-body', 'users-section', 'users-render-status',
+  ];
   const USER_KPI_IDS = ['kpi-free', 'kpi-conversion', 'premium-count', 'free-count'];
 
   function probeMounts() {
@@ -44,6 +47,81 @@
       mounts[id] = !!document.getElementById(id);
     }
     return mounts;
+  }
+
+  /** IDs reais no DOM (não confundir com premium-users-body / free-users-body). */
+  const TBODY_PREMIUM = 'premium-body';
+  const TBODY_FREE = 'free-body';
+  const TBODY_ADMIN = 'admin-body';
+  const TBODY_SUMMARY = 'users-summary-body';
+
+  function normRole(u) {
+    return String(u?.role || 'user').toLowerCase();
+  }
+  function normPlan(u) {
+    return String(u?.plan || 'FREE').toUpperCase();
+  }
+  function isAdminUser(u) {
+    const r = normRole(u);
+    return r === 'admin' || r === 'owner' || r === 'master' || r === 'super_admin';
+  }
+  function isPremiumClient(u) {
+    const p = normPlan(u);
+    const r = normRole(u);
+    return p === 'PREMIUM' || p === 'VIP' || r === 'premium';
+  }
+
+  function logAdminRender(ctx) {
+    const premiumBody = document.getElementById(TBODY_PREMIUM);
+    const freeBody = document.getElementById(TBODY_FREE);
+    const adminBody = document.getElementById(TBODY_ADMIN);
+    const summaryBody = document.getElementById(TBODY_SUMMARY);
+    console.log('[ADMIN RENDER]', {
+      ...ctx,
+      premiumBody: !!premiumBody,
+      freeBody: !!freeBody,
+      adminBody: !!adminBody,
+      summaryBody: !!summaryBody,
+      premiumHtmlLength: premiumBody?.innerHTML?.length ?? 0,
+      freeHtmlLength: freeBody?.innerHTML?.length ?? 0,
+      adminHtmlLength: adminBody?.innerHTML?.length ?? 0,
+      summaryHtmlLength: summaryBody?.innerHTML?.length ?? 0,
+      usersLength: ctx.usersLength ?? 0,
+      htmlLength: ctx.htmlLength ?? 0,
+    });
+  }
+
+  function setUsersRenderStatus(msg, kind = '') {
+    const el = document.getElementById('users-render-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove('ok', 'err');
+    if (kind) el.classList.add(kind);
+  }
+
+  function ensureUsersSectionVisible() {
+    const sec = document.getElementById('users-section');
+    if (!sec) return;
+    sec.style.display = 'block';
+    sec.style.visibility = 'visible';
+    sec.style.opacity = '1';
+  }
+
+  function setTbodyHtml(tbodyId, html, label) {
+    const body = document.getElementById(tbodyId);
+    if (!body) {
+      console.warn('[ADMIN RENDER] tbody ausente:', tbodyId, label);
+      return 0;
+    }
+    body.innerHTML = html;
+    return html.length;
+  }
+
+  function whenDomReady() {
+    if (document.readyState !== 'loading') return Promise.resolve();
+    return new Promise((resolve) => {
+      document.addEventListener('DOMContentLoaded', resolve, { once: true });
+    });
   }
 
   /** Log estruturado para diagnosticar CRUD no admin.html */
@@ -128,12 +206,41 @@
   /* ============================================================
      LOAD USERS — separa em PREMIUM, FREE, ADMIN e renderiza KPIs
      ============================================================ */
-  function renderUsersTables(premium, free, admins) {
-    renderPremiumTable(premium);
-    renderFreeTable(free);
-    renderAdminTable(admins);
+  /** Tabela-resumo no topo da seção — lista todos os usuários (sempre visível). */
+  function renderUsersSummary(allUsers) {
+    const html = !allUsers.length
+      ? '<tr><td colspan="4" class="py-6 text-center" style="color:var(--muted);">Nenhum usuário cadastrado.</td></tr>'
+      : allUsers.map((u) => {
+          const blocked = u.active === false;
+          return `<tr${blocked ? ' style="opacity:.55;"' : ''}>
+            <td class="py-3 px-4 font-mono text-xs">${escapeHtml(u.email)}</td>
+            <td class="py-3 px-4">${planBadge(normPlan(u), normRole(u))}</td>
+            <td class="py-3 px-4 text-xs">${escapeHtml(normRole(u))}</td>
+            <td class="py-3 px-4">${statusBadge(!blocked, blocked)}</td>
+          </tr>`;
+        }).join('');
+    const len = setTbodyHtml(TBODY_SUMMARY, html, 'summary');
+    logAdminRender({ stage: 'renderUsersSummary', usersLength: allUsers.length, htmlLength: len });
+    return len;
+  }
+
+  function renderUsersTables(premium, free, admins, allUsers) {
+    ensureUsersSectionVisible();
+    let totalHtml = 0;
+    totalHtml += renderPremiumTable(premium) || 0;
+    totalHtml += renderFreeTable(free) || 0;
+    totalHtml += renderAdminTable(admins) || 0;
+    totalHtml += renderUsersSummary(allUsers || [...premium, ...free, ...admins]) || 0;
     const adminsSection = document.getElementById('admins-section');
-    if (adminsSection) adminsSection.style.display = admins.length > 1 ? '' : 'none';
+    if (adminsSection) adminsSection.style.display = admins.length > 1 ? 'block' : 'none';
+    logAdminRender({
+      stage: 'renderUsersTables:done',
+      usersLength: (allUsers || []).length,
+      htmlLength: totalHtml,
+      premium: premium.length,
+      free: free.length,
+      admins: admins.length,
+    });
   }
 
   async function loadUsers() {
@@ -150,30 +257,27 @@
       adminJsLoaded: true,
     });
 
-    if (!mounts['premium-body'] && !mounts['free-body']) {
-      const msg = 'Containers das tabelas não encontrados no DOM (premium-body / free-body). Verifique admin.html.';
+    if (!mounts[TBODY_PREMIUM] && !mounts[TBODY_FREE] && !mounts[TBODY_SUMMARY]) {
+      const msg = 'Containers das tabelas não encontrados (premium-body / free-body / users-summary-body). Verifique admin.html.';
       console.warn('[ADMIN UI]', msg);
       showUsersError(msg);
+      setUsersRenderStatus(msg, 'err');
       logAdminUi({ stage: 'loadUsers:abort', usersLoaded: false, containersFound: mounts, rowsRendered: 0, mounts });
+      logAdminRender({ stage: 'loadUsers:abort', usersLength: 0, htmlLength: 0 });
       return { ok: false, reason: 'no-containers' };
     }
 
     try {
       const data = await RobotrendAuth.api('/api/admin/users');
-      const users = Array.isArray(data?.users) ? data.users : [];
+      const users = Array.isArray(data?.users) ? data.users
+        : Array.isArray(data) ? data : [];
       usersLoaded = true;
       showUsersError(null);
 
-      const admins = users.filter((u) => {
-        const r = String(u.role || '').toLowerCase();
-        return r === 'admin' || r === 'owner' || r === 'master' || r === 'super_admin';
-      });
-      const nonAdmin = users.filter((u) => {
-        const r = String(u.role || '').toLowerCase();
-        return r !== 'admin' && r !== 'owner' && r !== 'master' && r !== 'super_admin';
-      });
-      const premium = nonAdmin.filter((u) => u.plan === 'PREMIUM' || u.plan === 'VIP' || u.role === 'premium');
-      const free = nonAdmin.filter((u) => !(u.plan === 'PREMIUM' || u.plan === 'VIP' || u.role === 'premium'));
+      const admins = users.filter(isAdminUser);
+      const nonAdmin = users.filter((u) => !isAdminUser(u));
+      const premium = nonAdmin.filter(isPremiumClient);
+      const free = nonAdmin.filter((u) => !isPremiumClient(u));
 
       const totalClients = nonAdmin.length;
       const conversionPct = totalClients > 0 ? (premium.length / totalClients) * 100 : 0;
@@ -188,8 +292,12 @@
       setText('free-conversion', conversionPct.toFixed(1) + '%');
       setText('admin-count', String(admins.length));
 
-      renderUsersTables(premium, free, admins);
-      rowsRendered = premium.length + free.length + admins.length;
+      renderUsersTables(premium, free, admins, users);
+      rowsRendered = users.length;
+      setUsersRenderStatus(
+        `✓ ${users.length} usuário(s) renderizado(s) · ${premium.length} premium · ${free.length} free · ${admins.length} admin`,
+        'ok',
+      );
 
       logAdminUi({
         stage: 'loadUsers:ok',
@@ -205,14 +313,23 @@
       console.error('[ADMIN UI] loadUsers failed', e);
       showUsersError(`Falha ao carregar usuários: ${e.message || 'erro desconhecido'}. Confira /api/admin/users no Network.`);
 
+      setUsersRenderStatus(`Erro: ${e.message || 'falha ao carregar'}`, 'err');
+
       // Sai do estado "Carregando…" mesmo em erro
-      if (mounts['premium-body']) {
-        document.getElementById('premium-body').innerHTML =
-          '<tr><td colspan="7" class="py-6 text-center" style="color:var(--danger);">Erro ao carregar usuários</td></tr>';
+      if (mounts[TBODY_PREMIUM]) {
+        setTbodyHtml(TBODY_PREMIUM,
+          '<tr><td colspan="7" class="py-6 text-center" style="color:var(--danger);">Erro ao carregar usuários</td></tr>',
+          'premium-error');
       }
-      if (mounts['free-body']) {
-        document.getElementById('free-body').innerHTML =
-          '<tr><td colspan="6" class="py-6 text-center" style="color:var(--danger);">Erro ao carregar usuários</td></tr>';
+      if (mounts[TBODY_FREE]) {
+        setTbodyHtml(TBODY_FREE,
+          '<tr><td colspan="6" class="py-6 text-center" style="color:var(--danger);">Erro ao carregar usuários</td></tr>',
+          'free-error');
+      }
+      if (mounts[TBODY_SUMMARY]) {
+        setTbodyHtml(TBODY_SUMMARY,
+          '<tr><td colspan="4" class="py-6 text-center" style="color:var(--danger);">Erro ao carregar usuários</td></tr>',
+          'summary-error');
       }
 
       logAdminUi({
@@ -230,13 +347,18 @@
 
   /* ---------- PREMIUM TABLE ---------- */
   function renderPremiumTable(users) {
-    const body = document.getElementById('premium-body');
-    if (!body) return;
-    if (!users.length) {
-      body.innerHTML = `<tr><td colspan="7" class="py-6 text-center" style="color:var(--muted);">Nenhum cliente PREMIUM ainda. 💎</td></tr>`;
-      return;
+    const body = document.getElementById(TBODY_PREMIUM);
+    if (!body) {
+      logAdminRender({ stage: 'renderPremiumTable:missing-body', usersLength: users.length, htmlLength: 0 });
+      return 0;
     }
-    body.innerHTML = users.map(u => {
+    if (!users.length) {
+      const html = `<tr><td colspan="7" class="py-6 text-center" style="color:var(--muted);">Nenhum cliente PREMIUM ainda. 💎</td></tr>`;
+      const len = setTbodyHtml(TBODY_PREMIUM, html, 'premium-empty');
+      logAdminRender({ stage: 'renderPremiumTable:empty', usersLength: 0, htmlLength: len });
+      return len;
+    }
+    const html = users.map(u => {
       const isMe = u.id === me.id;
       const isBlocked = u.active === false;
       const active = !isBlocked;
@@ -268,18 +390,26 @@
           </td>
         </tr>`;
     }).join('');
+    const len = setTbodyHtml(TBODY_PREMIUM, html, 'premium');
     wireRowActions(body);
+    logAdminRender({ stage: 'renderPremiumTable', usersLength: users.length, htmlLength: len });
+    return len;
   }
 
   /* ---------- FREE TABLE ---------- */
   function renderFreeTable(users) {
-    const body = document.getElementById('free-body');
-    if (!body) return;
-    if (!users.length) {
-      body.innerHTML = `<tr><td colspan="6" class="py-6 text-center" style="color:var(--muted);">Sem clientes FREE no momento.</td></tr>`;
-      return;
+    const body = document.getElementById(TBODY_FREE);
+    if (!body) {
+      logAdminRender({ stage: 'renderFreeTable:missing-body', usersLength: users.length, htmlLength: 0 });
+      return 0;
     }
-    body.innerHTML = users.map(u => {
+    if (!users.length) {
+      const html = `<tr><td colspan="6" class="py-6 text-center" style="color:var(--muted);">Sem clientes FREE no momento.</td></tr>`;
+      const len = setTbodyHtml(TBODY_FREE, html, 'free-empty');
+      logAdminRender({ stage: 'renderFreeTable:empty', usersLength: 0, htmlLength: len });
+      return len;
+    }
+    const html = users.map(u => {
       const lastSeen = u.updatedAt || u.lastSeenAt || u.createdAt;
       const isBlocked = u.active === false;
       return `
@@ -303,7 +433,9 @@
           </td>
         </tr>`;
     }).join('');
+    const len = setTbodyHtml(TBODY_FREE, html, 'free');
     wireRowActions(body);
+    logAdminRender({ stage: 'renderFreeTable', usersLength: users.length, htmlLength: len });
 
     // botão "Converter Premium" (exclusivo da tabela FREE)
     body.querySelectorAll('.btn-promote').forEach(btn => {
@@ -327,17 +459,23 @@
         }
       });
     });
+    return len;
   }
 
   /* ---------- ADMIN TABLE ---------- */
   function renderAdminTable(users) {
-    const body = document.getElementById('admin-body');
-    if (!body) return;
-    if (!users.length) {
-      body.innerHTML = `<tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">—</td></tr>`;
-      return;
+    const body = document.getElementById(TBODY_ADMIN);
+    if (!body) {
+      logAdminRender({ stage: 'renderAdminTable:missing-body', usersLength: users.length, htmlLength: 0 });
+      return 0;
     }
-    body.innerHTML = users.map(u => {
+    if (!users.length) {
+      const html = `<tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">—</td></tr>`;
+      const len = setTbodyHtml(TBODY_ADMIN, html, 'admin-empty');
+      logAdminRender({ stage: 'renderAdminTable:empty', usersLength: 0, htmlLength: len });
+      return len;
+    }
+    const html = users.map(u => {
       const isMe = u.id === me.id;
       const isBlocked = u.active === false;
       return `
@@ -355,7 +493,10 @@
           </td>
         </tr>`;
     }).join('');
+    const len = setTbodyHtml(TBODY_ADMIN, html, 'admin');
     wireRowActions(body);
+    logAdminRender({ stage: 'renderAdminTable', usersLength: users.length, htmlLength: len });
+    return len;
   }
 
   /* ---------- ACTIONS (compartilhado) ---------- */
@@ -716,8 +857,23 @@
     loadCoupons();
   });
 
+  /** Se tbody ainda está em "Carregando…", tenta render de novo (race com layout). */
+  async function retryUsersRenderIfStuck() {
+    const stuck = (id) => {
+      const el = document.getElementById(id);
+      return el && /carregando/i.test(el.textContent || '');
+    };
+    if (stuck(TBODY_PREMIUM) || stuck(TBODY_FREE) || stuck(TBODY_SUMMARY)) {
+      console.warn('[ADMIN UI] tbody ainda em Carregando — retry loadUsers');
+      await loadUsers();
+    }
+  }
+
   /* Bootstrap: KPIs + CRUD de usuários primeiro; loaders opcionais depois */
   (async function bootstrapAdminPage() {
+    await whenDomReady();
+    ensureUsersSectionVisible();
+
     logAdminUi({
       stage: 'bootstrap',
       usersLoaded: false,
@@ -726,9 +882,11 @@
       mounts: probeMounts(),
       adminJsLoaded: true,
     });
+    logAdminRender({ stage: 'bootstrap:start', usersLength: 0, htmlLength: 0 });
 
     await loadOverview();
     await loadUsers();
+    setTimeout(() => { retryUsersRenderIfStuck().catch(() => {}); }, 400);
 
     await Promise.allSettled([
       loadPayments(),
