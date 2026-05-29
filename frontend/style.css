@@ -824,7 +824,13 @@ canvas { max-width: 100%; }
   font-size: 13px;
   opacity: 0.85;
 }
-.saas-nav-label { flex: 1; }
+.saas-nav-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .saas-nav-badge {
   font-size: 9px;
   letter-spacing: .12em;

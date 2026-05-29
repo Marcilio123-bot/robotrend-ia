@@ -20,11 +20,18 @@
   const LIVE_STATUSES_CLIENT = new Set(['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT']);
   const FINISHED_STATUSES_CLIENT = new Set(['FT', 'AET', 'PEN', 'CANC', 'PST', 'ABD', 'AWD', 'WO', 'SUSP']);
   const SYNTH_PREFIXES = ['demo-', 'pre-', 'test-', 'mock-', 'fake-', 'sample-'];
+  /** Quando o poller está em demo (sem API real), exibimos partidas sintéticas no painel. */
+  let allowDemoPreview = false;
+
+  function isSyntheticId(id) {
+    const s = String(id || '').toLowerCase();
+    return SYNTH_PREFIXES.some((p) => s.startsWith(p));
+  }
 
   function isValidMatch(m) {
     if (!m || m.id == null) return false;
     const id = String(m.id).toLowerCase();
-    if (SYNTH_PREFIXES.some((p) => id.startsWith(p))) return false;
+    if (isSyntheticId(id) && !allowDemoPreview) return false;
     const st = String(m.status || '').toUpperCase();
     if (FINISHED_STATUSES_CLIENT.has(st)) return false;
     if (st && !LIVE_STATUSES_CLIENT.has(st)) return false;
@@ -38,6 +45,59 @@
   }
   function filterValidMatches(arr) {
     return Array.isArray(arr) ? arr.filter(isValidMatch) : [];
+  }
+
+  function mapApiMatchToDashboard(m) {
+    if (!m) return null;
+    const sc = m.score || { home: 0, away: 0 };
+    return {
+      id: String(m.fixtureId || m.id),
+      home: m.home || m.teams?.home?.name || '—',
+      away: m.away || m.teams?.away?.name || '—',
+      league: m.league?.name || m.league || 'Live',
+      minute: Number(m.minute || m.fixture?.status?.elapsed || 0),
+      status: m.status || m.fixture?.status?.short || 'LIVE',
+      kickoffAt: m.kickoffAt || m.date || m.fixture?.date,
+      date: m.kickoffAt || m.date,
+      score: { home: Number(sc.home ?? 0), away: Number(sc.away ?? 0) },
+      corners: Number(m.stats?.corners?.total ?? m.corners ?? 0),
+      dangerousAttacks: Number(m.stats?.dangerousAttacks?.total ?? m.dangerousAttacks ?? 0),
+      shots: Number(m.stats?.shots?.total ?? m.shots ?? 0),
+      shotsOnTarget: Number(m.stats?.shotsOnTarget?.total ?? m.shotsOnTarget ?? 0),
+      provider: m.provider,
+    };
+  }
+
+  async function detectFootballMode() {
+    try {
+      const r = await fetch('/api/health', { credentials: 'include' });
+      if (!r.ok) return;
+      const h = await r.json();
+      const prov = String(h.football?.activeProvider || '').toLowerCase();
+      allowDemoPreview = prov === 'demo';
+      const banner = document.getElementById('demo-provider-banner');
+      if (banner) banner.style.display = allowDemoPreview ? '' : 'none';
+    } catch (_) { /* offline */ }
+  }
+
+  async function loadLiveFromApi() {
+    try {
+      const headers = {};
+      const tok = window.RobotrendAuth?.getToken?.();
+      if (tok) headers.Authorization = 'Bearer ' + tok;
+      const r = await fetch('/api/football/live', { headers, credentials: 'include' });
+      if (!r.ok) return;
+      const data = await r.json();
+      const mapped = (data.matches || []).map(mapApiMatchToDashboard).filter(Boolean);
+      const safe = filterValidMatches(mapped);
+      if (!safe.length && !mapped.length) return;
+      // Prefer API feed when bot socket envia lista vazia (scanner inerte + poller demo).
+      if (safe.length >= lastMatches.length) {
+        lastMatches = safe;
+        setText('#kpi-live', String(safe.length));
+        scheduleRender();
+      }
+    } catch (_) { /* offline */ }
   }
 
   /* ============================================================
@@ -592,7 +652,18 @@
     requestAnimationFrame(() => { _renderQueued = false; renderMatches(); });
   }
 
-  socket.on('matches:update', (m)  => { lastMatches  = filterValidMatches(m || []); scheduleRender(); });
+  socket.on('matches:update', (m) => {
+    const incoming = filterValidMatches(m || []);
+    if (incoming.length) {
+      lastMatches = incoming;
+      setText('#kpi-live', String(incoming.length));
+      scheduleRender();
+    } else if (!allowDemoPreview) {
+      lastMatches = [];
+      scheduleRender();
+    }
+    // Com provider demo o bot emite [] — mantém feed do /api/football/live.
+  });
   socket.on('analyses:update', (a) => { lastAnalyses = a || []; scheduleRender(); });
   socket.on('stats:update',    renderStats);
   socket.on('signals:list',    (l) => { lastSignals = l || []; renderSignals(); });
@@ -668,11 +739,17 @@
      BOOT
      ============================================================ */
   initTheme();
+  // Detecta o provider ativo (real vs demo) ANTES de aplicar os filtros do feed REST.
+  // Sem isso, o filtro client-side derruba 100% dos matches sintéticos do demoProvider
+  // e o painel fica vazio mesmo com o poller cheio de partidas.
+  detectFootballMode().then(() => loadLiveFromApi());
   loadSignals();
   loadBetSignals();
   loadBestSignal();
-  setInterval(loadBetSignals, 60_000);  // backup polling caso socket caia
-  setInterval(loadBestSignal, 90_000);  // refresh do best-bet a cada 90s
+  setInterval(loadLiveFromApi, 30_000);   // backup REST do poller football
+  setInterval(loadBetSignals,  60_000);   // backup polling caso socket caia
+  setInterval(loadBestSignal,  90_000);   // refresh do best-bet a cada 90s
+  setInterval(detectFootballMode, 120_000); // reavalia provider periodicamente
 
   // Reage a mudanças do user-state (plano, role) — re-renderiza cards
   // que dependem do tier (best-bet, signal cards locked/unlocked).

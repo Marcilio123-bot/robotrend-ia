@@ -23,7 +23,7 @@
       items: [
         { id: 'dashboard',  label: 'Dashboard',        icon: '◧', href: '/index.html' },
         { id: 'signals',    label: 'Sinais',           icon: '◆', href: '/signals.html', badge: 'live' },
-        { id: 'football',   label: 'Jogos',            icon: '⚽', href: '/football.html' },
+        { id: 'football',   label: 'Jogos ao vivo',    icon: '⚽', href: '/football.html' },
         { id: 'analytics',  label: 'Analytics',        icon: '▲', href: '/analytics.html' },
         { id: 'account',    label: 'Minha Assinatura', icon: '◆', href: '/account.html' },
       ],
@@ -47,7 +47,7 @@
       label: 'Operação',
       items: [
         { id: 'dashboard',  label: 'Dashboard',        icon: '◧', href: '/index.html' },
-        { id: 'football',   label: 'Jogos',            icon: '⚽', href: '/football.html' },
+        { id: 'football',   label: 'Jogos ao vivo',    icon: '⚽', href: '/football.html' },
         { id: 'analytics',  label: 'Analytics',        icon: '▲', href: '/analytics.html' },
         { id: 'signals',    label: 'Sinais',           icon: '◆', href: '/signals.html' },
       ],
@@ -129,8 +129,8 @@
         <div class="saas-nav-group">
           <div class="saas-nav-title">${s.label}</div>
           ${s.items.map((it) => `
-            <a class="saas-nav-item ${active === it.id ? 'active' : ''}" href="${it.href}">
-              <span class="saas-nav-icon">${it.icon}</span>
+            <a class="saas-nav-item ${active === it.id ? 'active' : ''}" href="${it.href}" title="${it.label}">
+              <span class="saas-nav-icon" aria-hidden="true">${it.icon}</span>
               <span class="saas-nav-label">${it.label}</span>
               ${it.badge ? `<span class="saas-nav-badge">${it.badge}</span>` : ''}
             </a>
