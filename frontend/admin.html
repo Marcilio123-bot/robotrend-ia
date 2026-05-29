@@ -52,19 +52,9 @@
         <div class="saas-kpi"><div class="saas-kpi-label">Winrate</div><div class="saas-kpi-value" id="kpi-winrate">—</div><div class="saas-kpi-foot">global</div></div>
       </section>
 
-      <!-- Central operacional — providers, scanner, uptime, memória, erros -->
-      <section class="saas-section">
-        <div class="saas-section-head">
-          <div>
-            <div class="saas-section-title">▤ Central operacional</div>
-            <div class="saas-section-sub">status em tempo real · refresh 5s</div>
-          </div>
-        </div>
-        <div data-ops-status></div>
-      </section>
-
       <!-- =========================================================
            GESTÃO DE USUÁRIOS — CRUD inline no painel master
+           (logo abaixo dos KPIs — visível sem scroll longo)
            ----------------------------------------------------------
            Tabela operacional real (não só KPIs):
              - criar cliente
@@ -84,6 +74,8 @@
           </div>
           <a href="/admin/users" class="saas-status-pill ok">página completa →</a>
         </div>
+
+        <div id="admin-users-error" class="saas-card" style="display:none; margin-bottom:12px; border-color:rgba(255,85,102,.45); background:rgba(255,85,102,.08); color:#ffd1d6; padding:12px 16px; font-size:13px;"></div>
 
         <!-- Form rápido: criar cliente -->
         <div class="saas-card" style="margin-bottom:12px;">
@@ -193,6 +185,17 @@
           <div class="saas-kpi"><div class="saas-kpi-label">🆓 FREE</div><div class="saas-kpi-value" id="kpi-free" style="color:#94a3b8;">—</div><div class="saas-kpi-foot">aguardando upgrade</div></div>
           <div class="saas-kpi"><div class="saas-kpi-label">Conversão</div><div class="saas-kpi-value" id="kpi-conversion" style="color:#22c55e;">—</div><div class="saas-kpi-foot">FREE → PREMIUM</div></div>
         </div>
+      </section>
+
+      <!-- Central operacional — providers, scanner, uptime, memória, erros -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div>
+            <div class="saas-section-title">▤ Central operacional</div>
+            <div class="saas-section-sub">status em tempo real · refresh 5s</div>
+          </div>
+        </div>
+        <div data-ops-status></div>
       </section>
 
       <!-- Hub: navegação visual para as sub-páginas -->

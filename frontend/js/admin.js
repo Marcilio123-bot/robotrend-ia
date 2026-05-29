@@ -15,7 +15,12 @@
       me = (await RobotrendAuth.api('/api/auth/me'))?.user;
     }
   } catch (_) { /* guard já redirecionou */ }
-  if (!me) return;
+  if (!me) {
+    console.warn('[ADMIN UI] admin.js abortou: usuário não autenticado (RobotrendGuard.ready vazio)');
+    return;
+  }
+
+  console.log('[ADMIN UI] admin.js iniciado', { email: me.email, role: me.role, path: location.pathname });
 
   const meEl = document.getElementById('me');
   if (meEl) meEl.textContent = `${me.email} · ADMIN`;
@@ -30,15 +35,46 @@
     if (el) el.textContent = val;
   }
 
+  const USER_TABLE_IDS = ['premium-body', 'free-body', 'admin-body', 'form-create-user'];
+  const USER_KPI_IDS = ['kpi-free', 'kpi-conversion', 'premium-count', 'free-count'];
+
+  function probeMounts() {
+    const mounts = {};
+    for (const id of [...USER_TABLE_IDS, ...USER_KPI_IDS, 'admins-section', 'admin-users-error']) {
+      mounts[id] = !!document.getElementById(id);
+    }
+    return mounts;
+  }
+
+  /** Log estruturado para diagnosticar CRUD no admin.html */
+  function logAdminUi(state) {
+    console.log('[ADMIN UI]', state);
+  }
+
+  function showUsersError(msg) {
+    const el = document.getElementById('admin-users-error');
+    if (!el) return;
+    if (!msg) {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
   async function loadOverview() {
     try {
       const o = await RobotrendAuth.api('/api/admin/overview');
       setText('kpi-users',   o.users ?? '—');
+      setText('kpi-premium', o.paidUsers ?? '—');
       setText('kpi-revenue', 'R$ ' + (Number(o.revenue) || 0).toFixed(2));
       setText('kpi-signals', o.signals ?? '—');
       setText('kpi-winrate', (o.signalsStats?.winrate ?? 0) + '%');
-      // kpi-free, kpi-premium, kpi-conversion → preenchidos por loadUsers()
-    } catch (e) { console.error(e); }
+      // kpi-free, kpi-conversion → refinados por loadUsers()
+    } catch (e) {
+      console.error('[ADMIN UI] loadOverview failed', e);
+    }
   }
 
   function planBadge(plan, role) {
@@ -92,39 +128,104 @@
   /* ============================================================
      LOAD USERS — separa em PREMIUM, FREE, ADMIN e renderiza KPIs
      ============================================================ */
+  function renderUsersTables(premium, free, admins) {
+    renderPremiumTable(premium);
+    renderFreeTable(free);
+    renderAdminTable(admins);
+    const adminsSection = document.getElementById('admins-section');
+    if (adminsSection) adminsSection.style.display = admins.length > 1 ? '' : 'none';
+  }
+
   async function loadUsers() {
+    const mounts = probeMounts();
+    let usersLoaded = false;
+    let rowsRendered = 0;
+
+    logAdminUi({
+      stage: 'loadUsers:start',
+      usersLoaded,
+      containersFound: mounts,
+      rowsRendered,
+      mounts,
+      adminJsLoaded: true,
+    });
+
+    if (!mounts['premium-body'] && !mounts['free-body']) {
+      const msg = 'Containers das tabelas não encontrados no DOM (premium-body / free-body). Verifique admin.html.';
+      console.warn('[ADMIN UI]', msg);
+      showUsersError(msg);
+      logAdminUi({ stage: 'loadUsers:abort', usersLoaded: false, containersFound: mounts, rowsRendered: 0, mounts });
+      return { ok: false, reason: 'no-containers' };
+    }
+
     try {
-      const { users } = await RobotrendAuth.api('/api/admin/users');
+      const data = await RobotrendAuth.api('/api/admin/users');
+      const users = Array.isArray(data?.users) ? data.users : [];
+      usersLoaded = true;
+      showUsersError(null);
 
-      // ---- Separação por categoria ----
-      const admins  = users.filter(u => u.role === 'admin' || u.role === 'owner');
-      const nonAdmin = users.filter(u => u.role !== 'admin' && u.role !== 'owner');
-      const premium = nonAdmin.filter(u => u.plan === 'PREMIUM' || u.plan === 'VIP' || u.role === 'premium');
-      const free    = nonAdmin.filter(u => !(u.plan === 'PREMIUM' || u.plan === 'VIP' || u.role === 'premium'));
+      const admins = users.filter((u) => {
+        const r = String(u.role || '').toLowerCase();
+        return r === 'admin' || r === 'owner' || r === 'master' || r === 'super_admin';
+      });
+      const nonAdmin = users.filter((u) => {
+        const r = String(u.role || '').toLowerCase();
+        return r !== 'admin' && r !== 'owner' && r !== 'master' && r !== 'super_admin';
+      });
+      const premium = nonAdmin.filter((u) => u.plan === 'PREMIUM' || u.plan === 'VIP' || u.role === 'premium');
+      const free = nonAdmin.filter((u) => !(u.plan === 'PREMIUM' || u.plan === 'VIP' || u.role === 'premium'));
 
-      // ---- KPIs ----
       const totalClients = nonAdmin.length;
-      const conversionPct = totalClients > 0 ? ((premium.length / totalClients) * 100) : 0;
+      const conversionPct = totalClients > 0 ? (premium.length / totalClients) * 100 : 0;
       const revenueEstimate = premium.length * PREMIUM_PRICE;
 
-      const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-      setText('kpi-free',       String(free.length));
-      setText('kpi-premium',    String(premium.length));
+      setText('kpi-free', String(free.length));
+      setText('kpi-premium', String(premium.length));
       setText('kpi-conversion', conversionPct.toFixed(1) + '%');
-      setText('premium-count',  String(premium.length));
-      setText('premium-revenue','R$ ' + revenueEstimate.toFixed(2).replace('.', ','));
-      setText('free-count',     String(free.length));
+      setText('premium-count', String(premium.length));
+      setText('premium-revenue', 'R$ ' + revenueEstimate.toFixed(2).replace('.', ','));
+      setText('free-count', String(free.length));
       setText('free-conversion', conversionPct.toFixed(1) + '%');
-      setText('admin-count',    String(admins.length));
+      setText('admin-count', String(admins.length));
 
-      renderPremiumTable(premium);
-      renderFreeTable(free);
-      renderAdminTable(admins);
+      renderUsersTables(premium, free, admins);
+      rowsRendered = premium.length + free.length + admins.length;
 
-      // mostra a seção de admins apenas se houver mais de 1
-      const adminsSection = document.getElementById('admins-section');
-      if (adminsSection) adminsSection.style.display = admins.length > 1 ? '' : 'none';
-    } catch (e) { console.error('loadUsers', e); }
+      logAdminUi({
+        stage: 'loadUsers:ok',
+        usersLoaded,
+        containersFound: probeMounts(),
+        rowsRendered,
+        mounts: probeMounts(),
+        counts: { total: users.length, premium: premium.length, free: free.length, admins: admins.length },
+      });
+
+      return { ok: true, users, premium, free, admins };
+    } catch (e) {
+      console.error('[ADMIN UI] loadUsers failed', e);
+      showUsersError(`Falha ao carregar usuários: ${e.message || 'erro desconhecido'}. Confira /api/admin/users no Network.`);
+
+      // Sai do estado "Carregando…" mesmo em erro
+      if (mounts['premium-body']) {
+        document.getElementById('premium-body').innerHTML =
+          '<tr><td colspan="7" class="py-6 text-center" style="color:var(--danger);">Erro ao carregar usuários</td></tr>';
+      }
+      if (mounts['free-body']) {
+        document.getElementById('free-body').innerHTML =
+          '<tr><td colspan="6" class="py-6 text-center" style="color:var(--danger);">Erro ao carregar usuários</td></tr>';
+      }
+
+      logAdminUi({
+        stage: 'loadUsers:error',
+        usersLoaded: false,
+        containersFound: probeMounts(),
+        rowsRendered: 0,
+        mounts: probeMounts(),
+        error: e.message,
+      });
+
+      return { ok: false, reason: e.message };
+    }
   }
 
   /* ---------- PREMIUM TABLE ---------- */
@@ -368,28 +469,38 @@
   });
 
   async function loadPayments() {
+    const body = document.getElementById('payments-body');
+    if (!body) return;
     try {
       const { payments } = await RobotrendAuth.api('/api/admin/payments');
-      const body = document.getElementById('payments-body');
-      if (!payments.length) { body.innerHTML = `<tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">Sem pagamentos</td></tr>`; return; }
-      body.innerHTML = payments.map(p => `
+      const list = Array.isArray(payments) ? payments : [];
+      if (!list.length) {
+        body.innerHTML = '<tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">Sem pagamentos</td></tr>';
+        return;
+      }
+      body.innerHTML = list.map((p) => `
         <tr>
           <td class="py-3 px-4 font-mono text-xs">${new Date(p.created_at).toLocaleString('pt-BR')}</td>
-          <td class="py-3 px-4">${p.provider}</td>
-          <td class="py-3 px-4">${p.plan}</td>
+          <td class="py-3 px-4">${escapeHtml(p.provider)}</td>
+          <td class="py-3 px-4">${escapeHtml(p.plan)}</td>
           <td class="py-3 px-4 font-mono">R$ ${Number(p.amount_brl || p.amount || 0).toFixed(2)}</td>
-          <td class="py-3 px-4"><span class="badge ${p.status === 'paid' ? 'win' : ''}">${p.status}</span></td>
+          <td class="py-3 px-4"><span class="badge ${p.status === 'paid' ? 'win' : ''}">${escapeHtml(p.status)}</span></td>
         </tr>
       `).join('');
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('[ADMIN UI] loadPayments', e); }
   }
 
   async function loadSignals() {
+    const body = document.getElementById('signals-body');
+    if (!body) return;
     try {
       const { signals } = await RobotrendAuth.api('/api/admin/signals');
-      const body = document.getElementById('signals-body');
-      if (!signals.length) { body.innerHTML = `<tr><td colspan="6" class="py-6 text-center" style="color:var(--muted);">Sem sinais</td></tr>`; return; }
-      body.innerHTML = signals.slice(0, 50).map(s => {
+      const list = Array.isArray(signals) ? signals : [];
+      if (!list.length) {
+        body.innerHTML = '<tr><td colspan="6" class="py-6 text-center" style="color:var(--muted);">Sem sinais</td></tr>';
+        return;
+      }
+      body.innerHTML = list.slice(0, 50).map((s) => {
         const t = s.created_at || s.createdAt;
         const result = s.result || 'pending';
         const badge = result === 'win' ? '<span class="badge win">WIN</span>'
@@ -405,38 +516,52 @@
             <td class="py-3 px-4">${badge}</td>
           </tr>`;
       }).join('');
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('[ADMIN UI] loadSignals', e); }
   }
 
   async function loadCoupons() {
+    const el = document.getElementById('coupons-list');
+    if (!el) return;
     try {
       const { coupons } = await RobotrendAuth.api('/api/beta/coupons');
-      const el = document.getElementById('coupons-list');
-      if (!coupons.length) { el.innerHTML = '<span style="color:var(--muted);">Nenhum cupom criado.</span>'; return; }
-      el.innerHTML = coupons.map(c => `
+      const list = Array.isArray(coupons) ? coupons : [];
+      if (!list.length) {
+        el.innerHTML = '<span style="color:var(--muted);">Nenhum cupom criado.</span>';
+        return;
+      }
+      el.innerHTML = list.map((c) => `
         <div class="flex justify-between py-1" style="border-bottom: 1px solid var(--card-border);">
-          <code style="background: var(--bg-2); padding: 2px 6px; border-radius: 3px;">${c.code}</code>
+          <code style="background: var(--bg-2); padding: 2px 6px; border-radius: 3px;">${escapeHtml(c.code)}</code>
           <span>-${c.value}% · ${c.used}/${c.maxUses} usos</span>
         </div>`).join('');
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('[ADMIN UI] loadCoupons', e); }
   }
+
   async function loadFeedback() {
+    const statsEl = document.getElementById('feedback-stats');
+    const listEl = document.getElementById('feedback-list');
+    if (!statsEl && !listEl) return;
     try {
       const r = await RobotrendAuth.api('/api/beta/feedback');
-      const stats = r.stats;
-      document.getElementById('feedback-stats').textContent =
-        `${stats.count} mensagens · Nota média: ${stats.avgRating}/5`;
-      const el = document.getElementById('feedback-list');
-      if (!r.feedback.length) { el.innerHTML = '<span style="color:var(--muted);">Nenhum feedback ainda.</span>'; return; }
-      el.innerHTML = r.feedback.slice(0, 100).map(f => `
+      const stats = r.stats || {};
+      if (statsEl) {
+        statsEl.textContent = `${stats.count ?? 0} mensagens · Nota média: ${stats.avgRating ?? '—'}/5`;
+      }
+      if (!listEl) return;
+      const feedback = Array.isArray(r.feedback) ? r.feedback : [];
+      if (!feedback.length) {
+        listEl.innerHTML = '<span style="color:var(--muted);">Nenhum feedback ainda.</span>';
+        return;
+      }
+      listEl.innerHTML = feedback.slice(0, 100).map((f) => `
         <div class="card" style="padding: 10px;">
           <div class="flex justify-between text-xs" style="color: var(--muted);">
-            <span>${f.email || 'anônimo'}</span>
+            <span>${escapeHtml(f.email || 'anônimo')}</span>
             <span>${'★'.repeat(f.rating)}${'☆'.repeat(5 - f.rating)} · ${new Date(f.createdAt).toLocaleString('pt-BR')}</span>
           </div>
-          <div class="mt-1">${f.text}</div>
+          <div class="mt-1">${escapeHtml(f.text)}</div>
         </div>`).join('');
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('[ADMIN UI] loadFeedback', e); }
   }
 
   document.getElementById('btn-create-coupon')?.addEventListener('click', async () => {
@@ -450,12 +575,31 @@
     loadCoupons();
   });
 
-  loadOverview();
-  loadUsers();
-  loadPayments();
-  loadSignals();
-  loadCoupons();
-  loadFeedback();
-  setInterval(loadOverview, 30000);
-  setInterval(loadFeedback, 60000);
+  /* Bootstrap: KPIs + CRUD de usuários primeiro; loaders opcionais depois */
+  (async function bootstrapAdminPage() {
+    logAdminUi({
+      stage: 'bootstrap',
+      usersLoaded: false,
+      containersFound: probeMounts(),
+      rowsRendered: 0,
+      mounts: probeMounts(),
+      adminJsLoaded: true,
+    });
+
+    await loadOverview();
+    await loadUsers();
+
+    await Promise.allSettled([
+      loadPayments(),
+      loadSignals(),
+      loadCoupons(),
+      loadFeedback(),
+    ]);
+
+    setInterval(loadOverview, 30000);
+    setInterval(() => { loadUsers().catch(() => {}); }, 60000);
+    if (document.getElementById('feedback-list')) {
+      setInterval(loadFeedback, 60000);
+    }
+  })();
 })();
