@@ -30,6 +30,7 @@
         </div>
         <div class="saas-page-actions">
           <span class="saas-status-pill" id="ws-status">conectando</span>
+          <span data-heartbeat></span>
         </div>
       </header>
 
@@ -261,12 +262,27 @@
   </script>
 
   <script src="/socket.io/socket.io.js"></script>
+  <!-- CORE (carregado em todas as páginas — leve, define singletons) -->
+  <script src="/core/bus.js"></script>
+  <script src="/core/sanitize.js"></script>
+  <script src="/core/storage.js"></script>
+  <script src="/core/lazy.js"></script>
+  <script src="/core/debug.js"></script>
+  <!-- AUTH + USER -->
   <script src="/js/auth.js"></script>
   <script src="/js/auth-guard.js"></script>
   <script src="/js/user-state.js"></script>
   <script src="/js/upgrade-celebration.js"></script>
   <script src="/js/pwa.js"></script>
+  <!-- COMPONENTES UI globais -->
+  <script src="/components/toast.js"></script>
+  <!-- NAV + LAYOUTS + REALTIME -->
   <script src="/js/saas-nav.js"></script>
+  <script src="/realtime/heartbeat.js"></script>
+  <script src="/realtime/connection.js"></script>
+  <script src="/layouts/client-layout.js"></script>
+  <script src="/layouts/master-layout.js"></script>
+  <!-- PÁGINA -->
   <script src="/js/payments.js"></script>
   <script src="/js/promo-banner.js"></script>
   <script src="/js/dashboard.js"></script>
@@ -311,12 +327,18 @@
         }
       }
 
+      const asClientOverride = location.search.includes('asClient=1');
+
       function applyRole(role) {
-        const isMaster = MASTER_ROLES.has(String(role || '').toLowerCase());
+        const isMaster = MASTER_ROLES.has(String(role || '').toLowerCase()) && !asClientOverride;
         const snap = document.getElementById('master-snapshot');
         const best = document.getElementById('best-bet-section');
         if (snap) snap.style.display = isMaster ? '' : 'none';
         if (best) best.style.display = isMaster ? 'none' : '';
+        // Reflete o modo no <body> (mantém em sincronia com saas-nav.js mesmo
+        // se o saas-nav booteu antes do user-ready chegar).
+        document.body.classList.remove('saas-mode-master', 'saas-mode-client');
+        document.body.classList.add(isMaster ? 'saas-mode-master' : 'saas-mode-client');
         if (isMaster) loadMasterSnapshot();
       }
 

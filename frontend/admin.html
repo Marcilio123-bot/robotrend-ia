@@ -52,6 +52,17 @@
         <div class="saas-kpi"><div class="saas-kpi-label">Winrate</div><div class="saas-kpi-value" id="kpi-winrate">—</div><div class="saas-kpi-foot">global</div></div>
       </section>
 
+      <!-- Central operacional — providers, scanner, uptime, memória, erros -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div>
+            <div class="saas-section-title">▤ Central operacional</div>
+            <div class="saas-section-sub">status em tempo real · refresh 5s</div>
+          </div>
+        </div>
+        <div data-ops-status></div>
+      </section>
+
       <!-- Hub: navegação visual para as sub-páginas -->
       <section class="saas-section">
         <div class="saas-section-head">
@@ -115,11 +126,19 @@
     </main>
   </div>
 
+  <script src="/core/bus.js"></script>
+  <script src="/core/sanitize.js"></script>
+  <script src="/core/storage.js"></script>
+  <script src="/core/lazy.js"></script>
+  <script src="/core/debug.js"></script>
   <script src="/js/auth.js"></script>
   <script src="/js/auth-guard.js"></script>
   <script src="/js/user-state.js"></script>
   <script src="/js/pwa.js"></script>
+  <script src="/components/toast.js"></script>
   <script src="/js/saas-nav.js"></script>
+  <script src="/realtime/heartbeat.js"></script>
+  <script src="/layouts/master-layout.js"></script>
   <script src="/js/admin.js"></script>
 </body>
 </html>

@@ -19,32 +19,54 @@
      ============================================================ */
   const LIVE_STATUSES_CLIENT = new Set(['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT']);
   const FINISHED_STATUSES_CLIENT = new Set(['FT', 'AET', 'PEN', 'CANC', 'PST', 'ABD', 'AWD', 'WO', 'SUSP']);
-  const SYNTH_PREFIXES = ['demo-', 'pre-', 'test-', 'mock-', 'fake-', 'sample-'];
-  /** Quando o poller está em demo (sem API real), exibimos partidas sintéticas no painel. */
-  let allowDemoPreview = false;
+  /** Banner amarelo "modo demo" — gerenciado por detectFootballMode(). */
+  let demoModeActive = false;
 
-  function isSyntheticId(id) {
-    const s = String(id || '').toLowerCase();
-    return SYNTH_PREFIXES.some((p) => s.startsWith(p));
-  }
-
+  // Em DEMO o backend já bloqueia signals fake (FAKE-MATCH GUARD) — então
+  // exibir as partidas demo-* no painel é seguro e melhora a UX. O filtro
+  // segue rejeitando apenas matches OBVIAMENTE inválidos (FT/timestamp ruim).
   function isValidMatch(m) {
     if (!m || m.id == null) return false;
-    const id = String(m.id).toLowerCase();
-    if (isSyntheticId(id) && !allowDemoPreview) return false;
     const st = String(m.status || '').toUpperCase();
     if (FINISHED_STATUSES_CLIENT.has(st)) return false;
     if (st && !LIVE_STATUSES_CLIENT.has(st)) return false;
     const t = m.kickoffAt || m.date || m.startsAt;
-    if (!t) return false;
-    const ts = new Date(t).getTime();
-    if (!Number.isFinite(ts)) return false;
-    const hoursAgo = (Date.now() - ts) / 3_600_000;
-    if (hoursAgo > 3 || hoursAgo < -24) return false;
+    if (t) {
+      const ts = new Date(t).getTime();
+      if (Number.isFinite(ts)) {
+        const hoursAgo = (Date.now() - ts) / 3_600_000;
+        if (hoursAgo > 3 || hoursAgo < -24) return false;
+      }
+    }
     return true;
   }
   function filterValidMatches(arr) {
     return Array.isArray(arr) ? arr.filter(isValidMatch) : [];
+  }
+
+  /**
+   * Faz merge de matches por ID, mantendo a versão MAIS NOVA quando há
+   * conflito entre socket e REST. Critério "mais novo":
+   *   1) maior `lastApiUpdate` ou `updatedAt` ou `lastTickAt`
+   *   2) na ausência desses campos, sempre prefere o incoming.
+   * Devolve o array deduplicado preservando a ordem de chegada.
+   */
+  function mergeMatchesById(currentList, incomingList) {
+    const map = new Map();
+    const addAll = (arr) => {
+      for (const m of arr || []) {
+        if (!m || m.id == null) continue;
+        const id = String(m.id);
+        const existing = map.get(id);
+        if (!existing) { map.set(id, m); continue; }
+        const a = Number(existing.lastApiUpdate || existing.updatedAt || existing.lastTickAt || 0);
+        const b = Number(m.lastApiUpdate || m.updatedAt || m.lastTickAt || 0);
+        map.set(id, b >= a ? m : existing);
+      }
+    };
+    addAll(currentList);
+    addAll(incomingList);
+    return Array.from(map.values());
   }
 
   function mapApiMatchToDashboard(m) {
@@ -74,29 +96,34 @@
       if (!r.ok) return;
       const h = await r.json();
       const prov = String(h.football?.activeProvider || '').toLowerCase();
-      allowDemoPreview = prov === 'demo';
+      demoModeActive = prov === 'demo';
       const banner = document.getElementById('demo-provider-banner');
-      if (banner) banner.style.display = allowDemoPreview ? '' : 'none';
+      if (banner) banner.style.display = demoModeActive ? '' : 'none';
     } catch (_) { /* offline */ }
   }
 
+  /**
+   * Lê /api/football/live (cache do poller — custo zero) como fallback
+   * quando o socket vem vazio. NUNCA limpa lastMatches; só substitui
+   * quando o REST traz algo útil, evitando piscadas no painel.
+   */
   async function loadLiveFromApi() {
     try {
       const headers = {};
       const tok = window.RobotrendAuth?.getToken?.();
       if (tok) headers.Authorization = 'Bearer ' + tok;
       const r = await fetch('/api/football/live', { headers, credentials: 'include' });
+      window.RobotrendHeartbeat?.markRestActivity('/api/football/live', r.status);
       if (!r.ok) return;
       const data = await r.json();
       const mapped = (data.matches || []).map(mapApiMatchToDashboard).filter(Boolean);
       const safe = filterValidMatches(mapped);
-      if (!safe.length && !mapped.length) return;
-      // Prefer API feed when bot socket envia lista vazia (scanner inerte + poller demo).
-      if (safe.length >= lastMatches.length) {
-        lastMatches = safe;
-        setText('#kpi-live', String(safe.length));
-        scheduleRender();
-      }
+      if (!safe.length) return;
+      // Merge com lastMatches (socket pode ter trazido matches que o REST
+      // ainda não devolveu, e vice-versa). Dedup por ID, versão mais nova vence.
+      lastMatches = mergeMatchesById(lastMatches, safe);
+      setText('#kpi-live', String(lastMatches.length));
+      scheduleRender();
     } catch (_) { /* offline */ }
   }
 
@@ -197,48 +224,65 @@
     return `<span class="badge ${levelClass(c.level)}">${c.emoji || ''} ${c.label || ''}</span>`;
   }
 
+  const esc = (s) => window.RobotrendSanitize?.escapeHtml(s) ?? String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
   function matchCardHTML(match, a) {
     const sc = match.score || { home: 0, away: 0 };
     const cls = a?.classification ? levelClass(a.classification.level) : 'warm';
-    const sug = a?.suggestion ? `<div class="suggestion-pill">${a.suggestion}</div>` : '';
+    const sug = a?.suggestion ? `<div class="suggestion-pill">${esc(a.suggestion)}</div>` : '';
     const oddRisk = a
       ? `<div class="flex items-center gap-1.5 mt-2 flex-wrap">
            ${classBadge(a.classification)}
            ${riskBadge(a.risk)}
-           ${a.odd ? `<span class="badge">~${a.odd}</span>` : ''}
+           ${a.odd ? `<span class="badge">~${esc(a.odd)}</span>` : ''}
          </div>`
       : '';
     return `
-      <article class="match-card ${cls}" data-id="${match.id}">
+      <article class="match-card ${cls}" data-id="${esc(match.id)}" data-sig="${cardSignature(match, a)}">
         <div class="flex items-center justify-between">
-          <div class="league">${match.league || 'Live'}</div>
-          <span class="minute">${match.minute || 0}'</span>
+          <div class="league">${esc(match.league || 'Live')}</div>
+          <span class="minute">${esc(match.minute || 0)}'</span>
         </div>
         <div class="teams mt-2">
-          <div class="team flex-1">${match.home}</div>
-          <div class="score">${sc.home} : ${sc.away}</div>
-          <div class="team text-right flex-1">${match.away}</div>
+          <div class="team flex-1">${esc(match.home)}</div>
+          <div class="score">${esc(sc.home)} : ${esc(sc.away)}</div>
+          <div class="team text-right flex-1">${esc(match.away)}</div>
         </div>
         <div class="stats">
-          <div class="stat"><div class="k">Esc</div><div class="v brand">${match.corners ?? 0}</div></div>
-          <div class="stat"><div class="k">Atq+</div><div class="v">${match.dangerousAttacks ?? 0}</div></div>
-          <div class="stat"><div class="k">Fin</div><div class="v">${match.shots ?? 0}</div></div>
-          <div class="stat"><div class="k">Alvo</div><div class="v">${match.shotsOnTarget ?? 0}</div></div>
+          <div class="stat"><div class="k">Esc</div><div class="v brand">${esc(match.corners ?? 0)}</div></div>
+          <div class="stat"><div class="k">Atq+</div><div class="v">${esc(match.dangerousAttacks ?? 0)}</div></div>
+          <div class="stat"><div class="k">Fin</div><div class="v">${esc(match.shots ?? 0)}</div></div>
+          <div class="stat"><div class="k">Alvo</div><div class="v">${esc(match.shotsOnTarget ?? 0)}</div></div>
         </div>
         <div class="mt-3">
           <div class="flex items-center justify-between text-[11px]" style="color: var(--muted);">
-            <span>Pressão</span><span style="color: var(--text)">${a?.pressure ?? 0}/100</span>
+            <span>Pressão</span><span style="color: var(--text)">${esc(a?.pressure ?? 0)}/100</span>
           </div>
-          <div class="progress mt-1"><span style="width:${a?.pressure ?? 0}%"></span></div>
+          <div class="progress mt-1"><span style="width:${Number(a?.pressure ?? 0)}%"></span></div>
         </div>
         <div class="verdict ${verdictClass(a?.verdict)} mt-3">
-          <span>${a?.verdict || 'Analisando…'}</span>
-          <span class="meter">IA ${a?.confidence ?? 0}%</span>
+          <span>${esc(a?.verdict || 'Analisando…')}</span>
+          <span class="meter">IA ${esc(a?.confidence ?? 0)}%</span>
         </div>
         ${oddRisk}
         ${sug}
       </article>
     `;
+  }
+
+  /**
+   * Hash curto que captura todos os campos visíveis do card. Se a "signature"
+   * não mudou, não re-renderizamos o card (zero DOM thrash). Isso evita
+   * piscar quando o socket reemite o mesmo match sem mudanças.
+   */
+  function cardSignature(m, a) {
+    const sc = m.score || {};
+    return [
+      m.minute, m.status, sc.home, sc.away,
+      m.corners, m.dangerousAttacks, m.shots, m.shotsOnTarget,
+      a?.pressure, a?.confidence, a?.verdict, a?.classification?.level,
+      a?.risk?.level, a?.suggestion, a?.odd,
+    ].join('|');
   }
 
   function renderMatches() {
@@ -253,22 +297,38 @@
     const byId = new Map(lastAnalyses.map((a) => [a.matchId, a]));
     const incoming = new Map(safe.map((m) => [String(m.id), m]));
 
+    // 1) remove cards de matches que sumiram
     grid.querySelectorAll('.match-card[data-id]').forEach((el) => {
       if (!incoming.has(el.dataset.id)) el.remove();
     });
 
+    // 2) fragment para batch insert + signature check para skip de re-render
+    const frag = document.createDocumentFragment();
     const tmp = document.createElement('div');
+    let inserts = 0, updates = 0, skips = 0;
+
     for (const m of safe) {
+      const analysis = byId.get(m.id);
+      const sig = cardSignature(m, analysis);
       const existing = grid.querySelector(`.match-card[data-id="${CSS.escape(String(m.id))}"]`);
-      tmp.innerHTML = matchCardHTML(m, byId.get(m.id));
+      if (existing && existing.dataset.sig === sig) { skips++; continue; }
+      tmp.innerHTML = matchCardHTML(m, analysis);
       const fresh = tmp.firstElementChild;
       if (existing) {
         existing.className = fresh.className;
+        existing.dataset.sig = sig;
         existing.innerHTML = fresh.innerHTML;
+        updates++;
       } else {
-        grid.appendChild(fresh);
+        frag.appendChild(fresh);
+        inserts++;
       }
     }
+    if (inserts) grid.appendChild(frag);
+
+    window.__RT_DEBUG__?.tickRender?.('match-grid');
+    // Observability: emite resumo da render
+    try { window.RobotrendBus?.emit('robotrend:matches-render', { inserts, updates, skips, total: safe.length }); } catch (_) {}
   }
 
   /* ============================================================
@@ -558,24 +618,28 @@
   }
 
   /* ============================================================
-     TOASTS
+     TOASTS — delega para RobotrendToast (global). Mantemos pushToast
+     local apenas como wrapper para não quebrar callsites antigos.
      ============================================================ */
   function pushToast({ title, body, accent, ttl }) {
+    const kind = accent === 'warn'  ? 'warning'
+              : accent === 'error'  ? 'error'
+              : accent === 'success'? 'success'
+              : 'info';
+    if (window.RobotrendToast?.show) {
+      // RobotrendToast escapa HTML — mas o código antigo passa <br/> em body.
+      // Removemos tags e usamos texto plano. Se precisar de HTML, use opts.html
+      // (não implementado por segurança).
+      const plainBody = String(body || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
+      return window.RobotrendToast.show({ kind, title, body: plainBody, ttl });
+    }
+    // Fallback (RobotrendToast não carregado): stack antigo
     const stack = $('#toast-stack'); if (!stack) return;
     const el = document.createElement('div');
-    const klass = accent === 'warn'    ? ' warn'
-                : accent === 'error'   ? ' error'
-                : accent === 'success' ? ' success'
-                : '';
-    el.className = 'toast' + klass;
-    el.innerHTML = `<div class="toast-title">${title}</div><div class="toast-body">${body || ''}</div>`;
+    el.className = 'toast' + (kind === 'warning' ? ' warn' : kind === 'error' ? ' error' : kind === 'success' ? ' success' : '');
+    el.innerHTML = `<div class="toast-title">${esc(title)}</div><div class="toast-body">${esc(String(body || '').replace(/<[^>]+>/g, ''))}</div>`;
     stack.appendChild(el);
-    setTimeout(() => {
-      el.style.opacity = '0';
-      el.style.transform = 'translateX(20px)';
-      el.style.transition = 'all .4s ease';
-      setTimeout(() => el.remove(), 400);
-    }, ttl || 6500);
+    setTimeout(() => el.remove(), ttl || 6500);
   }
 
   /* ============================================================
@@ -605,9 +669,31 @@
     auth: { token: window.RobotrendAuth?.getToken() || '' },
   });
 
-  socket.on('connect', () => setWS('online'));
-  socket.io.on('reconnect_attempt', () => setWS('pending'));
-  socket.on('disconnect', () => setWS('err'));
+  // Anexa wrapper resiliente: ramp-up de REST polling quando socket cai,
+  // toast informativo, contador de reconnects, bridge para RobotrendBus.
+  try {
+    window.RobotrendConnection?.attach?.(socket, {
+      offlineToastAfterMs: 8000,
+      pollFallback: {
+        interval: 8000,
+        maxInterval: 30000,
+        callback: () => { try { loadLiveFromApi(); loadBetSignals(); } catch (_) {} },
+      },
+    });
+  } catch (_) {}
+
+  socket.on('connect', () => {
+    setWS('online');
+    window.RobotrendHeartbeat?.markSocketState('online');
+  });
+  socket.io.on('reconnect_attempt', () => {
+    setWS('pending');
+    window.RobotrendHeartbeat?.markSocketState('pending');
+  });
+  socket.on('disconnect', () => {
+    setWS('err');
+    window.RobotrendHeartbeat?.markSocketState('offline');
+  });
 
   // ====== USER UPGRADED — pagamento aprovado via webhook ======
   // Backend (payments.js webhook MP) emite isso pro userId específico
@@ -652,21 +738,34 @@
     requestAnimationFrame(() => { _renderQueued = false; renderMatches(); });
   }
 
+  // matches:update — socket é a fonte primária quando há scanner real ativo.
+  // Quando o backend está em modo demo (scanner inerte → bot emite []), NÃO
+  // limpamos o feed: deixamos o fallback REST popular o painel.
   socket.on('matches:update', (m) => {
+    window.RobotrendHeartbeat?.markSocketActivity('matches:update');
     const incoming = filterValidMatches(m || []);
     if (incoming.length) {
-      lastMatches = incoming;
-      setText('#kpi-live', String(incoming.length));
-      scheduleRender();
-    } else if (!allowDemoPreview) {
-      lastMatches = [];
+      // Merge incremental: socket pode chegar atrasado depois de um REST e
+      // não queremos sobrescrever versões mais novas do mesmo match.
+      lastMatches = mergeMatchesById(lastMatches, incoming);
+      setText('#kpi-live', String(lastMatches.length));
       scheduleRender();
     }
-    // Com provider demo o bot emite [] — mantém feed do /api/football/live.
   });
-  socket.on('analyses:update', (a) => { lastAnalyses = a || []; scheduleRender(); });
-  socket.on('stats:update',    renderStats);
-  socket.on('signals:list',    (l) => { lastSignals = l || []; renderSignals(); });
+  socket.on('analyses:update', (a) => {
+    window.RobotrendHeartbeat?.markSocketActivity('analyses:update');
+    lastAnalyses = a || [];
+    scheduleRender();
+  });
+  socket.on('stats:update', (s) => {
+    window.RobotrendHeartbeat?.markSocketActivity('stats:update');
+    renderStats(s);
+  });
+  socket.on('signals:list', (l) => {
+    window.RobotrendHeartbeat?.markSocketActivity('signals:list');
+    lastSignals = l || [];
+    renderSignals();
+  });
 
   // signal:new = bet:opportunity vindo do betSignalEngine (corners/btts/win)
   // Backend já filtra/atrasa por tier — aqui só ajustamos a UX:

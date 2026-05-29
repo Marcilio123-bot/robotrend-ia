@@ -133,6 +133,7 @@ const ADMIN_CLEAN_ROUTES = {
   '/admin/finance':    'admin-finance.html',
   '/admin/system':     'admin-system.html',
   '/admin/backtest':   'admin-backtest.html',
+  '/admin/ops':        'admin-football.html',
   '/ops/live':         'admin-football.html',
   '/admin/live':       'admin-football.html',
 };
@@ -157,7 +158,7 @@ const PUBLIC_PAGES = [
   'index.html', 'login.html', 'register.html', 'forgot.html', 'reset.html',
   'pricing.html', 'signals.html', 'analytics.html', 'football.html',
   'results.html', 'quality.html', 'backtest.html',
-  'admin.html', 'admin-football.html',
+  'admin.html', 'admin-football.html', 'admin-ops.html',
   'admin-users.html', 'admin-finance.html', 'admin-system.html', 'admin-backtest.html',
   'account.html',
 ];
@@ -676,6 +677,92 @@ buildFootballRoutes(app, auth.requireAuth, db, auth.requireAdmin, io);
    ADMIN
    ============================================================ */
 buildAdminRoutes(app, db, auth.requireAuth, auth.requireAdmin);
+
+/* ============================================================
+   /api/admin/ops — central operacional (Operacional IA)
+   ------------------------------------------------------------
+   Aggrega health + bot + poller + processo num único payload
+   consumido pelo widget frontend/admin/ops-status.js.
+   ============================================================ */
+app.get('/api/admin/ops', async (req, res) => {
+  try {
+    const af = require('./services/footballProvider');
+    const afSt = af.status?.() || {};
+    const poller = getPoller();
+    const psnap = poller?.snapshot?.() || {};
+    const bsnap = bot?.snapshot?.() || {};
+    const mem = process.memoryUsage();
+    const sigStats = await db.getStats().catch(() => ({}));
+    const lastErrors = [];
+
+    if (psnap.lastError) {
+      lastErrors.push({
+        source: 'poller',
+        message: typeof psnap.lastError === 'string'
+          ? psnap.lastError
+          : (psnap.lastError.message || JSON.stringify(psnap.lastError)),
+        at: psnap.lastTickAt || null,
+      });
+    }
+    if (psnap.lastFallbackReason) {
+      lastErrors.push({
+        source: 'poller-fallback',
+        message: `fallback: ${psnap.lastFallbackReason}`,
+        at: psnap.lastTickAt || null,
+      });
+    }
+
+    res.json({
+      ok: true,
+      football: {
+        configured: af.isConfigured?.() ?? false,
+        activeProvider: afSt.activeProvider || af.providerName,
+        priority: af.priority || [],
+        safeMode: af.isSafeMode?.() || false,
+      },
+      poller: {
+        running: psnap.running,
+        alive: psnap.alive,
+        health: psnap.health,
+        intervalMs: psnap.intervalMs,
+        lastTickAt: psnap.lastTickAt,
+        lastTickMs: psnap.stats?.lastDurationMs ?? null,
+        tracked: psnap.tracked,
+        consecutiveFailures: psnap.consecutiveFailures,
+        lastFallbackReason: psnap.lastFallbackReason,
+        ticksSuccess: psnap.stats?.ticksSuccess ?? 0,
+        ticksFailed: psnap.stats?.ticksFailed ?? 0,
+      },
+      bot: {
+        liveEnabled: bsnap.liveEnabled,
+        preliveEnabled: bsnap.preliveEnabled,
+        monitored: (bsnap.matches || []).length,
+        minScore: bsnap.minScore,
+      },
+      signals: {
+        sent:    sigStats?.sent    ?? 0,
+        wins:    sigStats?.wins    ?? 0,
+        losses:  sigStats?.losses  ?? 0,
+        winrate: sigStats?.winrate ?? 0,
+        roi:     sigStats?.roi     ?? 0,
+      },
+      process: {
+        uptime: process.uptime(),
+        pid: process.pid,
+        memory: {
+          rss: mem.rss,
+          heapUsed: mem.heapUsed,
+          heapTotal: mem.heapTotal,
+          external: mem.external,
+        },
+      },
+      errors: lastErrors,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 /* ============================================================
    404 explícito para .html inexistentes
