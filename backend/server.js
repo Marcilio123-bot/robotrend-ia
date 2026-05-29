@@ -765,6 +765,51 @@ app.get('/api/admin/ops', async (req, res) => {
 });
 
 /* ============================================================
+   /api/admin/match-debug — snapshot do pipeline LIVE
+   ------------------------------------------------------------
+   Devolve, por estágio, quantos matches entraram, quantos saíram
+   e por quê. Útil para responder em segundos "por que provider
+   retornou N e o dashboard só mostra M?".
+   Estágios:
+     - poller.filters  (blacklist liga, priority, status live)
+     - live.tick       (freshness + consensus)
+     - bot.runOnce     (checkFn + pre-emit)
+   ============================================================ */
+app.get('/api/admin/match-debug', async (req, res) => {
+  try {
+    const af = require('./services/footballProvider');
+    const poller = getPoller();
+    const pollerSnap = poller?.getLastDebugSnapshot?.() || null;
+    let scannerSnap = null;
+    try { scannerSnap = bot?.live?.getLastDebugSnapshot?.() || null; } catch (_) {}
+    const botSnap = bot?.getLastDebugSnapshot?.() || null;
+
+    res.json({
+      ok: true,
+      provider: {
+        active: af.providerName || null,
+        priority: af.priority || [],
+        configured: af.isConfigured?.() ?? false,
+      },
+      env: {
+        STRICT_REAL_ONLY: String(process.env.STRICT_REAL_ONLY || ''),
+        MATCH_CONSENSUS_MODE: String(process.env.MATCH_CONSENSUS_MODE || '(default)'),
+        MATCH_DEBUG: String(process.env.MATCH_DEBUG || 'true'),
+        LIVE_IMPORTANT_LEAGUES_ONLY: String(process.env.LIVE_IMPORTANT_LEAGUES_ONLY || 'false'),
+      },
+      stages: {
+        poller: pollerSnap,
+        liveTick: scannerSnap,
+        bot: botSnap,
+      },
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/* ============================================================
    404 explícito para .html inexistentes
    --------------------------------------------------
    IMPORTANTE: NÃO há catch-all aqui (nada de app.get('*', ...)).

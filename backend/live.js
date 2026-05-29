@@ -25,6 +25,12 @@ const STRICT_REAL_ONLY = (() => {
   return String(raw).toLowerCase() === 'true';
 })();
 
+// [MATCH DEBUG] gate — quando ativo (default: true), imprime resumo por
+// tick: matches entrando, matches saindo, provider, ids, statuses e razões
+// de drop em cada estágio (freshness + consensus). Desabilite com
+// MATCH_DEBUG=false.
+const MATCH_DEBUG_ENABLED = String(process.env.MATCH_DEBUG || 'true').toLowerCase() !== 'false';
+
 const DEMO_LEAGUES = [
   'Brasileirão Série A',
   'Premier League',
@@ -225,13 +231,37 @@ class ApiLiveScanner {
   async tick() {
     const raw = await this.fetchLiveFixtures();
     const before = raw.length;
+    const providerNow = apiFootball.providerName || (apiFootball.status?.()?.provider) || 'unknown';
     const filterFn = STRICT_REAL_ONLY ? freshness.filterRecentStrict : freshness.filterRecent;
+    const dropReasons = [];
     const valid = filterFn(raw, (m, reason) => {
+      dropReasons.push({
+        id: m?.id != null ? String(m.id) : null,
+        provider: m?.provider || m?.flags?.source || null,
+        status: m?.status || null,
+        minute: m?.minute ?? null,
+        kickoffAt: m?.kickoffAt || m?.date || null,
+        reason,
+      });
       console.log(`[live] ignoring match: ${m?.home || '?'} x ${m?.away || '?'} (${reason})`);
     });
     const removed = before - valid.length;
     if (removed > 0) {
       console.log(`[LIVE FILTER] ${removed} jogos removidos por não serem reais`);
+    }
+
+    // [MATCH DEBUG] stage 1 — freshness gate (strict vs lenient)
+    if (MATCH_DEBUG_ENABLED) {
+      console.log('[MATCH DEBUG]', {
+        stage: 'live.tick:freshness',
+        beforeFilter: before,
+        afterFilter: valid.length,
+        provider: providerNow,
+        strict: STRICT_REAL_ONLY,
+        ids: valid.slice(0, 8).map((m) => String(m.id)),
+        statuses: valid.slice(0, 8).map((m) => ({ id: String(m.id), status: m.status, minute: m.minute })),
+        reasons: dropReasons.slice(0, 8),
+      });
     }
 
     // Multi-API Consensus Engine — agora roda em TODOS os modos
@@ -242,9 +272,34 @@ class ApiLiveScanner {
     // Em qualquer modo, `match.consensus` + `match.sourceQuality` ficam disponíveis
     // para o pipeline e para o frontend.
     let toAnalyze = valid;
+    let consensusInfo = { mode: null, failedSources: [], blocked: false };
     try {
       const { confirmed, failedSources, mode } = await consensus.confirmMatches(valid);
+      consensusInfo = { mode, failedSources: failedSources || [], blocked: false };
+      if (MATCH_DEBUG_ENABLED) {
+        console.log('[MATCH DEBUG]', {
+          stage: 'live.tick:consensus',
+          beforeFilter: valid.length,
+          afterFilter: confirmed.length,
+          provider: providerNow,
+          mode,
+          failedSources: failedSources || [],
+          ids: confirmed.slice(0, 8).map((m) => String(m.id)),
+          statuses: confirmed.slice(0, 8).map((m) => ({ id: String(m.id), status: m.status, sourceQuality: m.sourceQuality })),
+        });
+      }
       if (mode === 'strict' && failedSources.length) {
+        consensusInfo.blocked = true;
+        this._lastDebugSnapshot = {
+          ts: Date.now(),
+          provider: providerNow,
+          stage: 'consensus-block',
+          beforeFreshness: before,
+          afterFreshness: valid.length,
+          afterConsensus: 0,
+          consensus: consensusInfo,
+          freshnessDrops: dropReasons.slice(0, 16),
+        };
         console.error(
           `[CONSENSUS BLOCK] strict — ${failedSources.length} source(s) falharam: ${failedSources.join(',')} — 0 matches emitidos.`
         );
@@ -255,7 +310,19 @@ class ApiLiveScanner {
       // RELAXED/OFF não devem falhar nunca aqui; STRICT degrada para zero matches.
       console.error(`[CONSENSUS BLOCK] erro inesperado: ${e.message} — degradando para feed bruto.`);
       toAnalyze = STRICT_REAL_ONLY ? [] : valid.map((m) => consensus.annotateSourceQuality(m, { reason: 'consensus-error' }));
+      consensusInfo = { mode: 'error', failedSources: ['consensus-error'], blocked: STRICT_REAL_ONLY };
     }
+
+    this._lastDebugSnapshot = {
+      ts: Date.now(),
+      provider: providerNow,
+      stage: 'ok',
+      beforeFreshness: before,
+      afterFreshness: valid.length,
+      afterConsensus: toAnalyze.length,
+      consensus: consensusInfo,
+      freshnessDrops: dropReasons.slice(0, 16),
+    };
 
     toAnalyze.forEach((m) => {
       if (!this.acceptedOnce.has(m.id)) {
@@ -302,17 +369,35 @@ class ApiLiveScanner {
   /**
    * Converte um match normalizado (do poller/fixtureNormalizer) para o
    * formato legacy esperado pelo analyzer/freshness/etc.
+   *
+   * IMPORTANTE — kickoff fallback:
+   *   Providers free (TheSportsDB) podem não devolver `dateEvent`/`strTimestamp`
+   *   em certos eventos. Sem timestamp, `freshness.checkMatchStrict` rejeita
+   *   o match com "sem timestamp real" — derrubando jogos LIVE válidos no
+   *   STRICT_REAL_ONLY (default em production). Quando o provider entregou
+   *   apenas o minuto, derivamos kickoffAt = now - minute*60s.
+   *
+   * IMPORTANTE — provider:
+   *   `source` é mantido como 'api-football' por compat (signal source guard
+   *   espera `api-*`). O provider original (thesportsdb/sofascore/apisports)
+   *   fica preservado em `provider` para logs e diagnóstico.
    */
   mapNormalizedMatch(m) {
+    const minute = Number(m.minute || 0);
+    const kickoffRaw = m.kickoffAt || m.date || null;
+    const kickoffFallback = kickoffRaw
+      || new Date(Date.now() - Math.max(0, minute) * 60_000).toISOString();
+    const originalProvider = m.provider || m.flags?.source || null;
     return {
       id: String(m.fixtureId || m.id),
       home: m.home,
       away: m.away,
       league: m.league?.name || m.league || '',
-      minute: Number(m.minute || 0),
+      minute,
       status: m.status,
-      kickoffAt: m.kickoffAt || m.date,
-      date: m.kickoffAt || m.date,
+      kickoffAt: kickoffFallback,
+      date: kickoffFallback,
+      kickoffDerived: !kickoffRaw,
       score: {
         home: Number(m.score?.home || 0),
         away: Number(m.score?.away || 0),
@@ -325,8 +410,15 @@ class ApiLiveScanner {
       isLive: freshness.isLiveStatus(m.status),
       isFromLiveAPI: true,
       source: 'api-football',
-      lastApiUpdate: Date.now(),
+      provider: originalProvider || 'api-football',
+      dataQuality: m.dataQuality || (originalProvider === 'thesportsdb' || originalProvider === 'sofascore' ? 'partial' : 'full'),
+      lastApiUpdate: m.lastApiUpdate || Date.now(),
     };
+  }
+
+  /** Último snapshot de debug (povoado a cada tick). */
+  getLastDebugSnapshot() {
+    return this._lastDebugSnapshot || null;
   }
 
   mapFixture(fix) {

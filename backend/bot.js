@@ -30,6 +30,12 @@ const STRICT_REAL_ONLY = (() => {
   return String(raw).toLowerCase() === 'true';
 })();
 
+// [MATCH DEBUG] gate — logs estruturados por estágio do pipeline.
+// Quando habilitado (default), o bot imprime um payload com beforeFilter,
+// afterFilter, provider, ids, statuses e reasons em cada gate. Usado para
+// diagnosticar "provider → N matches" virando "0 rendered".
+const MATCH_DEBUG_ENABLED = String(process.env.MATCH_DEBUG || 'true').toLowerCase() !== 'false';
+
 class RobotrendBot {
   constructor(io) {
     this.io = io;
@@ -155,12 +161,22 @@ class RobotrendBot {
     // Última camada de defesa: re-aplica freshness STRICT (ou normal) por match.
     // Conta e loga quantos foram descartados aqui (após scanner).
     const checkFn = STRICT_REAL_ONLY ? freshness.checkMatchStrict : freshness.checkMatch;
+    const checkFnName = STRICT_REAL_ONLY ? 'checkMatchStrict' : 'checkMatch';
     let droppedAtBot = 0;
     const enriched = [];
+    const checkFnDrops = [];
     for (const { match, analysis } of results) {
       const fresh = checkFn(match);
       if (!fresh.ok) {
         droppedAtBot++;
+        checkFnDrops.push({
+          id: match?.id != null ? String(match.id) : null,
+          provider: match?.provider || match?.source || null,
+          status: match?.status || null,
+          minute: match?.minute ?? null,
+          kickoffAt: match?.kickoffAt || match?.date || null,
+          reason: fresh.reason,
+        });
         this.log.debug('match descartado no bot', { id: match?.id, reason: fresh.reason });
         continue;
       }
@@ -179,19 +195,88 @@ class RobotrendBot {
       enriched.push({ match, analysis: ml2 });
     }
     if (droppedAtBot > 0) {
-      console.log(`[LIVE FILTER] ${droppedAtBot} jogos removidos por não serem reais`);
+      console.log(`[LIVE FILTER] ${droppedAtBot} jogos removidos por não serem reais (${checkFnName})`);
+    }
+
+    // Resolve provider ativo só pra debug log (não causa side-effects).
+    let activeProvider = 'unknown';
+    try { activeProvider = require('./services/footballProvider').providerName || 'unknown'; } catch (_) {}
+
+    // [MATCH DEBUG] stage 3 — gate checkFn pós-scanner
+    if (MATCH_DEBUG_ENABLED) {
+      console.log('[MATCH DEBUG]', {
+        stage: 'bot.runOnce:checkFn',
+        beforeFilter: results.length,
+        afterFilter: enriched.length,
+        provider: activeProvider,
+        strict: STRICT_REAL_ONLY,
+        checkFn: checkFnName,
+        ids: enriched.slice(0, 8).map(({ match }) => String(match.id)),
+        statuses: enriched.slice(0, 8).map(({ match }) => ({
+          id: String(match.id), status: match.status, minute: match.minute, provider: match.provider,
+        })),
+        reasons: checkFnDrops.slice(0, 8),
+      });
     }
 
     // Última camada de defesa pré-emit: refiltra com checkFn (paranoia).
-    const safe = enriched.filter(({ match }) => checkFn(match).ok);
+    const preEmitDrops = [];
+    const safe = enriched.filter(({ match }) => {
+      const r = checkFn(match);
+      if (!r.ok) {
+        preEmitDrops.push({
+          id: match?.id != null ? String(match.id) : null,
+          provider: match?.provider || match?.source || null,
+          status: match?.status || null,
+          reason: r.reason,
+        });
+      }
+      return r.ok;
+    });
     const droppedPreEmit = enriched.length - safe.length;
     if (droppedPreEmit > 0) {
       console.log(`[LIVE FILTER] ${droppedPreEmit} jogos removidos por não serem reais (pre-emit)`);
     }
 
+    // [MATCH DEBUG] stage 4 — pre-emit (re-check final antes de socket.io)
+    if (MATCH_DEBUG_ENABLED && (enriched.length || safe.length)) {
+      console.log('[MATCH DEBUG]', {
+        stage: 'bot.runOnce:pre-emit',
+        beforeFilter: enriched.length,
+        afterFilter: safe.length,
+        provider: activeProvider,
+        ids: safe.slice(0, 8).map(({ match }) => String(match.id)),
+        statuses: safe.slice(0, 8).map(({ match }) => ({ id: String(match.id), status: match.status, minute: match.minute })),
+        reasons: preEmitDrops.slice(0, 8),
+      });
+    }
+
     this.lastMatches = safe.map((r) => r.match);
     this.lastAnalyses = safe.map((r) => r.analysis);
     db.bumpMonitored(safe.length);
+
+    // Snapshot completo do pipeline desta tick (consumido por
+    // /api/admin/match-debug). NÃO incluir payloads enormes — só ids/contagens.
+    this._lastDebugSnapshot = {
+      ts: Date.now(),
+      provider: activeProvider,
+      strict: STRICT_REAL_ONLY,
+      checkFn: checkFnName,
+      scannerIn: results.length,
+      afterCheckFn: enriched.length,
+      afterPreEmit: safe.length,
+      finalEmitted: safe.length,
+      drops: {
+        checkFn: checkFnDrops.slice(0, 16),
+        preEmit: preEmitDrops.slice(0, 16),
+      },
+      emitted: safe.slice(0, 16).map(({ match }) => ({
+        id: String(match.id),
+        provider: match.provider,
+        status: match.status,
+        minute: match.minute,
+      })),
+    };
 
     console.log(`[MATCH ENGINE] only real-time API data rendered (${safe.length} matches)`);
 
@@ -302,6 +387,15 @@ class RobotrendBot {
       liveEnabled: this.liveEnabled,
       preliveEnabled: this.preliveEnabled,
     };
+  }
+
+  /**
+   * Snapshot do último tick do pipeline para diagnóstico.
+   * Inclui contagens por estágio (scanner → checkFn → pre-emit → emitted)
+   * e razões de drop. Consumido por GET /api/admin/match-debug.
+   */
+  getLastDebugSnapshot() {
+    return this._lastDebugSnapshot || null;
   }
 
   /**

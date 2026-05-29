@@ -216,9 +216,19 @@ function normalizeLive(item) {
   const homeScore = Number(item.intHomeScore ?? 0) || 0;
   const awayScore = Number(item.intAwayScore ?? 0) || 0;
   const minute = parseMinute(item.strProgress, item.strStatus);
-  const dateIso = item.strTimestamp || item.dateEvent
-    ? new Date(item.strTimestamp || `${item.dateEvent}T${item.strTime || '00:00:00'}Z`).toISOString()
-    : null;
+  // dateEvent + strTime quando disponíveis; senão deriva de "now - minute*60s".
+  // Sem o fallback, freshness.checkMatchStrict descarta o match com "sem
+  // timestamp real" — derrubando jogos LIVE válidos em STRICT_REAL_ONLY.
+  // Marcamos com `kickoffDerived` para distinguir do timestamp original da API.
+  let apiTimestamp = null;
+  if (item.strTimestamp || item.dateEvent) {
+    const rawIso = item.strTimestamp || `${item.dateEvent}T${item.strTime || '00:00:00'}Z`;
+    const d = new Date(rawIso);
+    if (!Number.isNaN(d.getTime())) apiTimestamp = d.toISOString();
+  }
+  const dateIso = apiTimestamp
+    || new Date(Date.now() - Math.max(0, Number.isFinite(minute) ? minute : 0) * 60_000).toISOString();
+  const kickoffDerived = !apiTimestamp;
   const id = String(item.idEvent || item.idLiveScore);
 
   return {
@@ -263,7 +273,11 @@ function normalizeLive(item) {
       isFinished: false,
       isFromLiveAPI: true,
       source: 'thesportsdb',
+      kickoffDerived,
     },
+    provider: 'thesportsdb',
+    dataQuality: 'partial',
+    kickoffDerived,
     lastApiUpdate: Date.now(),
     // shadow shape API-Sports (mantém consumers legados funcionando)
     fixture: {

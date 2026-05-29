@@ -93,6 +93,15 @@ const PRIORITY_ONLY = String(process.env.LIVE_IMPORTANT_LEAGUES_ONLY || 'false')
 /** Quantos ticks seguidos um jogo precisa faltar do feed antes de emitir match:remove. */
 const REMOVE_MISS_TICKS = Math.max(1, Number(process.env.POLLER_REMOVE_MISS_TICKS || 2));
 
+/**
+ * [MATCH DEBUG] gate — quando ativo (default: true), o poller imprime um
+ * resumo `[MATCH DEBUG]` por tick mostrando quantos matches entraram,
+ * quantos sobreviveram a cada filtro (blacklist liga, priority leagues,
+ * status live) e o motivo de cada drop. Útil para investigar "provider
+ * → 3 matches" virando "0 rendered". Desabilite com MATCH_DEBUG=false.
+ */
+const MATCH_DEBUG_ENABLED = String(process.env.MATCH_DEBUG || 'true').toLowerCase() !== 'false';
+
 function isExcludedLeague(match) {
   const l = match?.league;
   if (!l) return false;
@@ -520,6 +529,15 @@ class LiveFootballPoller {
     return this.cache.get(String(id)) || null;
   }
 
+  /**
+   * Último snapshot de filtros (povoado a cada tick). Usado pelo endpoint
+   * /api/admin/match-debug para mostrar quantos matches entraram, quantos
+   * saíram de cada gate e por quê.
+   */
+  getLastDebugSnapshot() {
+    return this._lastDebugSnapshot || null;
+  }
+
   async tick() {
     if (this.ticking) {
       this._heartbeat('overlap-skip');
@@ -581,6 +599,47 @@ class LiveFootballPoller {
           priorityOnly: PRIORITY_ONLY,
         });
       }
+
+      // ============================================================
+      // [MATCH DEBUG] poller filters — visibilidade de cada gate
+      // (blacklist liga, priority leagues, status live/FT).
+      // Útil quando provider entrega N matches mas só M chegam ao cache.
+      // Desabilite com MATCH_DEBUG=false. Dropados são listados com
+      // motivo específico (ex.: status=FT, league=Reserve).
+      // ============================================================
+      if (MATCH_DEBUG_ENABLED && beforeFilter.length) {
+        const excluded = beforeFilter
+          .filter((m) => isExcludedLeague(m))
+          .slice(0, 8)
+          .map((m) => ({ id: m.id, league: m?.league?.name, country: m?.league?.country }));
+        const notPriority = (PRIORITY_ONLY ? noBlacklist : [])
+          .filter((m) => !isPriorityLeague(m))
+          .slice(0, 8)
+          .map((m) => ({ id: m.id, league: m?.league?.name, country: m?.league?.country }));
+        const notLive = priorityFiltered
+          .filter((m) => !isLiveMatch(m))
+          .slice(0, 8)
+          .map((m) => ({ id: m.id, status: m.status, statusLong: m.statusLong, minute: m.minute }));
+        console.log('[MATCH DEBUG]', {
+          stage: 'poller.filters',
+          beforeFilter: beforeFilter.length,
+          afterFilter: matches.length,
+          provider: providerName,
+          priorityOnly: PRIORITY_ONLY,
+          ids: matches.slice(0, 8).map((m) => String(m.id)),
+          statuses: matches.slice(0, 8).map((m) => ({ id: String(m.id), status: m.status, minute: m.minute })),
+          reasons: { excluded, notPriority, notLive },
+        });
+      }
+      this._lastDebugSnapshot = {
+        ts: Date.now(),
+        provider: providerName,
+        beforeFilter: beforeFilter.length,
+        afterBlacklist: noBlacklist.length,
+        afterPriority: priorityFiltered.length,
+        afterLiveStatus: matches.length,
+        priorityOnly: PRIORITY_ONLY,
+      };
       // Log estruturado por match LIVE (verbose=true para debug)
       if (process.env.FOOTBALL_LIVE_VERBOSE === 'true') {
         for (const m of matches) {
