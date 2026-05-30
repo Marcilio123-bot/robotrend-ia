@@ -178,15 +178,17 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
                        APENAS matches ao vivo (sem filtros de query).
      Tanto /live (com filtros) quanto /scanner (raw) consomem `liveMatches()`.
      ============================================================ */
-  const FT_OR_NOT_LIVE = new Set([
-    'FT','AET','PEN','AWD','WO','ABD','CANC','FINISHED','MATCH FINISHED',
-    'POSTPONED','PST','SUSP','CANCELLED','TIMED','SCHEDULED','NS',
+  const FT_STATUSES_ROUTE = new Set([
+    'FT', 'AET', 'PEN', 'AWD', 'WO', 'ABD', 'CANC', 'FINISHED', 'MATCH FINISHED',
+    'POSTPONED', 'PST', 'SUSP', 'CANCELLED',
   ]);
   function isLive(m) {
+    const min = Number(m?.minute || 0);
+    if (min > 0 && min < 120) return true;
     const status = String(m?.status || '').toUpperCase().trim();
     const long = String(m?.statusLong || '').toUpperCase().trim();
-    if (FT_OR_NOT_LIVE.has(status) || FT_OR_NOT_LIVE.has(long)) return false;
-    if (Number(m?.minute || 0) >= 120) return false;
+    if (FT_STATUSES_ROUTE.has(status) || FT_STATUSES_ROUTE.has(long)) return false;
+    if (min >= 120) return false;
     return true;
   }
 
@@ -239,8 +241,10 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
    * conseguir mostrar "📡 Scanner: 87 jogos · provider: sofascore".
    */
   function buildLiveMeta(allLive, afterFilter) {
-    const total = allLive.length;
-    const filteredOut = total - afterFilter.length;
+    const pollerSnap = poller.snapshot?.() || {};
+    const pollerBefore = pollerSnap.lastFilter?.beforeFilter;
+    const total = pollerBefore != null ? Math.max(pollerBefore, allLive.length) : allLive.length;
+    const filteredOut = Math.max(0, total - afterFilter.length);
     // Histograma por provider de origem do match (cada provider stampa
     // `match.provider` e `match.flags.source` no poller).
     const bySource = {};
@@ -255,6 +259,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     return {
       totalReceived: total,
       totalAfterFilter: afterFilter.length,
+      pollerBeforeFilter: pollerBefore ?? null,
+      pollerAfterLiveGate: pollerSnap.lastFilter?.afterLiveStatus ?? allLive.length,
       filteredOut,
       filterPct: total ? +(filteredOut * 100 / total).toFixed(1) : 0,
       provider: {

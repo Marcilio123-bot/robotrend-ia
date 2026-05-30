@@ -1398,6 +1398,24 @@
     });
   }
 
+  function providerLimitedBannerHTML() {
+    const prov = state.runtime.feedMeta?.provider || state.activeProvider || 'provider';
+    const partial = state.runtime.feedMeta?.provider?.active === 'thesportsdb'
+      || String(prov).toLowerCase() === 'thesportsdb';
+    return `
+      <div class="fb-provider-limited" role="status" style="margin-bottom:12px;padding:10px 14px;border-radius:10px;border:1px solid rgba(251,191,36,.35);background:rgba(251,191,36,.08);font-size:13px;color:#fbbf24">
+        ⚠ Dados limitados do provider (<strong>${escapeHtml(String(prov))}</strong>)${partial ? ' · TheSportsDB' : ''} — exibindo placar/minuto; stats IA podem ser parciais.
+      </div>`;
+  }
+
+  /** Se filtros UI zeraram a lista mas há jogos no state, mostra os cards crus. */
+  function resolveDisplayMatches(filteredArr) {
+    const raw = Array.from(state.matches.values());
+    if (filteredArr.length) return { arr: filteredArr, limited: false };
+    if (raw.length) return { arr: raw, limited: true };
+    return { arr: [], limited: false };
+  }
+
   function renderMatches() {
     const root = $('#matches');
 
@@ -1408,28 +1426,35 @@
 
     // ============ MODO LIVE/RADAR: lista tradicional de matches ============
     const arr = getFiltered();
+    const { arr: displayArr, limited: limitedProvider } = resolveDisplayMatches(arr);
     if (window.__ROBOTREND_DEBUG) {
       console.log('[NORMALIZED MATCHES]', state.matches.size, 'no state ·', state.mode, 'mode');
-      console.log('[RENDERED MATCHES]', arr.length, 'após filtros');
+      console.log('[RENDERED MATCHES]', displayArr.length, 'exibidos ·', arr.length, 'após filtros UI');
     }
-    if (!arr.length) {
+    if (!displayArr.length) {
       const totalLive = state.matches.size;
+      const pollerRaw = Number(state.runtime.feedMeta?.pollerBeforeFilter)
+        || Number(state.runtime.feedMeta?.totalReceived) || 0;
       const totalEnriched = Array.from(state.matches.values()).filter((m) => m.enriched).length;
       const filterActive = !!(state.filters.search || state.filters.scored || state.filters.minute || state.filters.pressureOnly || state.filters.onlyFavorites || state.filters.bttsNear || state.activeLeague);
       const tech = buildTechReason({ totalLive, totalEnriched, filterActive });
       const inlineMatches = totalLive ? buildInlineMatchGridHTML() : '';
+      const providerGap = pollerRaw > 0 && totalLive === 0
+        ? `<br><span style="opacity:.85;display:block;margin-top:8px">O poller recebeu <strong>${pollerRaw}</strong> jogo(s) do provider, mas o gate ao vivo removeu todos. Aguarde o próximo tick ou force ↻ resync.</span>`
+        : '';
       root.innerHTML = `
         <div class="fb-empty" style="text-align:center;padding:28px 16px">
           <div style="font-size:32px;margin-bottom:8px">${tech.icon}</div>
           <strong>${tech.title}</strong><br>
           <span style="opacity:.85">${tech.body}</span>
+          ${providerGap}
           ${tech.action ? `<br><button class="btn btn-ghost" style="margin-top:10px" onclick="document.getElementById('btn-refresh').click()">${tech.action}</button>` : ''}
         </div>
         ${inlineMatches}`;
       wireInlineMatchCards(root);
       return;
     }
-    root.innerHTML = arr.map((m) => matchCardHTML(m)).join('');
+    root.innerHTML = `${limitedProvider ? providerLimitedBannerHTML() : ''}${displayArr.map((m) => matchCardHTML(m)).join('')}`;
     $$('#matches .fb-match').forEach((el) => {
       el.addEventListener('click', (ev) => {
         if (ev.target.classList.contains('fav')) return;
@@ -1566,8 +1591,10 @@
       const filterActive = state.markets.size > 0 || state.profile !== 'balanced' || state.minConfidence > 50;
       const techReason = buildTechReason({ totalLive, totalEnriched, filterActive });
       const inlineMatches = buildInlineMatchGridHTML();
+      const limitedBanner = totalLive ? providerLimitedBannerHTML() : '';
       root.innerHTML = `
         ${headerHtml}
+        ${limitedBanner}
         <div class="sig-empty">
           <div style="font-size:32px;margin-bottom:8px">${techReason.icon}</div>
           <strong>${techReason.title}</strong><br>

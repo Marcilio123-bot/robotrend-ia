@@ -145,36 +145,77 @@ const FORCE_REALTIME = String(process.env.FOOTBALL_FORCE_REALTIME ?? 'true').toL
 // fake clock, sem nada. Evita o bug de jogos congelados em 120'.
 const LIVE_STATUSES = new Set([
   '1H', 'HT', '2H', 'ET', 'BT', 'LIVE', 'INT', 'P',
-  'LIVE', 'INPROGRESS', 'IN-PROGRESS',
+  'INPLAY', 'IN_PLAY', 'IN-PLAY', 'IN PROGRESS', 'IN_PROGRESS',
+  'INPROGRESS', 'IN-PROGRESS',
+]);
+const NS_STATUSES = new Set([
+  'NS', 'NOT STARTED', 'NOTSTARTED', 'NOT_STARTED',
+  'SCHEDULED', 'TIMED',
 ]);
 const FT_STATUSES = new Set([
   'FT', 'AET', 'PEN', 'AWD', 'WO', 'ABD', 'CANC',
   'FINISHED', 'MATCH FINISHED', 'AFTER PENALTIES', 'AFTER EXTRA TIME',
   'CANCELLED', 'POSTPONED', 'PST', 'SUSP', 'SUSPENDED',
 ]);
-const HT_STATUSES = new Set(['HT', 'HALFTIME', 'HALF TIME', 'INT']);
+const HT_STATUSES = new Set(['HT', 'HALFTIME', 'HALF TIME']);
+
+/** Janela: kickoff entre -30min e +3h (eventsday / status parcial). */
+function isKickoffInPlayWindow(m) {
+  const raw = m?.kickoffAt || m?.date || m?.fixture?.date;
+  if (!raw) return false;
+  const t = new Date(raw).getTime();
+  if (!Number.isFinite(t)) return false;
+  const hoursFromNow = (t - Date.now()) / 3_600_000;
+  return hoursFromNow >= -0.5 && hoursFromNow <= 3;
+}
 
 /** Normaliza string de status (case + trim) e retorna categoria. */
 function statusGroup(m) {
   const sRaw = String(m?.status || '').toUpperCase().trim();
   const longRaw = String(m?.statusLong || '').toUpperCase().trim();
-  if (FT_STATUSES.has(sRaw) || FT_STATUSES.has(longRaw)) return 'FT';
-  if (HT_STATUSES.has(sRaw) || HT_STATUSES.has(longRaw)) return 'HT';
-  if (LIVE_STATUSES.has(sRaw) || LIVE_STATUSES.has(longRaw)) return 'LIVE';
-  // Status desconhecido — só consideramos LIVE se há minute > 0 e não passou de 90.
   const min = Number(m?.minute || 0);
+
+  if (FT_STATUSES.has(sRaw) || FT_STATUSES.has(longRaw)) return 'FT';
+  // Minuto real do provider → ao vivo mesmo sem status LIVE perfeito (TheSportsDB).
   if (min > 0 && min < 120) return 'LIVE';
-  return 'FT'; // default conservador: drop
+  if (LIVE_STATUSES.has(sRaw) || LIVE_STATUSES.has(longRaw)) return 'LIVE';
+  if (HT_STATUSES.has(sRaw) || HT_STATUSES.has(longRaw)) return 'HT';
+  if (NS_STATUSES.has(sRaw) || NS_STATUSES.has(longRaw)) return 'NS';
+  if (isKickoffInPlayWindow(m)) return 'LIVE';
+  // Desconhecido: não assumir FT (isso zerava o painel com status NS/parcial).
+  return 'NS';
 }
 
-/** True se o match está realmente em andamento (deve aparecer no painel live). */
+/** True se o match deve aparecer no painel live/scanner. */
 function isLiveMatch(m) {
   const grp = statusGroup(m);
   if (grp === 'FT') return false;
-  // Defesa final contra jogos travados: minute >= 120 com qualquer status = drop
   const min = Number(m?.minute || 0);
   if (min >= 120) return false;
+  if (grp === 'NS') {
+    const raw = m?.kickoffAt || m?.date || m?.fixture?.date;
+    if (raw) {
+      const t = new Date(raw).getTime();
+      if (Number.isFinite(t)) {
+        const hoursFromNow = (t - Date.now()) / 3_600_000;
+        if (hoursFromNow > 24) return false;
+      }
+    }
+    return true;
+  }
   return true;
+}
+
+/** Payload detalhado para [MATCH DEBUG] reasons.notLive */
+function matchDebugFields(m) {
+  return {
+    id: m?.id != null ? String(m.id) : null,
+    status: m?.status ?? null,
+    statusLong: m?.statusLong ?? null,
+    minute: m?.minute ?? null,
+    kickoffAt: m?.kickoffAt || m?.date || null,
+    provider: m?.provider || m?.flags?.source || null,
+  };
 }
 
 /**
@@ -467,6 +508,7 @@ class LiveFootballPoller {
       consecutiveFailures: this.consecutiveFailures,
       stats: { ...this.stats },
       tracked: this.cache.size,
+      lastFilter: this._lastDebugSnapshot ? { ...this._lastDebugSnapshot } : null,
     };
   }
 
@@ -619,7 +661,7 @@ class LiveFootballPoller {
         const notLive = priorityFiltered
           .filter((m) => !isLiveMatch(m))
           .slice(0, 8)
-          .map((m) => ({ id: m.id, status: m.status, statusLong: m.statusLong, minute: m.minute }));
+          .map(matchDebugFields);
         console.log('[MATCH DEBUG]', {
           stage: 'poller.filters',
           beforeFilter: beforeFilter.length,

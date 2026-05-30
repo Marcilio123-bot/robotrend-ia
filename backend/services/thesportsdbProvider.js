@@ -183,17 +183,21 @@ async function httpGet(pathname) {
    NORMALIZAÇÃO — mesmo schema do projeto (compatível com
    fixtureNormalizer + frontend).
    ============================================================ */
-const LIVE_STATUS_RX = /^(1H|HT|2H|ET|BT|LIVE|INT|P|HALFTIME)$/i;
+const LIVE_STATUS_RX = /^(1H|HT|2H|ET|BT|LIVE|INT|P|HALFTIME|INPLAY|IN_PLAY|NS)$/i;
 const FT_STATUS_RX   = /^(FT|AET|PEN|AWD|WO|ABD|CANC|FINISHED|MATCH FINISHED|POSTPONED|PST|SUSP)$/i;
 
 function parseMinute(progress, status) {
-  // strProgress vem como "45'", "HT", "FT", "23'", etc.
+  // strProgress vem como "45'", "HT", "FT", "23'", "1st Half", etc.
   const raw = String(progress || '').trim();
   const num = parseInt(raw.replace(/[^\d]/g, ''), 10);
-  if (Number.isFinite(num) && num >= 0 && num <= 120) return num;
+  if (Number.isFinite(num) && num > 0 && num <= 120) return num;
   const st = String(status || '').toUpperCase();
-  if (st === 'HT') return 45;
+  if (st === 'HT' || /HALF\s*TIME/i.test(st)) return 45;
+  if (/1ST\s*HALF|FIRST\s*HALF|^1H$/i.test(st)) return 20;
+  if (/2ND\s*HALF|SECOND\s*HALF|^2H$/i.test(st)) return 55;
+  if (/EXTRA/i.test(st)) return 91;
   if (FT_STATUS_RX.test(st)) return 90;
+  if (Number.isFinite(num) && num === 0) return 0;
   return 0;
 }
 
@@ -215,7 +219,11 @@ function normalizeLive(item) {
   const awayName = item.strAwayTeam || 'Visitante';
   const homeScore = Number(item.intHomeScore ?? 0) || 0;
   const awayScore = Number(item.intAwayScore ?? 0) || 0;
-  const minute = parseMinute(item.strProgress, item.strStatus);
+  let minute = parseMinute(item.strProgress, item.strStatus);
+  // Placar em andamento sem strProgress → estima minuto mínimo para passar gates live.
+  if (minute <= 0 && (homeScore > 0 || awayScore > 0) && !FT_STATUS_RX.test(status)) {
+    minute = 1;
+  }
   // dateEvent + strTime quando disponíveis; senão deriva de "now - minute*60s".
   // Sem o fallback, freshness.checkMatchStrict descarta o match com "sem
   // timestamp real" — derrubando jogos LIVE válidos em STRICT_REAL_ONLY.
@@ -230,6 +238,15 @@ function normalizeLive(item) {
     || new Date(Date.now() - Math.max(0, Number.isFinite(minute) ? minute : 0) * 60_000).toISOString();
   const kickoffDerived = !apiTimestamp;
   const id = String(item.idEvent || item.idLiveScore);
+
+  let liveStatus = status;
+  let isLive = LIVE_STATUS_RX.test(liveStatus) || liveStatus === 'NS';
+  if (minute > 0) {
+    isLive = true;
+    if (!LIVE_STATUS_RX.test(liveStatus) && liveStatus !== 'HT') {
+      liveStatus = minute <= 45 ? '1H' : '2H';
+    }
+  }
 
   return {
     id,
@@ -250,7 +267,7 @@ function normalizeLive(item) {
     home: homeName,
     away: awayName,
     minute,
-    status,
+    status: liveStatus,
     statusLong: item.strStatus || item.strProgress || 'Ao vivo',
     venue: item.strVenue || null,
     kickoffAt: dateIso,
@@ -269,12 +286,13 @@ function normalizeLive(item) {
     enriched: false,
     enrichedAt: null,
     flags: {
-      isLive: true,
+      isLive,
       isFinished: false,
       isFromLiveAPI: true,
       source: 'thesportsdb',
       kickoffDerived,
     },
+    isLive,
     provider: 'thesportsdb',
     dataQuality: 'partial',
     kickoffDerived,
@@ -283,7 +301,7 @@ function normalizeLive(item) {
     fixture: {
       id,
       date: dateIso,
-      status: { short: status, long: item.strStatus || 'Ao vivo', elapsed: minute },
+      status: { short: liveStatus, long: item.strStatus || 'Ao vivo', elapsed: minute },
       venue: { name: item.strVenue || null, city: null },
       referee: null,
     },
