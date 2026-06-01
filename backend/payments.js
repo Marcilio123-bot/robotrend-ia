@@ -217,8 +217,19 @@ function createPixPayment({ user, plan, _planOverride }) {
 
 /* ============================================================
    MOCK (dev sem chaves)
+   ------------------------------------------------------------
+   Defense-in-depth: lança fora de NODE_ENV=development. Se algum
+   caller novo tentar gerar URL mock em prod, falha visível em vez
+   de retornar checkout falso que ativaria PREMIUM sem pagamento.
    ============================================================ */
 function mockCheckout(provider, user, plan) {
+  const env = process.env.NODE_ENV || 'development';
+  if (env !== 'development') {
+    const err = new Error('mockCheckout disabled outside development');
+    err.code = 'MOCK_CHECKOUT_DISABLED';
+    err.status = 503;
+    throw err;
+  }
   const fakeId = 'mock_' + crypto.randomBytes(6).toString('hex');
   return {
     provider, mock: true,
@@ -490,7 +501,22 @@ function buildPaymentRoutes(app, db, requireAuth) {
       const def = getPlan(plan);
 
       if (!mp.enabled) {
-        log.warn('create-premium chamado sem MP configurado — retornando mock');
+        const isProd = (process.env.NODE_ENV || 'development') !== 'development';
+        if (isProd) {
+          // Produção sem MP_ACCESS_TOKEN: NUNCA gerar mock-success.
+          // Retorna 503 claro para o frontend renderizar mensagem de
+          // indisponibilidade — atacante não recebe link auto-upgrade.
+          log.error('create-premium chamado em prod sem MP_ACCESS_TOKEN — bloqueado', {
+            userId: user.id, env: process.env.NODE_ENV,
+          });
+          return res.status(503).json({
+            ok: false,
+            error: 'PAYMENTS_UNAVAILABLE',
+            code: 'MP_NOT_CONFIGURED',
+            message: 'Pagamentos temporariamente indisponíveis. Tente novamente em instantes.',
+          });
+        }
+        log.warn('create-premium chamado sem MP configurado — retornando mock (dev only)');
         const m = mockCheckout('mercadopago', user, def);
         return res.json({
           ok: true,
@@ -595,6 +621,27 @@ function buildPaymentRoutes(app, db, requireAuth) {
       const { plan, provider, coupon } = req.body || {};
       if (!['VIP', 'PREMIUM'].includes(plan)) return res.status(400).json({ error: 'plan inválido' });
 
+      // Em produção, sem o gateway selecionado configurado, NÃO cair em mock.
+      // Retorna 503 explícito para o frontend e impede geração de URLs mock-success.
+      const isProd = (process.env.NODE_ENV || 'development') !== 'development';
+      if (isProd) {
+        const providerReady =
+          (provider === 'stripe' && Boolean(stripeClient)) ||
+          (provider === 'mercadopago' && mp.enabled) ||
+          (provider === 'pix' && Boolean(process.env.PIX_KEY));
+        if (provider && !providerReady) {
+          log.error('checkout chamado em prod sem provider configurado — bloqueado', {
+            provider, userId: req.user?.id,
+          });
+          return res.status(503).json({
+            ok: false,
+            error: 'PAYMENTS_UNAVAILABLE',
+            code: `${String(provider).toUpperCase()}_NOT_CONFIGURED`,
+            message: 'Pagamentos temporariamente indisponíveis. Tente novamente em instantes.',
+          });
+        }
+      }
+
       const user = req.user;
       const def = getPlan(plan);
       let finalAmount = def.priceBRL;
@@ -657,7 +704,22 @@ function buildPaymentRoutes(app, db, requireAuth) {
   app.post('/webhook/payment-success', async (req, res) => {
     try {
       const secret = process.env.WEBHOOK_SECRET;
-      if (secret) {
+      const isProd = (process.env.NODE_ENV || 'development') !== 'development';
+      // Produção: WEBHOOK_SECRET é OBRIGATÓRIO. Se ausente, recusa imediato
+      // — senão qualquer pessoa com a URL pode promover qualquer email a Premium.
+      if (!secret) {
+        if (isProd) {
+          log.error('webhook /webhook/payment-success bloqueado em prod sem WEBHOOK_SECRET', {
+            ip: req.ip,
+          });
+          return res.status(503).json({
+            ok: false,
+            error: 'WEBHOOK_NOT_CONFIGURED',
+            code: 'WEBHOOK_SECRET_MISSING',
+          });
+        }
+        log.warn('webhook /webhook/payment-success em DEV sem WEBHOOK_SECRET — aceitando para teste');
+      } else {
         const got = req.headers['x-webhook-secret'] || req.query.secret;
         if (got !== secret) {
           log.warn('webhook secret mismatch', { ip: req.ip });
@@ -942,18 +1004,68 @@ function buildPaymentRoutes(app, db, requireAuth) {
   /* ============================================================
      WEBHOOK Stripe — POST /api/payments/webhook/stripe
      ------------------------------------------------------------
-     Em produção: validar assinatura. Eventos relevantes:
+     Validação de assinatura HMAC (constructEvent) é OBRIGATÓRIA
+     em produção. O middleware express.raw é registrado em
+     server.js antes do express.json para preservar o rawBody.
+
+     Eventos relevantes:
        - checkout.session.completed   (assinatura criada)
        - invoice.paid                  (renovação)
      ============================================================ */
   app.post('/api/payments/webhook/stripe', async (req, res) => {
+    const isProd = (process.env.NODE_ENV || 'development') !== 'development';
     try {
       const sig = req.headers['stripe-signature'];
       const secret = process.env.STRIPE_WEBHOOK_SECRET;
-      // TODO produção: stripeClient.webhooks.constructEvent(rawBody, sig, secret)
-      const event = req.body || {};
+
+      // Em produção, exigir secret + cliente Stripe + rawBody válido.
+      if (isProd && (!secret || !stripeClient)) {
+        log.error('webhook Stripe bloqueado em prod — STRIPE_WEBHOOK_SECRET/SDK ausente', {
+          hasSecret: !!secret, hasClient: !!stripeClient, ip: req.ip,
+        });
+        return res.status(503).json({
+          ok: false,
+          error: 'STRIPE_WEBHOOK_NOT_CONFIGURED',
+          code: 'STRIPE_WEBHOOK_SECRET_MISSING',
+        });
+      }
+
+      let event;
+      if (secret && stripeClient && Buffer.isBuffer(req.body)) {
+        // Caminho seguro: valida assinatura HMAC contra o rawBody.
+        try {
+          event = stripeClient.webhooks.constructEvent(req.body, sig, secret);
+        } catch (err) {
+          log.warn('Stripe webhook signature inválida', {
+            err: err.message, ip: req.ip,
+          });
+          return res.status(400).send(`Webhook Error: ${err.message}`);
+        }
+      } else if (isProd) {
+        // Em prod, body precisa ser Buffer (rawBody) — recusa caso contrário
+        // (ex: middleware de json parseou antes do raw).
+        log.error('webhook Stripe sem rawBody em prod — middleware express.raw ausente', {
+          ip: req.ip, bodyType: typeof req.body,
+        });
+        return res.status(400).json({
+          ok: false,
+          error: 'STRIPE_WEBHOOK_RAW_BODY_REQUIRED',
+        });
+      } else {
+        // DEV-ONLY: aceita JSON parseado para facilitar smoke tests sem
+        // configurar STRIPE_WEBHOOK_SECRET. Loga warn explícito.
+        log.warn('webhook Stripe em DEV — sem validação HMAC (configure STRIPE_WEBHOOK_SECRET)');
+        try {
+          event = Buffer.isBuffer(req.body)
+            ? JSON.parse(req.body.toString('utf8'))
+            : (req.body || {});
+        } catch (err) {
+          return res.status(400).send('invalid body');
+        }
+      }
+
       const t = event.type;
-      log.info('webhook Stripe recebido', { type: t, signed: !!sig });
+      log.info('webhook Stripe recebido', { type: t, signed: !!secret });
 
       if (t === 'checkout.session.completed' || t === 'invoice.paid') {
         const session = event.data?.object || {};
@@ -970,7 +1082,7 @@ function buildPaymentRoutes(app, db, requireAuth) {
       }
       res.status(200).send('ok');
     } catch (e) {
-      log.error('webhook Stripe erro', { err: e.message });
+      log.error('webhook Stripe erro', { err: e.message, stack: e.stack });
       res.status(500).send(e.message);
     }
   });
@@ -1112,30 +1224,54 @@ function buildPaymentRoutes(app, db, requireAuth) {
 
   /* ============================================================
      Mock success — APENAS em NODE_ENV=development.
-     Em produção/staging retorna 404 para impedir auto-upgrade
-     sem pagamento real. (Se algum gateway redirecionar para cá
-     em prod, é bug — força queda visível em vez de elevar plano.)
+     ------------------------------------------------------------
+     P1: o guard de ambiente roda como middleware ANTES de
+     requireAuth — assim o request termina em 404 imediato em
+     produção sem tocar no banco. Isso elimina o caminho que
+     gerava 504 quando o pool PG ficava sob pressão.
      ============================================================ */
-  app.get('/billing/mock-success', requireAuth(db), async (req, res) => {
+  function blockOutsideDevelopment(req, res, next) {
     const env = process.env.NODE_ENV || 'development';
     if (env !== 'development') {
-      log.warn('mock-success bloqueado fora de development', {
-        env, userId: req.user?.id, ip: req.ip,
+      log.warn('endpoint dev-only bloqueado fora de development', {
+        path: req.path, env, ip: req.ip,
       });
       return res.status(404).send('Not Found');
     }
-    const { plan, provider } = req.query;
-    if (!['VIP', 'PREMIUM'].includes(plan)) return res.status(400).send('plan inválido');
-    await provisionUserFromPayment(db, {
-      email: req.user.email,
-      plan,
-      provider: provider || 'mock',
-      externalId: 'mock_' + Date.now(),
-      amount: getPlan(plan).priceBRL,
-      status: 'approved',
-    });
-    res.redirect('/?upgraded=' + plan);
-  });
+    next();
+  }
+
+  app.get('/billing/mock-success',
+    blockOutsideDevelopment,
+    requireAuth(db),
+    async (req, res) => {
+      const t0 = Date.now();
+      try {
+        const { plan, provider } = req.query;
+        if (!['VIP', 'PREMIUM'].includes(plan)) {
+          return res.status(400).send('plan inválido');
+        }
+        await provisionUserFromPayment(db, {
+          email: req.user.email,
+          plan,
+          provider: provider || 'mock',
+          externalId: 'mock_' + Date.now(),
+          amount: getPlan(plan).priceBRL,
+          status: 'approved',
+        });
+        log.info('mock-success ok (dev)', {
+          userId: req.user.id, plan, ms: Date.now() - t0,
+        });
+        return res.redirect(302, '/?upgraded=' + plan);
+      } catch (err) {
+        log.error('mock-success failed', {
+          err: err.message, stack: err.stack,
+          userId: req.user?.id, ms: Date.now() - t0,
+        });
+        return res.status(500).send('Falha ao ativar plano (dev). Veja logs.');
+      }
+    }
+  );
 }
 
 module.exports = {

@@ -105,23 +105,40 @@ function extractToken(req) {
 
 /**
  * Middleware: exige usuário autenticado.
+ *
+ * P1: o corpo está envolto em try/catch. Falhas de DB/pool/timeout
+ * em `db.findUserById` propagam via next(err) para o errorHandler
+ * global em vez de pendurar o request — eliminando 504s causados
+ * por rejeição não tratada de Promise em middleware async.
+ *
  * @param {object} db - camada de banco
  */
 function requireAuth(db) {
   return async (req, res, next) => {
-    const token = extractToken(req);
-    if (!token) return res.status(401).json({ error: 'Não autenticado' });
-    const payload = verifyToken(token);
-    if (!payload || !payload.sub) return res.status(401).json({ error: 'Token inválido' });
-    const user = await db.findUserById(payload.sub);
-    if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
-    // Usuários bloqueados pelo admin não podem usar nenhuma rota autenticada.
-    // O frontend deve interpretar 'USER_BLOCKED' como logout forçado.
-    if (user.active === false) {
-      return res.status(403).json({ error: 'Conta bloqueada pelo administrador', code: 'USER_BLOCKED' });
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ error: 'Não autenticado' });
+      const payload = verifyToken(token);
+      if (!payload || !payload.sub) return res.status(401).json({ error: 'Token inválido' });
+      const user = await db.findUserById(payload.sub);
+      if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
+      // Usuários bloqueados pelo admin não podem usar nenhuma rota autenticada.
+      // O frontend deve interpretar 'USER_BLOCKED' como logout forçado.
+      if (user.active === false) {
+        return res.status(403).json({ error: 'Conta bloqueada pelo administrador', code: 'USER_BLOCKED' });
+      }
+      req.user = sanitizeUser(user);
+      next();
+    } catch (err) {
+      // Falha em DB/rede/pool → encaminha ao errorHandler global (devolve
+      // 500/503 JSON). NUNCA pode ficar pendurado e estourar o timeout do gateway.
+      logger.error('requireAuth db error', {
+        err: err.message, code: err.code, path: req.path,
+      });
+      err.status = err.status || 503;
+      err.code = err.code || 'AUTH_DB_UNAVAILABLE';
+      return next(err);
     }
-    req.user = sanitizeUser(user);
-    next();
   };
 }
 

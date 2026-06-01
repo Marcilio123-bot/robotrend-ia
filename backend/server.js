@@ -104,6 +104,15 @@ app.use((req, res, next) => {
 
 applySecurity(app);
 app.use(cors(buildCorsOptions()));
+
+// IMPORTANTE: o webhook do Stripe valida assinatura HMAC contra o rawBody.
+// O middleware express.raw precisa rodar ANTES do express.json para preservar
+// o Buffer original — caso contrário constructEvent falha em produção.
+app.use(
+  '/api/payments/webhook/stripe',
+  express.raw({ type: 'application/json', limit: '1mb' })
+);
+
 app.use(express.json({ limit: '1mb' }));
 app.use(httpMiddleware);
 app.use(metrics.httpMetricsMiddleware);
@@ -836,6 +845,52 @@ app.use((req, res, next) => {
 <title>404 — Página não encontrada</title>
 <style>body{font-family:system-ui;display:grid;place-items:center;min-height:100vh;background:#07100a;color:#e6f4ec;margin:0}.box{text-align:center;padding:24px}.box h1{font-size:48px;margin:0 0 8px}.box a{color:#14b85e}</style>
 <div class="box"><h1>404</h1><p>A página <code>${req.path}</code> não existe.</p><p><a href="/index.html">Voltar ao dashboard →</a></p></div>`);
+});
+
+/* ============================================================
+   ERROR HANDLER GLOBAL (Express 4-arity)
+   ------------------------------------------------------------
+   P1: qualquer middleware/handler async que chame next(err) ou
+   tenha rejeição não tratada cai aqui em vez de pendurar a
+   conexão até o gateway responder 504.
+
+   Cobre rotas de pagamento (/api/payments/*, /billing/*,
+   /webhook/*) e o resto do app — sempre devolve resposta.
+   ============================================================ */
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = (err && (err.status || err.statusCode))
+    && Number.isInteger(err.status || err.statusCode)
+    ? (err.status || err.statusCode)
+    : 500;
+  log.error('unhandled route error', {
+    err: err?.message,
+    code: err?.code,
+    status,
+    path: req.path,
+    method: req.method,
+    stack: err?.stack,
+  });
+  const isApi =
+    req.path.startsWith('/api/') ||
+    req.path.startsWith('/billing/') ||
+    req.path.startsWith('/webhook');
+  const safeStatus = status >= 400 && status < 600 ? status : 500;
+  if (isApi) {
+    return res.status(safeStatus).json({
+      ok: false,
+      error: err?.code || 'INTERNAL_ERROR',
+      code: err?.code || 'UNHANDLED',
+      message: process.env.NODE_ENV === 'production'
+        ? 'Erro interno. Tente novamente em instantes.'
+        : (err?.message || 'erro'),
+    });
+  }
+  return res.status(safeStatus).type('html').send(
+    '<!doctype html><meta charset="utf-8"><title>500</title>' +
+    '<style>body{font-family:system-ui;display:grid;place-items:center;min-height:100vh;background:#07100a;color:#e6f4ec;margin:0}.box{text-align:center;padding:24px}.box h1{font-size:48px;margin:0 0 8px}.box a{color:#14b85e}</style>' +
+    '<div class="box"><h1>500</h1><p>Erro interno. Tente novamente.</p><p><a href="/index.html">Voltar ao dashboard →</a></p></div>'
+  );
 });
 
 /* ============================================================
