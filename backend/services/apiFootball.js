@@ -159,15 +159,15 @@ const CB_COOLDOWN_MS   = Number(process.env.API_FOOTBALL_CB_COOLDOWN_MS || 60_00
  */
 const TTL_BY_ENDPOINT = {
   'fixtures?live=all'      : Number(process.env.AF_TTL_LIVE         || 8_000),
-  'fixtures'               : Number(process.env.AF_TTL_FIXTURES     || 60_000),
+  'fixtures'               : Number(process.env.AF_TTL_FIXTURES     || 15 * 60_000),
   'fixtures/statistics'    : Number(process.env.AF_TTL_STATS        || 12_000),
   'fixtures/events'        : Number(process.env.AF_TTL_EVENTS       || 12_000),
-  'fixtures/lineups'       : Number(process.env.AF_TTL_LINEUPS      || 5 * 60_000),
-  'fixtures/headtohead'    : Number(process.env.AF_TTL_H2H          || 30 * 60_000),
-  'predictions'            : Number(process.env.AF_TTL_PREDICTIONS  || 10 * 60_000),
+  'fixtures/lineups'       : Number(process.env.AF_TTL_LINEUPS      || 30 * 60_000),
+  'fixtures/headtohead'    : Number(process.env.AF_TTL_H2H          || 24 * 3600_000),
+  'predictions'            : Number(process.env.AF_TTL_PREDICTIONS  || 4 * 3600_000),
   'odds'                   : Number(process.env.AF_TTL_ODDS         || 60_000),
   'odds/live'              : Number(process.env.AF_TTL_ODDS_LIVE    || 15_000),
-  'teams/statistics'       : Number(process.env.AF_TTL_TEAM_STATS   || 30 * 60_000),
+  'teams/statistics'       : Number(process.env.AF_TTL_TEAM_STATS   || 6 * 3600_000),
   'leagues'                : Number(process.env.AF_TTL_LEAGUES      || 24 * 3600_000),
 };
 

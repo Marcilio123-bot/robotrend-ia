@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#14b85e" />
+  <title data-i18n="meta.title">Robotrend IA — Sinais inteligentes de futebol</title>
+  <meta name="description" data-i18n-attr="content" data-i18n="meta.description"
+        content="Sinais ao vivo de BTTS, Over Escanteios, Under Escanteios e análises pré-live. Plataforma profissional para apostadores de alto nível." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="/showcase.html" />
+  <link rel="alternate" hreflang="pt-BR"     href="/showcase.html?lang=pt-BR" />
+  <link rel="alternate" hreflang="en"        href="/showcase.html?lang=en" />
+  <link rel="alternate" hreflang="es"        href="/showcase.html?lang=es" />
+  <link rel="alternate" hreflang="x-default" href="/showcase.html" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" data-i18n-attr="content" data-i18n="meta.title"
+        content="Robotrend IA — Sinais inteligentes de futebol" />
+  <meta property="og:description" data-i18n-attr="content" data-i18n="meta.description"
+        content="Sinais ao vivo de BTTS, Over Escanteios, Under Escanteios e análises pré-live." />
+  <meta property="og:url" content="/showcase.html" />
+  <meta property="og:locale" content="pt_BR" />
+  <meta property="og:locale:alternate" content="en_US" />
+  <meta property="og:locale:alternate" content="es_ES" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" data-i18n-attr="content" data-i18n="meta.title"
+        content="Robotrend IA — Sinais inteligentes de futebol" />
+  <meta name="twitter:description" data-i18n-attr="content" data-i18n="meta.description"
+        content="Sinais ao vivo de BTTS, Over Escanteios, Under Escanteios e análises pré-live." />
+
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314b85e'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' fill='%23062815' font-family='Arial' font-weight='900' font-size='34'%3ER%3C/text%3E%3C/svg%3E" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+  <link rel="stylesheet" href="/output.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+
+  <style>
+    :root {
+      --showcase-max: 1180px;
+      --plan-radius: 18px;
+    }
+
+    .showcase-shell {
+      max-width: var(--showcase-max);
+      margin: 0 auto;
+      padding: 24px 20px 80px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ===== NAV ===== */
+    .showcase-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 0 28px;
+      flex-wrap: wrap;
+    }
+    .showcase-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 900;
+      font-size: 20px;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .showcase-logo-mark {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      background: var(--brand);
+      color: #062815;
+      display: grid; place-items: center;
+      font-weight: 900; font-size: 20px;
+    }
+    .showcase-nav-actions {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .lang-switcher {
+      display: flex; gap: 4px;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px;
+    }
+    .lang-btn {
+      border: none; background: transparent;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 13px; font-weight: 700;
+      color: var(--text-2);
+      cursor: pointer;
+      transition: background .15s ease, color .15s ease;
+    }
+    .lang-btn:hover { color: var(--text); }
+    .lang-btn.active {
+      background: var(--brand-soft);
+      color: var(--brand);
+    }
+    .nav-link {
+      color: var(--text-2);
+      text-decoration: none;
+      font-size: 14px; font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 999px;
+      transition: color .15s ease, background .15s ease;
+    }
+    .nav-link:hover { color: var(--text); background: var(--surface-2); }
+
+    /* ===== HERO ===== */
+    .showcase-hero {
+      text-align: center;
+      padding: 56px 8px 64px;
+    }
+    .hero-eyebrow {
+      display: inline-block;
+      font-size: 12px; font-weight: 700;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--brand);
+      background: var(--brand-soft);
+      padding: 6px 14px;
+      border-radius: 999px;
+      margin-bottom: 22px;
+    }
+    .hero-title {
+      font-size: clamp(34px, 5.4vw, 60px);
+      font-weight: 900;
+      letter-spacing: -0.025em;
+      line-height: 1.06;
+      max-width: 880px;
+      margin: 0 auto 20px;
+      color: var(--text);
+    }
+    .hero-title .hl { color: var(--brand); }
+    .hero-sub {
+      font-size: clamp(15px, 1.8vw, 19px);
+      color: var(--text-2);
+      max-width: 700px;
+      margin: 0 auto 36px;
+      line-height: 1.55;
+    }
+    .cta-primary {
+      display: inline-flex; align-items: center; gap: 10px;
+      background: var(--brand);
+      color: #062815;
+      padding: 16px 32px;
+      border-radius: 999px;
+      font-weight: 800; font-size: 16px;
+      text-decoration: none;
+      box-shadow: 0 10px 30px rgba(20, 184, 94, 0.30);
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .cta-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 40px rgba(20, 184, 94, 0.42);
+    }
+    .cta-primary svg { width: 18px; height: 18px; }
+    .hero-trust {
+      margin-top: 22px;
+      font-size: 13px;
+      color: var(--text-3, var(--text-2));
+      opacity: 0.85;
+    }
+
+    /* ===== SECTION ===== */
+    .showcase-section { padding: 56px 0; }
+    .section-head { text-align: center; margin-bottom: 40px; }
+    .section-eyebrow {
+      font-size: 12px; font-weight: 700;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--brand);
+    }
+    .section-title {
+      font-size: clamp(28px, 3.6vw, 40px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      margin: 10px 0 8px;
+    }
+    .section-sub {
+      color: var(--text-2);
+      font-size: 16px;
+      max-width: 640px;
+      margin: 0 auto;
+      line-height: 1.55;
+    }
+
+    /* ===== BENEFITS ===== */
+    .benefits-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+    }
+    .benefit-card {
+      background: var(--card-bg);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 22px;
+      transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+    }
+    .benefit-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(20, 184, 94, 0.4);
+      box-shadow: var(--shadow-card);
+    }
+    .benefit-icon {
+      width: 44px; height: 44px;
+      border-radius: 12px;
+      background: var(--brand-soft);
+      color: var(--brand);
+      display: grid; place-items: center;
+      margin-bottom: 14px;
+    }
+    .benefit-icon svg { width: 22px; height: 22px; }
+    .benefit-title {
+      font-size: 17px; font-weight: 800;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: -0.01em;
+    }
+    .benefit-desc {
+      font-size: 14px; color: var(--text-2); line-height: 1.55;
+    }
+
+    /* ===== PLANS ===== */
+    .plans-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      align-items: stretch;
+    }
+    .plan-card {
+      position: relative;
+      background: var(--card-bg);
+      border: 1px solid var(--line);
+      border-radius: var(--plan-radius);
+      padding: 30px 26px;
+      display: flex; flex-direction: column;
+      transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+    }
+    .plan-card:hover {
+      transform: translateY(-3px);
+      box-shadow: var(--shadow-card);
+    }
+    .plan-featured {
+      border: 2px solid var(--brand);
+      box-shadow: 0 20px 50px rgba(20, 184, 94, 0.18);
+      transform: translateY(-6px);
+      background: linear-gradient(180deg, rgba(20,184,94,0.06) 0%, var(--card-bg) 60%);
+    }
+    .plan-featured:hover { transform: translateY(-9px); }
+    .plan-badge {
+      position: absolute;
+      top: -14px; left: 50%;
+      transform: translateX(-50%);
+      background: var(--brand);
+      color: #062815;
+      font-weight: 800; font-size: 12px;
+      letter-spacing: 0.06em;
+      padding: 6px 16px;
+      border-radius: 999px;
+      box-shadow: 0 6px 18px rgba(20, 184, 94, 0.4);
+      white-space: nowrap;
+    }
+    .plan-name {
+      font-size: 13px; font-weight: 800;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--brand);
+    }
+    .plan-term {
+      font-size: 14px;
+      color: var(--text-2);
+      margin: 6px 0 18px;
+    }
+    .plan-price {
+      display: flex; align-items: baseline; gap: 6px;
+      margin-bottom: 6px;
+    }
+    .plan-price-amount {
+      font-size: 40px; font-weight: 900;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .plan-price-suffix {
+      color: var(--text-2);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .plan-equiv {
+      font-size: 13px;
+      color: var(--text-2);
+      margin-bottom: 20px;
+      opacity: 0.85;
+    }
+    .plan-features {
+      list-style: none;
+      padding: 0; margin: 0 0 24px;
+      flex: 1;
+    }
+    .plan-features li {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 8px 0;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .plan-features li::before {
+      content: "";
+      flex: 0 0 18px;
+      width: 18px; height: 18px;
+      margin-top: 2px;
+      border-radius: 50%;
+      background: var(--brand-soft);
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2314b85e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: 12px;
+    }
+    .plan-cta {
+      display: block;
+      text-align: center;
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--line);
+      padding: 14px 22px;
+      border-radius: 999px;
+      font-weight: 800; font-size: 15px;
+      text-decoration: none;
+      transition: background .15s ease, transform .15s ease, color .15s ease;
+    }
+    .plan-cta:hover {
+      background: var(--elevated);
+      transform: translateY(-1px);
+    }
+    .plan-featured .plan-cta {
+      background: var(--brand);
+      color: #062815;
+      border-color: var(--brand);
+      box-shadow: 0 8px 24px rgba(20, 184, 94, 0.28);
+    }
+    .plan-featured .plan-cta:hover {
+      background: #16c768;
+      box-shadow: 0 12px 32px rgba(20, 184, 94, 0.42);
+    }
+
+    /* ===== FOOTER ===== */
+    .showcase-footer {
+      margin-top: 64px;
+      padding-top: 28px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      font-size: 13px;
+      color: var(--text-2);
+    }
+    .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .footer-links a {
+      color: var(--text-2);
+      text-decoration: none;
+      transition: color .15s ease;
+    }
+    .footer-links a:hover { color: var(--text); }
+
+    @media (max-width: 720px) {
+      .showcase-hero { padding: 36px 4px 44px; }
+      .showcase-section { padding: 40px 0; }
+      .plan-featured { transform: none; }
+      .plan-featured:hover { transform: translateY(-3px); }
+    }
+  </style>
+</head>
+
+<body class="font-display antialiased">
+
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="showcase-shell">
+
+    <!-- ============================================================
+         NAV
+         ============================================================ -->
+    <nav class="showcase-nav" aria-label="Topo">
+      <a href="/showcase.html" class="showcase-logo">
+        <span class="showcase-logo-mark">R</span>
+        <span>Robotrend IA</span>
+      </a>
+      <div class="showcase-nav-actions">
+        <div class="lang-switcher" role="group" aria-label="Language">
+          <button class="lang-btn" data-lang="pt-BR" type="button" aria-label="Português">🇧🇷 PT</button>
+          <button class="lang-btn" data-lang="en"    type="button" aria-label="English">🇺🇸 EN</button>
+          <button class="lang-btn" data-lang="es"    type="button" aria-label="Español">🇪🇸 ES</button>
+        </div>
+        <a href="/login.html" class="nav-link" data-i18n="nav.login">Entrar</a>
+      </div>
+    </nav>
+
+    <main>
+    <!-- ============================================================
+         HERO
+         ============================================================ -->
+    <section class="showcase-hero">
+      <span class="hero-eyebrow" data-i18n="hero.eyebrow">Plataforma profissional</span>
+      <h1 class="hero-title">
+        <span data-i18n="hero.titleA">Sinais inteligentes para</span>
+        <span class="hl" data-i18n="hero.titleHL">BTTS, Escanteios e Pré-Live</span>
+      </h1>
+      <p class="hero-sub" data-i18n="hero.sub">
+        Análises ao vivo, alertas em tempo real e estatísticas avançadas para quem leva o jogo a sério.
+      </p>
+      <a href="/register.html" class="cta-primary">
+        <span data-i18n="hero.cta">Começar Agora</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+          <polyline points="12 5 19 12 12 19"/>
+        </svg>
+      </a>
+      <div class="hero-trust" data-i18n="hero.trust">Sem compromisso · Cancele quando quiser · Acesso imediato</div>
+    </section>
+
+    <!-- ============================================================
+         BENEFITS
+         ============================================================ -->
+    <section class="showcase-section" id="benefits">
+      <div class="section-head">
+        <div class="section-eyebrow" data-i18n="benefits.eyebrow">O que você recebe</div>
+        <h2 class="section-title" data-i18n="benefits.title">Tudo o que você precisa para decidir com confiança</h2>
+        <p class="section-sub" data-i18n="benefits.sub">
+          Sete recursos pensados para apostadores que querem precisão, contexto e velocidade — sem ruído.
+        </p>
+      </div>
+
+      <div class="benefits-grid">
+        <article class="benefit-card">
+          <div class="benefit-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20a14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+          </div>
+          <h3 class="benefit-title" data-i18n="benefits.btts.title">BTTS Inteligente</h3>
+          <p class="benefit-desc" data-i18n="benefits.btts.desc">Modelo Poisson com SoT e ataques perigosos. Estimativa de probabilidade real, não chute.</p>
+        </article>
+
+        <article class="benefit-card">
+          <div class="benefit-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+          </div>
+          <h3 class="benefit-title" data-i18n="benefits.over.title">Over Escanteios</h3>
+          <p class="benefit-desc" data-i18n="benefits.over.desc">Projeção por ritmo e pressão. Sinais só quando a probabilidade real entra na zona de valor.</p>
+        </article>
+
+        <article class="benefit-card">
+          <div class="benefit-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>
+          </div>
+          <h3 class="benefit-title" data-i18n="benefits.under.title">Under Escanteios</h3>
+          <p class="benefit-desc" data-i18n="benefits.under.desc">Detecção de jogos travados e baixa pressão ofensiva. Linhas baixas com probabilidade favorável.</p>
+        </article>
+
+        <article class="benefit-card">
+          <div class="benefit-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </div>
+          <h3 class="benefit-title" data-i18n="benefits.prelive.title">Análises Pré-Live</h3>
+          <p class="benefit-desc" data-i18n="benefits.prelive.desc">Últimos 5 jogos, médias de gols, BTTS% e escanteios. Decida antes do apito inicial.</p>
+        </article>
+
+        <article class="benefit-card">
+          <div class="benefit-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+          <h3 class="benefit-title" data-i18n="benefits.alerts.title">Alertas em Tempo Real</h3>
+          <p class="benefit-desc" data-i18n="benefits.alerts.desc">Notificações instantâneas via socket. Receba o sinal no exato instante em que ele aparece.</p>
+        </article>
+
+        <article class="benefit-card">
+          <div class="benefit-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          </div>
+          <h3 class="benefit-title" data-i18n="benefits.dashboard.title">Dashboard Ao Vivo</h3>
+          <p class="benefit-desc" data-i18n="benefits.dashboard.desc">Painel limpo, jogos ao vivo, filtros por campeonato e destaques dos melhores sinais.</p>
+        </article>
+
+        <article class="benefit-card">
+          <div class="benefit-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6"  y1="20" x2="6"  y2="14"/></svg>
+          </div>
+          <h3 class="benefit-title" data-i18n="benefits.stats.title">Estatísticas Avançadas</h3>
+          <p class="benefit-desc" data-i18n="benefits.stats.desc">Pressão, momentum, ritmo e contexto. Toda decisão acompanhada da explicação por trás.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         PLANS
+         ============================================================ -->
+    <section class="showcase-section" id="plans">
+      <div class="section-head">
+        <div class="section-eyebrow" data-i18n="plans.eyebrow">Planos</div>
+        <h2 class="section-title" data-i18n="plans.title">Escolha o tempo de acesso ideal para você</h2>
+        <p class="section-sub" data-i18n="plans.sub">
+          Todos os planos incluem 100% dos recursos. A diferença é só o tempo de acesso — quanto mais longo, menor o custo mensal.
+        </p>
+      </div>
+
+      <div class="plans-grid">
+
+        <!-- STARTER -->
+        <article class="plan-card">
+          <div class="plan-name" data-i18n="plans.starter.name">STARTER</div>
+          <div class="plan-term" data-i18n="plans.starter.term">3 meses de acesso</div>
+          <div class="plan-price">
+            <span class="plan-price-amount" data-i18n="plans.starter.price">R$ 239,70</span>
+          </div>
+          <div class="plan-equiv" data-i18n="plans.starter.equiv">Equivalente a R$ 79,90/mês</div>
+          <ul class="plan-features">
+            <li data-i18n="plans.starter.f1">Sinais BTTS ao vivo</li>
+            <li data-i18n="plans.starter.f2">Over e Under Escanteios</li>
+            <li data-i18n="plans.starter.f3">Análises Pré-Live</li>
+            <li data-i18n="plans.starter.f4">Dashboard em tempo real</li>
+            <li data-i18n="plans.starter.f5">Alertas instantâneos</li>
+          </ul>
+          <a href="/register.html?plan=starter" class="plan-cta" data-i18n="plans.cta">Começar Agora</a>
+        </article>
+
+        <!-- PRO -->
+        <article class="plan-card">
+          <div class="plan-name" data-i18n="plans.pro.name">PRO</div>
+          <div class="plan-term" data-i18n="plans.pro.term">6 meses de acesso</div>
+          <div class="plan-price">
+            <span class="plan-price-amount" data-i18n="plans.pro.price">R$ 389,40</span>
+          </div>
+          <div class="plan-equiv" data-i18n="plans.pro.equiv">Equivalente a R$ 64,90/mês · economize 19%</div>
+          <ul class="plan-features">
+            <li data-i18n="plans.pro.f1">Tudo do STARTER</li>
+            <li data-i18n="plans.pro.f2">Estatísticas avançadas completas</li>
+            <li data-i18n="plans.pro.f3">Filtros por campeonato</li>
+            <li data-i18n="plans.pro.f4">Histórico estendido de sinais</li>
+            <li data-i18n="plans.pro.f5">Suporte prioritário</li>
+          </ul>
+          <a href="/register.html?plan=pro" class="plan-cta" data-i18n="plans.cta">Começar Agora</a>
+        </article>
+
+        <!-- PREMIUM (featured) -->
+        <article class="plan-card plan-featured">
+          <span class="plan-badge" data-i18n="plans.premium.badge">Melhor Oferta</span>
+          <div class="plan-name" data-i18n="plans.premium.name">PREMIUM</div>
+          <div class="plan-term" data-i18n="plans.premium.term">12 meses de acesso</div>
+          <div class="plan-price">
+            <span class="plan-price-amount" data-i18n="plans.premium.price">R$ 598,80</span>
+          </div>
+          <div class="plan-equiv" data-i18n="plans.premium.equiv">Equivalente a R$ 49,90/mês · economize 38%</div>
+          <ul class="plan-features">
+            <li data-i18n="plans.premium.f1">Tudo do PRO</li>
+            <li data-i18n="plans.premium.f2">Acesso 12 meses contínuos</li>
+            <li data-i18n="plans.premium.f3">Melhor custo-benefício</li>
+            <li data-i18n="plans.premium.f4">Acesso antecipado a novos mercados</li>
+            <li data-i18n="plans.premium.f5">Suporte VIP em PT, EN e ES</li>
+          </ul>
+          <a href="/register.html?plan=premium" class="plan-cta" data-i18n="plans.cta">Começar Agora</a>
+        </article>
+
+      </div>
+    </section>
+    </main>
+
+    <!-- ============================================================
+         FOOTER
+         ============================================================ -->
+    <footer class="showcase-footer">
+      <div data-i18n="footer.copy">© 2026 Robotrend IA — Todos os direitos reservados.</div>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="/login.html" data-i18n="footer.login">Entrar</a>
+        <a href="/register.html" data-i18n="footer.register">Cadastrar</a>
+        <a href="/pricing.html" data-i18n="footer.pricing">Planos</a>
+      </nav>
+    </footer>
+
+  </div>
+
+  <!-- ============================================================
+       I18N + LANG SWITCHER (vanilla, autocontido, sem dependências)
+       ============================================================ -->
+  <script>
+  (function () {
+    'use strict';
+
+    var SUPPORTED = ['pt-BR', 'en', 'es'];
+    var DEFAULT_LANG = 'pt-BR';
+    var STORAGE_KEY = 'robotrend.lang';
+
+    var I18N = {
+
+      /* =================== PORTUGUÊS =================== */
+      'pt-BR': {
+        meta: {
+          title: 'Robotrend IA — Sinais inteligentes de futebol',
+          description: 'Sinais ao vivo de BTTS, Over Escanteios, Under Escanteios e análises pré-live. Plataforma profissional para apostadores de alto nível.'
+        },
+        nav: { login: 'Entrar' },
+        hero: {
+          eyebrow: 'Plataforma profissional',
+          titleA: 'Sinais inteligentes para',
+          titleHL: 'BTTS, Escanteios e Pré-Live',
+          sub: 'Análises ao vivo, alertas em tempo real e estatísticas avançadas para quem leva o jogo a sério.',
+          cta: 'Começar Agora',
+          trust: 'Acesso imediato · Sinais ao vivo · Suporte em 3 idiomas'
+        },
+        benefits: {
+          eyebrow: 'O que você recebe',
+          title: 'Tudo o que você precisa para decidir com confiança',
+          sub: 'Sete recursos pensados para apostadores que querem precisão, contexto e velocidade — sem ruído.',
+          btts:      { title: 'BTTS Inteligente',     desc: 'Modelo Poisson com chutes no alvo e ataques perigosos. Probabilidade real, não chute.' },
+          over:      { title: 'Over Escanteios',      desc: 'Projeção por ritmo e pressão. Sinais só quando a probabilidade entra na zona de valor.' },
+          under:     { title: 'Under Escanteios',     desc: 'Detecção de jogos travados e baixa pressão ofensiva. Linhas baixas com probabilidade favorável.' },
+          prelive:   { title: 'Análises Pré-Live',    desc: 'Últimos 5 jogos, médias de gols, BTTS% e escanteios. Decida antes do apito inicial.' },
+          alerts:    { title: 'Alertas em Tempo Real',desc: 'Notificações instantâneas via socket. Receba o sinal no instante exato em que ele aparece.' },
+          dashboard: { title: 'Dashboard Ao Vivo',    desc: 'Painel limpo, jogos ao vivo, filtros por campeonato e destaques dos melhores sinais.' },
+          stats:     { title: 'Estatísticas Avançadas', desc: 'Pressão, momentum, ritmo e contexto. Toda decisão acompanhada da explicação por trás.' }
+        },
+        plans: {
+          eyebrow: 'Planos',
+          title: 'Escolha o tempo de acesso ideal para você',
+          sub: 'Todos os planos incluem 100% dos recursos. A diferença é só o tempo de acesso — quanto mais longo, menor o custo mensal.',
+          cta: 'Começar Agora',
+          starter: {
+            name: 'STARTER', term: '3 meses de acesso',
+            price: 'R$ 239,70', equiv: 'Equivalente a R$ 79,90/mês',
+            f1: 'Sinais BTTS ao vivo',
+            f2: 'Over e Under Escanteios',
+            f3: 'Análises Pré-Live',
+            f4: 'Dashboard em tempo real',
+            f5: 'Alertas instantâneos'
+          },
+          pro: {
+            name: 'PRO', term: '6 meses de acesso',
+            price: 'R$ 389,40', equiv: 'Equivalente a R$ 64,90/mês · economize 19%',
+            f1: 'Tudo do STARTER',
+            f2: 'Estatísticas avançadas completas',
+            f3: 'Filtros por campeonato',
+            f4: 'Histórico estendido de sinais',
+            f5: 'Suporte prioritário'
+          },
+          premium: {
+            name: 'PREMIUM', term: '12 meses de acesso',
+            price: 'R$ 598,80', equiv: 'Equivalente a R$ 49,90/mês · economize 38%',
+            badge: 'Melhor Oferta',
+            f1: 'Tudo do PRO',
+            f2: 'Acesso 12 meses contínuos',
+            f3: 'Melhor custo-benefício',
+            f4: 'Acesso antecipado a novos mercados',
+            f5: 'Suporte VIP em PT, EN e ES'
+          }
+        },
+        footer: {
+          copy: '© 2026 Robotrend IA — Todos os direitos reservados.',
+          login: 'Entrar', register: 'Cadastrar', pricing: 'Planos'
+        }
+      },
+
+      /* =================== ENGLISH =================== */
+      'en': {
+        meta: {
+          title: 'Robotrend IA — Smart football betting signals',
+          description: 'Live BTTS, Over Corners, Under Corners signals and pre-live analytics. Professional platform for serious bettors.'
+        },
+        nav: { login: 'Sign in' },
+        hero: {
+          eyebrow: 'Professional platform',
+          titleA: 'Smart signals for',
+          titleHL: 'BTTS, Corners and Pre-Live',
+          sub: 'Live analytics, real-time alerts and advanced statistics for those who take the game seriously.',
+          cta: 'Try Now',
+          trust: 'Instant access · Live signals · Support in 3 languages'
+        },
+        benefits: {
+          eyebrow: 'What you get',
+          title: 'Everything you need to bet with confidence',
+          sub: 'Seven features built for bettors who want precision, context and speed — with zero noise.',
+          btts:      { title: 'Smart BTTS',           desc: 'Poisson model with shots on target and dangerous attacks. Real probability, not a guess.' },
+          over:      { title: 'Over Corners',         desc: 'Projection by tempo and pressure. Signals only when probability enters the value zone.' },
+          under:     { title: 'Under Corners',        desc: 'Detection of locked games and low offensive pressure. Low lines with favorable probability.' },
+          prelive:   { title: 'Pre-Live Analytics',   desc: 'Last 5 matches, goal averages, BTTS% and corners. Decide before kickoff.' },
+          alerts:    { title: 'Real-Time Alerts',     desc: 'Instant socket notifications. Get the signal the exact moment it appears.' },
+          dashboard: { title: 'Live Dashboard',       desc: 'Clean panel, live matches, league filters and the best signals highlighted.' },
+          stats:     { title: 'Advanced Statistics',  desc: 'Pressure, momentum, tempo and context. Every decision comes with the reason behind it.' }
+        },
+        plans: {
+          eyebrow: 'Plans',
+          title: 'Choose the access length that fits you',
+          sub: 'All plans include 100% of the features. The only difference is the access period — the longer it is, the lower the monthly cost.',
+          cta: 'Try Now',
+          starter: {
+            name: 'STARTER', term: '3 months access',
+            price: 'US$ 117', equiv: 'Equivalent to US$ 39/month',
+            f1: 'Live BTTS signals',
+            f2: 'Over and Under Corners',
+            f3: 'Pre-Live Analytics',
+            f4: 'Real-time dashboard',
+            f5: 'Instant alerts'
+          },
+          pro: {
+            name: 'PRO', term: '6 months access',
+            price: 'US$ 189', equiv: 'Equivalent to US$ 32/month · save 19%',
+            f1: 'Everything in STARTER',
+            f2: 'Full advanced statistics',
+            f3: 'League filters',
+            f4: 'Extended signal history',
+            f5: 'Priority support'
+          },
+          premium: {
+            name: 'PREMIUM', term: '12 months access',
+            price: 'US$ 297', equiv: 'Equivalent to US$ 25/month · save 38%',
+            badge: 'Best Value',
+            f1: 'Everything in PRO',
+            f2: '12 months of continuous access',
+            f3: 'Best price-to-value ratio',
+            f4: 'Early access to new markets',
+            f5: 'VIP support in EN, PT and ES'
+          }
+        },
+        footer: {
+          copy: '© 2026 Robotrend IA — All rights reserved.',
+          login: 'Sign in', register: 'Sign up', pricing: 'Plans'
+        }
+      },
+
+      /* =================== ESPAÑOL =================== */
+      'es': {
+        meta: {
+          title: 'Robotrend IA — Señales inteligentes de fútbol',
+          description: 'Señales en vivo de BTTS, Over Córners, Under Córners y análisis pre-live. Plataforma profesional para apostadores serios.'
+        },
+        nav: { login: 'Ingresar' },
+        hero: {
+          eyebrow: 'Plataforma profesional',
+          titleA: 'Señales inteligentes para',
+          titleHL: 'BTTS, Córners y Pre-Live',
+          sub: 'Análisis en vivo, alertas en tiempo real y estadísticas avanzadas para quienes toman el juego en serio.',
+          cta: 'Probar Ahora',
+          trust: 'Acceso inmediato · Señales en vivo · Soporte en 3 idiomas'
+        },
+        benefits: {
+          eyebrow: 'Lo que recibes',
+          title: 'Todo lo que necesitas para decidir con confianza',
+          sub: 'Siete funciones pensadas para apostadores que buscan precisión, contexto y velocidad — sin ruido.',
+          btts:      { title: 'BTTS Inteligente',       desc: 'Modelo Poisson con tiros al arco y ataques peligrosos. Probabilidad real, no suposición.' },
+          over:      { title: 'Over Córners',           desc: 'Proyección por ritmo y presión. Señales solo cuando la probabilidad entra en zona de valor.' },
+          under:     { title: 'Under Córners',          desc: 'Detección de partidos trabados y baja presión ofensiva. Líneas bajas con probabilidad favorable.' },
+          prelive:   { title: 'Análisis Pre-Live',      desc: 'Últimos 5 partidos, promedios de goles, BTTS% y córners. Decide antes del pitazo inicial.' },
+          alerts:    { title: 'Alertas en Tiempo Real', desc: 'Notificaciones instantáneas vía socket. Recibe la señal en el momento exacto en que aparece.' },
+          dashboard: { title: 'Dashboard en Vivo',      desc: 'Panel limpio, partidos en vivo, filtros por liga y destacados de las mejores señales.' },
+          stats:     { title: 'Estadísticas Avanzadas', desc: 'Presión, momentum, ritmo y contexto. Cada decisión acompañada de su explicación.' }
+        },
+        plans: {
+          eyebrow: 'Planes',
+          title: 'Elige el tiempo de acceso ideal para ti',
+          sub: 'Todos los planes incluyen el 100% de las funciones. La diferencia es solo el tiempo de acceso — cuanto más largo, menor el costo mensual.',
+          cta: 'Probar Ahora',
+          starter: {
+            name: 'STARTER', term: '3 meses de acceso',
+            price: 'US$ 57', equiv: 'Equivalente a US$ 19/mes',
+            f1: 'Señales BTTS en vivo',
+            f2: 'Over y Under Córners',
+            f3: 'Análisis Pre-Live',
+            f4: 'Dashboard en tiempo real',
+            f5: 'Alertas instantáneas'
+          },
+          pro: {
+            name: 'PRO', term: '6 meses de acceso',
+            price: 'US$ 89', equiv: 'Equivalente a US$ 15/mes · ahorra 19%',
+            f1: 'Todo lo del STARTER',
+            f2: 'Estadísticas avanzadas completas',
+            f3: 'Filtros por liga',
+            f4: 'Historial extendido de señales',
+            f5: 'Soporte prioritario'
+          },
+          premium: {
+            name: 'PREMIUM', term: '12 meses de acceso',
+            price: 'US$ 139', equiv: 'Equivalente a US$ 12/mes · ahorra 38%',
+            badge: 'Mejor Oferta',
+            f1: 'Todo lo del PRO',
+            f2: '12 meses de acceso continuo',
+            f3: 'Mejor relación precio-valor',
+            f4: 'Acceso anticipado a nuevos mercados',
+            f5: 'Soporte VIP en ES, PT e EN'
+          }
+        },
+        footer: {
+          copy: '© 2026 Robotrend IA — Todos los derechos reservados.',
+          login: 'Ingresar', register: 'Registrarse', pricing: 'Planes'
+        }
+      }
+    };
+
+    /* ---------- helpers ---------- */
+    function getByPath(obj, path) {
+      var parts = path.split('.');
+      var cur = obj;
+      for (var i = 0; i < parts.length; i++) {
+        if (cur == null) return undefined;
+        cur = cur[parts[i]];
+      }
+      return cur;
+    }
+
+    function detectInitialLang() {
+      try {
+        var url = new URL(window.location.href);
+        var qp = url.searchParams.get('lang');
+        if (qp && SUPPORTED.indexOf(qp) !== -1) return qp;
+      } catch (_) {}
+      try {
+        var stored = localStorage.getItem(STORAGE_KEY);
+        if (stored && SUPPORTED.indexOf(stored) !== -1) return stored;
+      } catch (_) {}
+      var nav = (navigator.language || navigator.userLanguage || '').toLowerCase();
+      if (nav.indexOf('pt') === 0) return 'pt-BR';
+      if (nav.indexOf('es') === 0) return 'es';
+      if (nav.indexOf('en') === 0) return 'en';
+      return DEFAULT_LANG;
+    }
+
+    var OG_LOCALE = { 'pt-BR': 'pt_BR', 'en': 'en_US', 'es': 'es_ES' };
+
+    function applyLang(lang) {
+      if (SUPPORTED.indexOf(lang) === -1) lang = DEFAULT_LANG;
+      var dict = I18N[lang];
+      if (!dict) return;
+
+      // <html lang>
+      document.documentElement.setAttribute('lang', lang);
+
+      // Texts (uses textContent — XSS-safe; never innerHTML)
+      var nodes = document.querySelectorAll('[data-i18n]');
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var key = el.getAttribute('data-i18n');
+        var val = getByPath(dict, key);
+        if (val == null) continue;
+        var attr = el.getAttribute('data-i18n-attr');
+        if (attr) el.setAttribute(attr, val);
+        else el.textContent = val;
+      }
+
+      // <title>
+      if (dict.meta && dict.meta.title) document.title = dict.meta.title;
+
+      // og:locale sync
+      var ogLocale = document.querySelector('meta[property="og:locale"]');
+      if (ogLocale && OG_LOCALE[lang]) ogLocale.setAttribute('content', OG_LOCALE[lang]);
+
+      // Active button state
+      var buttons = document.querySelectorAll('.lang-btn');
+      for (var j = 0; j < buttons.length; j++) {
+        if (buttons[j].getAttribute('data-lang') === lang) buttons[j].classList.add('active');
+        else buttons[j].classList.remove('active');
+      }
+
+      // Persist + URL
+      try { localStorage.setItem(STORAGE_KEY, lang); } catch (_) {}
+      try {
+        var u = new URL(window.location.href);
+        u.searchParams.set('lang', lang);
+        window.history.replaceState(null, '', u.toString());
+      } catch (_) {}
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      var initial = detectInitialLang();
+      applyLang(initial);
+
+      var buttons = document.querySelectorAll('.lang-btn');
+      for (var i = 0; i < buttons.length; i++) {
+        buttons[i].addEventListener('click', function (ev) {
+          var lang = ev.currentTarget.getAttribute('data-lang');
+          applyLang(lang);
+        });
+      }
+    });
+  })();
+  </script>
+</body>
+</html>
