@@ -17,6 +17,10 @@
   function clearSession() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    // Limpa caches do RobotrendUser para impedir UI premium "carregada" vir
+    // do cache de uma sessão anterior em browser compartilhado / outra conta.
+    try { localStorage.removeItem('robotrend_user_subscription_v1'); } catch (_) {}
+    try { localStorage.removeItem('robotrend_pending_upgrade'); } catch (_) {}
   }
 
   async function api(path, opts = {}) {

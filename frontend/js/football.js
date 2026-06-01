@@ -152,9 +152,14 @@
   }
 
   // === Auth-aware fetch ===
-  /** API do painel football — SEMPRE pública (sem Bearer que quebra bootstrap). */
+  /** API do painel football. Envia Bearer quando há sessão (necessário para
+   *  o tier-gating de rotas premium como /predictions e /fixture/:id/insight)
+   *  + cookie rb_token (httpOnly). Tokens inválidos são tolerados pelo
+   *  middleware optionalAuth do backend. */
   async function api(path, opts = {}) {
     const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    const token = window.RobotrendAuth?.getToken?.();
+    if (token && !headers['Authorization']) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(path, {
       method: opts.method || 'GET',
       headers,
@@ -163,11 +168,68 @@
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const err = new Error(data?.error || `HTTP ${res.status}`);
+      const err = new Error(data?.error || data?.message || `HTTP ${res.status}`);
       err.status = res.status;
+      err.payload = data || null;
+      err.locked = data?.locked === true;
+      err.feature = data?.feature || null;
       throw err;
     }
     return data;
+  }
+
+  /**
+   * Renderiza overlay de "Premium-required" dentro de `container`.
+   * Usado quando o backend devolve 402 + { locked:true, upgrade:true } em
+   * rotas premium (insight, predictions). Reutiliza o estilo do card
+   * .best-bet-locked (style.css) e dispara o fluxo virarPremium() já
+   * existente — não cria caminho de pagamento novo.
+   */
+  function renderPremiumLockOverlay(container, feature, opts = {}) {
+    if (!container) return;
+    const PRESETS = {
+      premium_insight: {
+        title: 'Leitura da IA é Premium',
+        sub: 'Acesse picks recomendados, tendências e a leitura completa do jogo no plano Premium.',
+      },
+      premium_predictions: {
+        title: 'Predições da IA são Premium',
+        sub: 'Veja probabilidades, dica IA e overs/unders por partida ao virar Premium.',
+      },
+    };
+    const preset = PRESETS[feature] || {};
+    const title = opts.title || preset.title || 'Recurso exclusivo Premium';
+    const sub = opts.sub || preset.sub
+      || 'Desbloqueie a análise IA completa e a Melhor Aposta do Momento com o plano Premium.';
+    container.innerHTML = `
+      <div class="best-bet-card best-bet-locked" data-premium-lock="${escapeHtml(feature || 'premium')}" style="margin:8px 0">
+        <div class="best-bet-locked-content">
+          <div class="best-bet-locked-icon">🔒</div>
+          <div class="best-bet-locked-text">
+            <div class="best-bet-locked-title">${escapeHtml(title)}</div>
+            <div class="best-bet-locked-sub">${escapeHtml(sub)}</div>
+            <div class="best-bet-locked-perks">
+              <span>⚡ Sinais sem delay</span>
+              <span>🧠 Análise IA completa</span>
+              <span>🎯 Predições + H2H</span>
+            </div>
+            <button type="button" class="best-bet-upgrade-btn" data-upgrade-btn>🚀 Virar Premium →</button>
+          </div>
+        </div>
+      </div>`;
+    const btn = container.querySelector('[data-upgrade-btn]');
+    btn?.addEventListener('click', () => {
+      if (typeof window.virarPremium === 'function') {
+        window.virarPremium({ button: btn });
+      } else {
+        const back = encodeURIComponent(location.pathname + location.search);
+        location.href = `/pricing.html?upgrade=${back}`;
+      }
+    });
+  }
+
+  function isPremiumLockError(err) {
+    return !!(err && err.status === 402 && err.locked);
   }
 
   // ============================================================
@@ -2139,7 +2201,15 @@
           ${pp.under_over ? `<div style="margin-top:8px;font-size:11px;color:var(--muted)">Over/Under: <strong style="color:var(--text)">${escapeHtml(pp.under_over)}</strong></div>` : ''}
           ${pp.win_or_draw !== undefined ? `<div style="font-size:11px;color:var(--muted)">Win or draw: <strong style="color:var(--text)">${pp.win_or_draw ? 'sim' : 'não'}</strong></div>` : ''}
         `;
-      }).catch(() => { $('#preds-container').innerHTML = '<div class="fb-empty">erro ao carregar predictions</div>'; });
+      }).catch((err) => {
+        const cont = $('#preds-container');
+        if (!cont) return;
+        if (isPremiumLockError(err)) {
+          renderPremiumLockOverlay(cont, err.feature || 'premium_predictions');
+        } else {
+          cont.innerHTML = '<div class="fb-empty">erro ao carregar predictions</div>';
+        }
+      });
     }
   }
 
@@ -2183,7 +2253,11 @@
       if (m.fixtureId) {
         api(`/api/football/fixture/${m.fixtureId}/insight`)
           .then((r) => { if (r.insight) { state.matches.get(String(m.id)).insight = r.insight; renderDetailTab(state.matches.get(String(m.id))); } })
-          .catch(() => {});
+          .catch((err) => {
+            if (isPremiumLockError(err)) {
+              renderPremiumLockOverlay(root, err.feature || 'premium_insight');
+            }
+          });
       }
       return;
     }

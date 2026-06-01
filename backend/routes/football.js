@@ -101,6 +101,28 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   router.use(auth.optionalAuth(db));
 
   /* ============================================================
+     PREMIUM GATE — middleware reutilizável para rotas pagas.
+     Usa isPremiumRequester(req) (definido adiante e hoisted).
+     FREE/anônimo recebe 402 com payload { locked, upgrade, feature }
+     que o frontend usa para exibir o overlay de upgrade.
+     ============================================================ */
+  function gatePremiumFeature(featureName) {
+    return (req, res, next) => {
+      noStore(res);
+      if (isPremiumRequester(req)) return next();
+      return res.status(402).json({
+        ok: false,
+        locked: true,
+        upgrade: true,
+        feature: featureName,
+        currentTier: 'free',
+        code: 'PREMIUM_REQUIRED',
+        message: 'Recurso disponível apenas para assinantes Premium.',
+      });
+    };
+  }
+
+  /* ============================================================
      STATUS (usuário logado pode consultar — útil pro dashboard
      mostrar se a API está habilitada e quanto resta de quota)
      ============================================================ */
@@ -561,7 +583,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     res.json({ ok: true, count: data.length, fixtures: data.map(normalizeFixture) });
   }));
 
-  router.get('/predictions/:fixtureId', asyncHandler(async (req, res) => {
+  router.get('/predictions/:fixtureId', gatePremiumFeature('premium_predictions'), asyncHandler(async (req, res) => {
     noStore(res);
     const data = await af.getPredictions(req.params.fixtureId);
     res.json({ ok: true, prediction: data[0] || null });
@@ -1154,11 +1176,12 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
      ENRICHMENT — força refresh de stats/events de uma fixture
      ============================================================ */
   /* ============================================================
-     INSIGHTS — leitura IA interpretativa (público)
+     INSIGHTS — leitura IA interpretativa (PREMIUM)
      Devolve trends + reads + picks. Computado on-demand a partir do
      match cacheado no poller. Sem nova chamada à API.
+     FREE/anônimo recebe 402 + locked → overlay de upgrade no frontend.
      ============================================================ */
-  router.get('/fixture/:id/insight', (req, res) => {
+  router.get('/fixture/:id/insight', gatePremiumFeature('premium_insight'), (req, res) => {
     noStore(res);
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ ok: false, error: 'id obrigatório' });

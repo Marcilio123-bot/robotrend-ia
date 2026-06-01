@@ -1111,9 +1111,19 @@ function buildPaymentRoutes(app, db, requireAuth) {
   });
 
   /* ============================================================
-     Mock success (dev) — usuário existente autoupgrade
+     Mock success — APENAS em NODE_ENV=development.
+     Em produção/staging retorna 404 para impedir auto-upgrade
+     sem pagamento real. (Se algum gateway redirecionar para cá
+     em prod, é bug — força queda visível em vez de elevar plano.)
      ============================================================ */
   app.get('/billing/mock-success', requireAuth(db), async (req, res) => {
+    const env = process.env.NODE_ENV || 'development';
+    if (env !== 'development') {
+      log.warn('mock-success bloqueado fora de development', {
+        env, userId: req.user?.id, ip: req.ip,
+      });
+      return res.status(404).send('Not Found');
+    }
     const { plan, provider } = req.query;
     if (!['VIP', 'PREMIUM'].includes(plan)) return res.status(400).send('plan inválido');
     await provisionUserFromPayment(db, {
