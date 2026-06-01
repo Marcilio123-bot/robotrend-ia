@@ -1,7 +1,7 @@
 /**
  * Robotrend IA — Football Provider (híbrido com failover + agregação)
  *
- * Encadeia múltiplos providers para cobertura máxima de jogos live.
+ * Encadeia múltiplos providers REAIS para cobertura máxima de jogos live.
  *
  * Dois modos de operação para `getLiveFixtures`:
  *
@@ -16,14 +16,17 @@
  *      para o frontend mostrar de quantas fontes veio.
  *
  * Ordem default (FOOTBALL_PROVIDER_PRIORITY):
- *   bet365data → thesportsdb → football-data → apisports → demo
+ *   bet365data → thesportsdb → football-data → apisports
  *
  *   - Bet365Data (RapidAPI) é PRIMARY: live + odds + stats com contrato comercial
  *   - TheSportsDB e football-data como fallback gratuito
  *   - API-Sports só se houver chave paga
- *   - demo só como último recurso (mantém painel vivo)
  *   - SofaScore REMOVIDO do default (Cloudflare bloqueia com HTTP 403)
  *     Para reabilitar manualmente: FOOTBALL_PROVIDER_PRIORITY=bet365data,sofascore,…
+ *
+ * Se TODOS os providers reais falharem ou nenhum estiver configurado, a chain
+ * devolve lista vazia (e o caller deve exibir "Dados indisponíveis no momento.").
+ * NÃO existe fallback sintético — partidas fictícias foram removidas do sistema.
  *
  * Cada provider mantém SUA própria instância (imports lazy) e expõe a
  * mesma interface (apiFootball.js).
@@ -39,17 +42,18 @@ const REGISTRY = {
   thesportsdb:     () => require('./thesportsdbProvider'),
   sofascore:       () => require('./sofascoreProvider'),
   apisports:       () => require('./apiFootball'),
-  demo:            () => require('./demoProvider'),
 };
 
 function parsePriority() {
   // Compat: FOOTBALL_PROVIDER (singular) seleciona um único; PRIORITY define a lista.
   const single = String(process.env.FOOTBALL_PROVIDER || '').toLowerCase().trim();
-  // Nova ordem default: Bet365Data primário (RapidAPI, odds + live + stats).
+  // Ordem default: Bet365Data primário (RapidAPI, odds + live + stats).
   // SofaScore foi REMOVIDO do default — Cloudflare bloqueia com HTTP 403 em produção.
   // Para reabilitar, defina FOOTBALL_PROVIDER_PRIORITY manualmente.
-  const list   = String(process.env.FOOTBALL_PROVIDER_PRIORITY || 'bet365data,thesportsdb,football-data,apisports,demo')
-    .toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+  const list   = String(process.env.FOOTBALL_PROVIDER_PRIORITY || 'bet365data,thesportsdb,football-data,apisports')
+    .toLowerCase().split(',').map((s) => s.trim()).filter(Boolean)
+    // Defesa: ignora silenciosamente qualquer "demo" que venha de configs antigas.
+    .filter((n) => n !== 'demo');
 
   if (single && REGISTRY[single]) {
     // Coloca o singular no topo e mantém os demais como fallback

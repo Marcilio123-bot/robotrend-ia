@@ -15,8 +15,13 @@ JWT_SECRET=<64 hex>
 SESSION_SECRET=<32 hex>
 BOOTSTRAP_ADMIN_PASSWORD=<forte>
 ALLOWED_ORIGINS=https://seu_dominio.com
-DEMO_MODE=false
 ```
+
+> ⚠️ `DEMO_MODE` e `DEMO_PROVIDER_ENABLED` foram **removidos** do sistema.
+> Não os defina em painel — o startup-check bloqueará o boot se detectar.
+> Quando os providers reais (Bet365Data / TheSportsDB / football-data /
+> API-Sports) falham ou não estão configurados, o painel passa a exibir
+> "Dados indisponíveis no momento." em vez de partidas sintéticas.
 
 ## Render.com
 1. Conectar repo no dashboard
@@ -72,7 +77,7 @@ node scripts/smoke-test.js https://seu_dominio.com
 ## Checklist DEPLOY final
 - [ ] `/healthz` retorna 200
 - [ ] `/readyz` retorna 200 (Postgres conectado)
-- [ ] `/api/health` mostra `version: "5.0.0"`, `demo: false`, `postgres: true`
+- [ ] `/api/health` mostra `version: "5.0.0"`, `postgres: true`, `football.activeProvider != null`
 - [ ] Login com admin funciona
 - [ ] WebSocket conecta (DevTools → Network → ws)
 - [ ] HTTPS obrigatório (HTTP redireciona)
@@ -104,7 +109,7 @@ pm2 reload robotrend-ia --update-env
 ## Riscos críticos resolvidos
 - ✅ JWT_SECRET forte obrigatório
 - ✅ admin123 bloqueado em produção
-- ✅ DEMO_MODE bloqueado em produção
+- ✅ Modo DEMO/sintético removido — painel mostra "Dados indisponíveis no momento." em falha
 - ✅ PostgreSQL obrigatório (sem in-memory silencioso)
 - ✅ CORS restrito por ALLOWED_ORIGINS
 - ✅ Socket.IO com mesmo allow-list

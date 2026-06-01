@@ -1049,8 +1049,12 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       if (apiStatus.safeMode?.active) reason = 'safe-mode';
       else if (apiStatus.breaker?.state === 'OPEN') reason = 'circuit-open';
       else if ((apiStatus.quota?.dailyRemaining ?? 1) <= 0) reason = 'quota-exhausted';
-      else if (snap.lastFallbackReason === 'api_not_configured') reason = 'api-not-configured';
-      else if (snap.health === 'degraded') reason = `poller-degraded:${snap.lastFallbackReason || snap.lastError || 'unknown'}`;
+      else if (
+        snap.lastFallbackReason === 'no_provider_configured' ||
+        snap.lastFallbackReason === 'api_not_configured' ||
+        !af.isConfigured?.()
+      ) reason = 'data-unavailable';
+      else if (snap.health === 'degraded') reason = 'data-unavailable';
       else if (!snap.lastTickAt) reason = 'poller-warming-up';
       else reason = 'no-live-matches';
     }

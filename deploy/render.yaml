@@ -32,8 +32,6 @@ services:
         value: 3010
       - key: PGSSL
         value: "true"
-      - key: DEMO_MODE
-        value: "false"
       - key: ANTI_FAKE_PRESSURE
         value: "true"
       - key: ML_AUTOTUNE
@@ -87,7 +85,7 @@ services:
       # NÃO defina PGHOST=postgres — causa getaddrinfo ENOTFOUND no Render.
       # DATABASE_URL vem do bloco fromDatabase abaixo.
       - key: FOOTBALL_PROVIDER_PRIORITY
-        value: bet365data,thesportsdb,football-data,apisports,demo
+        value: bet365data,thesportsdb,football-data,apisports
       # Bet365Data RapidAPI (provider primário em produção).
       # Cole RAPIDAPI_KEY no painel Environment do Web Service.
       - key: RAPIDAPI_KEY
@@ -96,8 +94,6 @@ services:
         value: bet365data.p.rapidapi.com
       - key: FOOTBALL_DATA_KEY
         sync: false
-      - key: DEMO_PROVIDER_ENABLED
-        value: "true"
       - key: API_FOOTBALL_KEY
         sync: false
       - key: ODDS_API_KEY

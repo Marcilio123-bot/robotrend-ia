@@ -95,12 +95,13 @@ function checkMatch(match) {
     return { ok: true, reason: `status live: ${status}` };
   }
 
-  // 3) DEMO sem status: usa flag isLive + minuto
+  // 3) Provider sem status string: usa flag isLive + minuto.
+  //    Ex.: TheSportsDB livescore que entrega só minuto e flag.
   if (match.isLive === true && Number.isFinite(match.minute) && match.minute >= 1 && match.minute <= 95) {
-    return { ok: true, reason: `demo live (min ${match.minute})` };
+    return { ok: true, reason: `live (min ${match.minute})` };
   }
   if (match.isLive === false) {
-    return { ok: false, reason: 'isLive=false (demo finalizado)' };
+    return { ok: false, reason: 'isLive=false (jogo finalizado)' };
   }
 
   // 4) Janela temporal por timestamp

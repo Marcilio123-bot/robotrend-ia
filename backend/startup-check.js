@@ -186,8 +186,12 @@ function assertProductionEnv() {
     errors.push(formatSecretFixHint('SESSION_SECRET', sessionIssue));
   }
 
-  if (String(envString('DEMO_MODE') || 'false').toLowerCase() === 'true') {
-    errors.push('DEMO_MODE=true não é permitido em produção/staging.');
+  // DEMO_MODE foi removido do sistema (não existe mais provider/scanner sintético).
+  // Detecta env legacy e bloqueia o boot com instrução clara.
+  if (envString('DEMO_MODE')) {
+    errors.push('DEMO_MODE foi removido do sistema. Apague essa env do painel ' +
+                '(Render/Fly/etc) — o painel agora exibe "Dados indisponíveis no momento." ' +
+                'quando os providers reais estão fora.');
   }
 
   const strict = process.env.STRICT_REAL_ONLY;

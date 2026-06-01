@@ -19,14 +19,20 @@
      ============================================================ */
   const LIVE_STATUSES_CLIENT = new Set(['1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'INT']);
   const FINISHED_STATUSES_CLIENT = new Set(['FT', 'AET', 'PEN', 'CANC', 'PST', 'ABD', 'AWD', 'WO', 'SUSP']);
-  /** Banner amarelo "modo demo" — gerenciado por detectFootballMode(). */
-  let demoModeActive = false;
 
-  // Em DEMO o backend já bloqueia signals fake (FAKE-MATCH GUARD) — então
-  // exibir as partidas demo-* no painel é seguro e melhora a UX. O filtro
-  // segue rejeitando apenas matches OBVIAMENTE inválidos (FT/timestamp ruim).
+  // Defesa client-side adicional: providers reais nunca devolvem IDs com
+  // prefixos sintéticos. Se algum cache antigo ou falha de pipeline injetar,
+  // descartamos aqui também.
+  const SYNTHETIC_ID_PREFIXES = ['demo-', 'pre-', 'test-', 'mock-', 'fake-', 'sample-'];
+  function isSyntheticId(id) {
+    if (id == null) return false;
+    const s = String(id).toLowerCase();
+    return SYNTHETIC_ID_PREFIXES.some((p) => s.startsWith(p));
+  }
+
   function isValidMatch(m) {
     if (!m || m.id == null) return false;
+    if (isSyntheticId(m.id)) return false;
     const st = String(m.status || '').toUpperCase();
     if (FINISHED_STATUSES_CLIENT.has(st)) return false;
     if (st && !LIVE_STATUSES_CLIENT.has(st)) return false;
@@ -90,15 +96,26 @@
     };
   }
 
-  async function detectFootballMode() {
+  /**
+   * Mostra/esconde o banner "Dados indisponíveis no momento.".
+   * Critério: mostra quando NÃO há provider real configurado OU quando o
+   * último snapshot do poller veio em fallback E o painel está vazio.
+   */
+  let dataUnavailable = false;
+  function setDataUnavailableBanner(visible) {
+    const banner = document.getElementById('data-unavailable-banner');
+    if (banner) banner.style.display = visible ? '' : 'none';
+  }
+  async function detectFootballAvailability() {
     try {
       const r = await fetch('/api/health', { credentials: 'include' });
       if (!r.ok) return;
       const h = await r.json();
-      const prov = String(h.football?.activeProvider || '').toLowerCase();
-      demoModeActive = prov === 'demo';
-      const banner = document.getElementById('demo-provider-banner');
-      if (banner) banner.style.display = demoModeActive ? '' : 'none';
+      const configured = !!h.football?.configured;
+      const provider = String(h.football?.activeProvider || '').toLowerCase();
+      const noRealProvider = !configured || !provider;
+      dataUnavailable = noRealProvider && lastMatches.length === 0;
+      setDataUnavailableBanner(dataUnavailable);
     } catch (_) { /* offline */ }
   }
 
@@ -118,13 +135,40 @@
       const data = await r.json();
       const mapped = (data.matches || []).map(mapApiMatchToDashboard).filter(Boolean);
       const safe = filterValidMatches(mapped);
-      if (!safe.length) return;
+      if (!safe.length) {
+        // REST devolveu 0 jogos válidos. Se o socket também não trouxe nada,
+        // o painel está realmente vazio — re-avalia o banner de indisponibilidade.
+        if (!lastMatches.length) {
+          setDataUnavailableBanner(true);
+          renderEmptyState();
+        }
+        return;
+      }
       // Merge com lastMatches (socket pode ter trazido matches que o REST
       // ainda não devolveu, e vice-versa). Dedup por ID, versão mais nova vence.
       lastMatches = mergeMatchesById(lastMatches, safe);
       setText('#kpi-live', String(lastMatches.length));
+      // Houve dados reais → esconde banner.
+      setDataUnavailableBanner(false);
       scheduleRender();
     } catch (_) { /* offline */ }
+  }
+
+  /**
+   * Estado vazio: pinta a área de matches com a mensagem oficial.
+   * O renderMatches() padrão é resiliente a lastMatches=[] mas precisa de
+   * um placeholder explícito para o usuário entender o que aconteceu.
+   */
+  function renderEmptyState() {
+    const root = document.querySelector('#matches') || document.querySelector('[data-matches-mount]');
+    if (!root) return;
+    if (lastMatches.length > 0) return; // não sobrescreve renders normais
+    root.innerHTML =
+      '<div class="saas-card" style="text-align:center; padding:32px; opacity:.85;">' +
+      '<div style="font-size:15px; font-weight:600; margin-bottom:6px;">Dados indisponíveis no momento.</div>' +
+      '<div class="text-sm" style="opacity:.7;">' +
+      'Aguardando resposta dos provedores oficiais. O painel atualiza automaticamente quando houver dados reais.' +
+      '</div></div>';
   }
 
   /* ============================================================
@@ -814,9 +858,10 @@
     requestAnimationFrame(() => { _renderQueued = false; renderMatches(); });
   }
 
-  // matches:update — socket é a fonte primária quando há scanner real ativo.
-  // Quando o backend está em modo demo (scanner inerte → bot emite []), NÃO
-  // limpamos o feed: deixamos o fallback REST popular o painel.
+  // matches:update — socket é a fonte primária do scanner real.
+  // Quando o scanner inerte emite [] (sem provider configurado), NÃO
+  // limpamos o feed: deixamos o fallback REST e o banner de indisponibilidade
+  // tomarem conta da UX.
   socket.on('matches:update', (m) => {
     window.RobotrendHeartbeat?.markSocketActivity('matches:update');
     const incoming = filterValidMatches(m || []);
@@ -825,6 +870,7 @@
       // não queremos sobrescrever versões mais novas do mesmo match.
       lastMatches = mergeMatchesById(lastMatches, incoming);
       setText('#kpi-live', String(lastMatches.length));
+      setDataUnavailableBanner(false);
       scheduleRender();
     }
   });
@@ -914,17 +960,17 @@
      BOOT
      ============================================================ */
   initTheme();
-  // Detecta o provider ativo (real vs demo) ANTES de aplicar os filtros do feed REST.
-  // Sem isso, o filtro client-side derruba 100% dos matches sintéticos do demoProvider
-  // e o painel fica vazio mesmo com o poller cheio de partidas.
-  detectFootballMode().then(() => loadLiveFromApi());
+  // Detecta disponibilidade de dados reais ANTES de chamar o REST.
+  // Quando nenhum provider real está configurado, o painel exibe
+  // "Dados indisponíveis no momento." em vez de ficar piscando vazio.
+  detectFootballAvailability().then(() => loadLiveFromApi());
   loadSignals();
   loadBetSignals();
   loadBestSignal();
-  setInterval(loadLiveFromApi, 30_000);   // backup REST do poller football
-  setInterval(loadBetSignals,  60_000);   // backup polling caso socket caia
-  setInterval(loadBestSignal,  90_000);   // refresh do best-bet a cada 90s
-  setInterval(detectFootballMode, 120_000); // reavalia provider periodicamente
+  setInterval(loadLiveFromApi, 30_000);              // backup REST do poller football
+  setInterval(loadBetSignals,  60_000);              // backup polling caso socket caia
+  setInterval(loadBestSignal,  90_000);              // refresh do best-bet a cada 90s
+  setInterval(detectFootballAvailability, 120_000);  // reavalia disponibilidade periodicamente
 
   // Reage a mudanças do user-state (plano, role) — re-renderiza cards
   // que dependem do tier (best-bet, signal cards locked/unlocked).

@@ -142,7 +142,7 @@ const FORCE_REALTIME = String(process.env.FOOTBALL_FORCE_REALTIME ?? 'true').toL
 // Status enum por categoria. LIVE_STATUSES = whitelist estrita de partidas
 // que devem aparecer no painel ao vivo. Qualquer outra categoria (FT/AET/PEN
 // / "Finished" / "Match Finished" / etc.) é DROP imediato — sem cache, sem
-// fake clock, sem nada. Evita o bug de jogos congelados em 120'.
+// drift local, sem nada. Evita o bug de jogos congelados em 120'.
 const LIVE_STATUSES = new Set([
   '1H', 'HT', '2H', 'ET', 'BT', 'LIVE', 'INT', 'P',
   'INPLAY', 'IN_PLAY', 'IN-PLAY', 'IN PROGRESS', 'IN_PROGRESS',
@@ -219,13 +219,17 @@ function matchDebugFields(m) {
 }
 
 /**
- * Fake Momentum Engine — random walk leve com bias por contexto.
- * Roda no clock local quando a API não enviou stats novas; mantém a UI
- * "viva" (pressureIndex variando) durante períodos sem atualização real.
+ * Momentum Drift Engine — random walk leve com bias por contexto.
+ *
+ * Aplica suavização visual SOMENTE em matches REAIS já no cache, entre
+ * polls da API. Não inventa partidas nem injeta dados; só faz o
+ * `pressureIndex` e o `momentum.home/away` variarem para evitar UI
+ * congelada quando o provider está em silêncio momentâneo.
+ *
  * Idempotente: se a API enviar enrichment novo, os valores são sobrescritos
  * pelo enricher normalmente.
  */
-function applyFakeMomentumDrift(m) {
+function applyMomentumDrift(m) {
   if (!m) return;
   if (!m.momentum) m.momentum = { home: 50, away: 50, pressureIndex: 30 };
   const grp = statusGroup(m);
@@ -363,7 +367,7 @@ class LiveFootballPoller {
    * Atualiza os matches em cache aplicando:
    *   - Progressão de minute (cresce ~1 por 60s desde a base do servidor)
    *   - Cap: LIVE max 90, HT trava em 45, FT trava em 90
-   *   - Fake momentum (pressureIndex random walk com bias)
+   *   - Momentum drift (pressureIndex random walk com bias)
    * Emite `tick` para SSE/Socket.io com generatedAt atual.
    *
    * Idempotente: API real continua sendo a fonte primária. Sempre que `tick()`
@@ -404,8 +408,8 @@ class LiveFootballPoller {
       m.flags = m.flags || {};
       m.flags.isLive = true;
 
-      // Fake momentum drift (mantém pressure dinâmica entre polls)
-      applyFakeMomentumDrift(m);
+      // Momentum drift (mantém pressure dinâmica entre polls em jogos REAIS)
+      applyMomentumDrift(m);
     }
 
     // Remove FT matches que escaparam para o cache + emite match:remove
@@ -757,7 +761,7 @@ class LiveFootballPoller {
             m.insight = prev.insight;
             m.signals = prev.signals;
           }
-          // Preserva fake momentum aplicado pelo fallbackRealtimeClock
+          // Preserva momentum drift aplicado pelo fallbackRealtimeClock
           // (mesmo sem enrichment real, queremos pressure dinâmica entre polls).
           if (!m.momentum && prev.momentum) m.momentum = prev.momentum;
         }

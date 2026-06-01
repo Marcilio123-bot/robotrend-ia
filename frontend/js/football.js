@@ -73,7 +73,6 @@
      * showAll: bypass dos filtros de confiança/mercado/perfil.
      *   - Cliente regular: false (toggle manual)
      *   - Master/admin: força true por default (mas pode desligar)
-     *   - Demo mode: força true (provider=demo é só visualização)
      * Quando ativo, sinais abaixo do threshold aparecem com badge LOW
      * CONFIDENCE / BELOW TARGET / FILTERED em vez de serem escondidos.
      * O dashboard nunca pode parecer vazio se há matches enriquecidos.
@@ -81,7 +80,7 @@
     showAll: Boolean(loadJSON('rt:fb:showAll', false)),
     /** Role do user logado (resolvida via RobotrendUser / RobotrendAuth). */
     role: '',
-    /** Provider ativo (preenchido por feedMeta) — usado para auto-relax em demo. */
+    /** Provider real ativo (preenchido por feedMeta) — informativo. */
     activeProvider: '',
     // Signals indexados por matchId → array de signals recentes (max 5)
     signalsByMatch: new Map(),
@@ -712,17 +711,13 @@
   function isMasterRoleFb(role) {
     return MASTER_ROLES_FB.has(String(role || '').toLowerCase());
   }
-  function isDemoActive() {
-    return String(state.activeProvider || '').toLowerCase() === 'demo';
-  }
   /**
-   * Master e modo demo SEMPRE veem tudo. Cliente regular respeita o toggle
-   * "Mostrar tudo" persistido. Use isShowAllActive() em renderSignalBoard
-   * e collectSignals para decidir se aplica filtros rígidos.
+   * Master sempre vê tudo. Cliente regular respeita o toggle "Mostrar tudo"
+   * persistido. Use isShowAllActive() em renderSignalBoard e collectSignals
+   * para decidir se aplica filtros rígidos.
    */
   function isShowAllActive() {
     if (isMasterRoleFb(state.role)) return true;
-    if (isDemoActive()) return true;
     return !!state.showAll;
   }
   function setShowAll(v) {
@@ -734,14 +729,12 @@
   function updateShowAllButton() {
     const btn = document.getElementById('btn-show-all');
     if (!btn) return;
-    const forced = isMasterRoleFb(state.role) || isDemoActive();
+    const forced = isMasterRoleFb(state.role);
     const active = isShowAllActive();
     btn.classList.toggle('active', active);
-    btn.disabled = forced; // master/demo não desligam
+    btn.disabled = forced; // master não desliga
     btn.title = forced
-      ? (isDemoActive()
-          ? 'Modo demo: análises completas sempre visíveis'
-          : 'Master admin: análises completas sempre visíveis')
+      ? 'Master admin: análises completas sempre visíveis'
       : (active
           ? 'Mostrando análises IA completas (inclusive abaixo do threshold)'
           : 'Apenas sinais operáveis acima do threshold');
@@ -841,7 +834,7 @@
 
   /**
    * Retorna o sinal mais forte e permitido pelo filtro de mercados para um
-   * match. Em modo "Mostrar tudo" (master/demo/toggle) cai para o sinal
+   * match. Em modo "Mostrar tudo" (master/toggle) cai para o sinal
    * de maior confiança mesmo abaixo do threshold — para que os mini-cards
    * exibam algo informativo ao invés de ficarem "—".
    */
@@ -1510,7 +1503,7 @@
   /**
    * Coleta sinais para o board.
    *   - cliente strict: devolve apenas os que passam em todos os filtros
-   *   - master/showAll/demo: devolve TODOS os sinais com flag _filterReasons
+   *   - master/showAll: devolve TODOS os sinais com flag _filterReasons
    *     populada (vazia se passa). O caller decide rotular como
    *     LOW CONFIDENCE / FILTERED etc.
    *
@@ -1561,7 +1554,7 @@
 
   /**
    * Renderiza o painel de sinais (decision board).
-   *   1) Master/demo/showAll → mostra TODOS os sinais coletados com badge
+   *   1) Master/showAll → mostra TODOS os sinais coletados com badge
    *      por motivo de filtro (LOW CONFIDENCE, FILTERED, etc).
    *   2) Cliente strict → mostra apenas operáveis; quando vazio, em vez de
    *      "Selecione/aguarde", desce para um GRID DE MATCH CARDS com mini
@@ -1750,13 +1743,34 @@
     // 1) Sem matches do poller — motivo técnico do backend
     if (totalLive === 0) {
       const r = state.runtime.reason;
+      if (r === 'data-unavailable' || r === 'api-not-configured') {
+        return {
+          icon: '🚫',
+          title: 'Dados indisponíveis no momento.',
+          body: 'Os provedores oficiais (Bet365Data / TheSportsDB / football-data / API-Sports) estão fora do ar ou sem créditos. O painel volta automaticamente assim que houver dados reais.',
+          action: '↻ Tentar novamente',
+        };
+      }
       if (r === 'circuit-open') {
         return { icon: '⛔', title: 'Circuit breaker aberto', body: 'API-Football instável — usando cache se houver. Aguarde reabertura automática.', action: '↻ Tentar resync' };
       }
       if (r === 'quota-exhausted') {
-        return { icon: '📉', title: 'Quota diária esgotada', body: 'Plano free da API-Sports atingiu o limite (100/dia). Aguarde reset à meia-noite UTC.' };
+        return {
+          icon: '📉',
+          title: 'Dados indisponíveis no momento.',
+          body: 'Quota da API esgotada. Aguarde reset (meia-noite UTC) ou ajuste o plano do provedor.',
+          action: '↻ Tentar novamente',
+        };
       }
-      if (r === 'poller-not-ticked-yet') {
+      if (r === 'safe-mode') {
+        return {
+          icon: '🟡',
+          title: 'Dados indisponíveis no momento.',
+          body: 'Provedor em modo seguro (quota baixa). Volte em alguns minutos.',
+          action: '↻ Tentar novamente',
+        };
+      }
+      if (r === 'poller-warming-up') {
         return { icon: '⏱', title: 'Poller ainda não rodou', body: 'O scanner está fazendo a primeira chamada à API. Aguarde alguns segundos.', action: '↻ Tentar agora' };
       }
       if (r === 'no-live-matches') {
@@ -2460,7 +2474,7 @@
       lastUpdate: generatedAt || new Date().toISOString(),
       lastSource: source || 'unknown',
     };
-    // Mantém state.activeProvider sincronizado para isShowAllActive()/demo.
+    // Mantém state.activeProvider sincronizado (informativo na UI).
     state.activeProvider = state.runtime.feedMeta.provider || state.activeProvider;
     if (state.activeProvider) updateShowAllButton();
     if (window.__ROBOTREND_DEBUG) {
@@ -2630,7 +2644,7 @@
     const showAllBtn = $('#btn-show-all');
     if (showAllBtn) {
       showAllBtn.addEventListener('click', () => {
-        if (isMasterRoleFb(state.role) || isDemoActive()) return; // travado
+        if (isMasterRoleFb(state.role)) return; // travado
         setShowAll(!state.showAll);
       });
     }
@@ -2643,7 +2657,7 @@
   //  BOOT
   // ============================================================
   async function boot() {
-    // Resolve role do usuário cedo — master = sempre showAll, demo idem.
+    // Resolve role do usuário cedo — master = sempre showAll.
     state.role = resolveCurrentRole();
     // Atualiza role quando o user-ready event chegar (cache miss inicial).
     try {

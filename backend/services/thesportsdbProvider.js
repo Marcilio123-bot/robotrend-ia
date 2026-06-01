@@ -359,7 +359,10 @@ async function getFixtureById(id) {
   if (!data || !Array.isArray(data.events) || !data.events[0]) return [];
   // Adapta evento agendado/encerrado (não-live) para o schema base.
   const ev = data.events[0];
-  const fake = {
+  // Adaptador: copia o evento bruto para o shape esperado por normalizeLive.
+  // (Variável era chamada `fake` antes da remoção do modo DEMO — agora
+  // renomeada para `adapted` porque os dados são REAIS do TheSportsDB.)
+  const adapted = {
     idEvent: ev.idEvent,
     strHomeTeam: ev.strHomeTeam,
     strAwayTeam: ev.strAwayTeam,
@@ -375,7 +378,7 @@ async function getFixtureById(id) {
     idHomeTeam: ev.idHomeTeam,
     idAwayTeam: ev.idAwayTeam,
   };
-  const out = normalizeLive(fake);
+  const out = normalizeLive(adapted);
   return out ? [out] : [];
 }
 

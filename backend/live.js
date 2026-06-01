@@ -1,9 +1,13 @@
 /**
  * Robotrend IA — Scanner Ao Vivo (LIVE)
  *
- * Em DEMO_MODE gera partidas simuladas com estatísticas dinâmicas e
- * envia atualizações via Socket.io. Em modo produção, consulta a
- * API-Football para puxar partidas reais.
+ * Consulta exclusivamente os providers REAIS configurados em
+ * FOOTBALL_PROVIDER_PRIORITY via o orquestrador `footballProvider`.
+ *
+ * Se nenhum provider real estiver configurado OU todos falharem, o scanner
+ * devolve lista vazia ("Dados indisponíveis no momento."). NÃO existe
+ * fallback para partidas sintéticas — qualquer fonte fictícia foi
+ * removida do sistema.
  */
 
 'use strict';
@@ -13,10 +17,7 @@ const freshness = require('./freshness');
 const consensus = require('./consensus');
 const apiFootball = require('./services/footballProvider');
 
-const DEMO = String(process.env.DEMO_MODE || 'false').toLowerCase() === 'true';
-const API_KEY = (process.env.API_FOOTBALL_KEY || '').trim();
-
-// STRICT_REAL_ONLY: bloqueia 100% qualquer fonte sintética.
+// STRICT_REAL_ONLY: bloqueia 100% qualquer fonte sintética residual.
 // Default: true em production/staging, false em development.
 const ENV = process.env.NODE_ENV || 'development';
 const STRICT_REAL_ONLY = (() => {
@@ -31,192 +32,8 @@ const STRICT_REAL_ONLY = (() => {
 // MATCH_DEBUG=false.
 const MATCH_DEBUG_ENABLED = String(process.env.MATCH_DEBUG || 'true').toLowerCase() !== 'false';
 
-const DEMO_LEAGUES = [
-  'Brasileirão Série A',
-  'Premier League',
-  'La Liga',
-  'Serie A Italiana',
-  'Bundesliga',
-  'Libertadores',
-  'Champions League',
-  'Copa do Brasil',
-];
-
-const DEMO_CLUBS = [
-  ['Flamengo', 'Vasco'],
-  ['Manchester City', 'Liverpool'],
-  ['Real Madrid', 'Barcelona'],
-  ['Inter', 'Juventus'],
-  ['Bayern', 'Dortmund'],
-  ['Palmeiras', 'Corinthians'],
-  ['São Paulo', 'Santos'],
-  ['Atlético-MG', 'Cruzeiro'],
-  ['Grêmio', 'Internacional'],
-  ['Botafogo', 'Fluminense'],
-  ['PSG', 'Marseille'],
-  ['Chelsea', 'Arsenal'],
-];
-
-function randInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function chance(p) {
-  return Math.random() < p;
-}
-
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
 /**
- * Cria N partidas demo iniciais.
- */
-function buildDemoMatches(n = 8) {
-  const used = new Set();
-  const matches = [];
-  const now = Date.now();
-  for (let i = 0; i < n; i++) {
-    let pair;
-    do {
-      pair = pick(DEMO_CLUBS);
-    } while (used.has(pair[0]));
-    used.add(pair[0]);
-    used.add(pair[1]);
-
-    const minute = randInt(5, 75);
-    // kickoffAt = agora - minuto*60s (jogo iniciou há `minute` minutos)
-    const kickoffAt = new Date(now - minute * 60_000).toISOString();
-    const status = minute <= 45 ? '1H' : (minute < 50 ? 'HT' : '2H');
-    matches.push({
-      id: `demo-${now}-${i + 1}`,
-      home: pair[0],
-      away: pair[1],
-      league: pick(DEMO_LEAGUES),
-      minute,
-      kickoffAt,
-      date: kickoffAt,
-      status,
-      score: { home: randInt(0, 3), away: randInt(0, 2) },
-      corners: randInt(2, 9),
-      dangerousAttacks: randInt(20, 90),
-      shots: randInt(3, 18),
-      shotsOnTarget: randInt(0, 8),
-      possession: randInt(35, 65),
-      isLive: true,
-      // === Origem SIMULADA — bloqueada em STRICT/prod ===
-      isFromLiveAPI: false,
-      source: 'demo',
-      lastApiUpdate: null,
-    });
-  }
-  return matches;
-}
-
-/**
- * Evolui uma partida demo (incrementa minuto e estatísticas).
- */
-function evolveDemoMatch(m) {
-  if (!m.isLive) return m;
-  const next = { ...m };
-  next.minute += randInt(1, 2);
-  if (chance(0.35)) next.corners += 1;
-  next.dangerousAttacks += randInt(0, 4);
-  if (chance(0.4)) next.shots += 1;
-  if (chance(0.2)) next.shotsOnTarget += 1;
-  if (chance(0.08)) {
-    if (chance(0.5)) next.score.home += 1;
-    else next.score.away += 1;
-  }
-  next.possession = Math.max(30, Math.min(70, next.possession + randInt(-3, 3)));
-  // Atualiza status conforme minuto
-  next.status = next.minute <= 45 ? '1H' : '2H';
-  if (next.minute >= 90) {
-    next.minute = 90;
-    next.isLive = false;
-    next.status = 'FT';
-  }
-  return next;
-}
-
-/**
- * Live scanner em modo demo. Mantém estado em memória + histórico por
- * partida (para o cálculo de momentum nos últimos 10').
- */
-class DemoLiveScanner {
-  constructor() {
-    this.matches = buildDemoMatches(10);
-    this.history = new Map();
-    this.acceptedOnce = new Set(); // IDs já logados como aceitos
-  }
-
-  list() {
-    return this.matches;
-  }
-
-  pushHistory(match) {
-    if (!this.history.has(match.id)) this.history.set(match.id, []);
-    const arr = this.history.get(match.id);
-    arr.push({
-      minute: match.minute,
-      corners: match.corners,
-      shots: match.shots,
-      dangerousAttacks: match.dangerousAttacks,
-    });
-    if (arr.length > 25) arr.shift();
-  }
-
-  /**
-   * Faz um tick: evolui cada partida + retorna análises com histórico.
-   * SEMPRE aplica filtro de freshness antes de retornar.
-   */
-  tick() {
-    this.matches = this.matches.map(evolveDemoMatch);
-
-    // Reposição de partidas encerradas (libera história anti-leak)
-    const finishedIds = this.matches.filter((m) => !m.isLive).map((m) => m.id);
-    if (finishedIds.length) {
-      finishedIds.forEach((id) => {
-        this.history.delete(id);
-        this.acceptedOnce.delete(id);
-      });
-      this.matches = this.matches.filter((m) => m.isLive);
-    }
-    // Sempre repõe para manter um mínimo de 8 partidas vivas
-    if (this.matches.length < 8) {
-      const more = buildDemoMatches(10 - this.matches.length);
-      this.matches = this.matches.concat(more);
-    }
-
-    // Filtro central: ignora qualquer partida antiga/finalizada/inválida
-    const valid = freshness.filterRecent(this.matches, (m, reason) => {
-      console.log(`[live] ignoring old match: ${m.home} x ${m.away} (${reason})`);
-    });
-
-    valid.forEach((m) => {
-      this.pushHistory(m);
-      if (!this.acceptedOnce.has(m.id)) {
-        console.log(`[live] accepted recent match: ${m.home} x ${m.away} (min ${m.minute})`);
-        this.acceptedOnce.add(m.id);
-      }
-    });
-    // limpa do set ids que já não estão na lista (anti-leak)
-    if (this.acceptedOnce.size > 50) {
-      const validIds = new Set(valid.map((m) => m.id));
-      for (const id of this.acceptedOnce) {
-        if (!validIds.has(id)) this.acceptedOnce.delete(id);
-      }
-    }
-
-    return valid.map((m) => ({
-      match: m,
-      analysis: analyzeLiveMatch(m, { history: this.history.get(m.id) || [] }),
-    }));
-  }
-}
-
-/**
- * Live scanner usando API-Football (RapidAPI).
+ * Live scanner usando os providers reais (via footballProvider orchestrator).
  */
 class ApiLiveScanner {
   constructor() {
@@ -339,7 +156,7 @@ class ApiLiveScanner {
 
   async fetchLiveFixtures() {
     if (!apiFootball.isConfigured()) {
-      console.warn('[live] API_FOOTBALL não configurada — retornando vazio.');
+      console.warn('[live] nenhum provider real configurado — retornando vazio.');
       return [];
     }
     // ZERO API CALL aqui — o poller central é o único owner do endpoint
@@ -461,11 +278,10 @@ class ApiLiveScanner {
 }
 
 /**
- * Scanner inerte — devolve lista vazia. Usado quando nenhum provider real
- * está disponível E o usuário NÃO pediu explicitamente DEMO_MODE=true.
- * Previne o gargalo histórico onde a ausência de API_FOOTBALL_KEY fazia
- * o sistema cair em DemoLiveScanner e emitir signals FAKE de "Chelsea x
- * Arsenal" como se fossem reais.
+ * Scanner inerte — devolve lista vazia. Único fallback quando nenhum provider
+ * real está disponível. Substituiu o antigo DemoLiveScanner: o sistema NUNCA
+ * mais devolve partidas sintéticas — preferimos exibir "Dados indisponíveis
+ * no momento." no painel do que arriscar emitir signals fake.
  */
 class EmptyLiveScanner {
   constructor() { this.history = new Map(); this.acceptedOnce = new Set(); }
@@ -474,42 +290,15 @@ class EmptyLiveScanner {
 }
 
 function createLiveScanner() {
-  // 1) STRICT_REAL_ONLY — só ApiLiveScanner com proteção API
-  if (STRICT_REAL_ONLY) {
-    if (DEMO) {
-      console.warn('[live] STRICT_REAL_ONLY=true sobrepõe DEMO_MODE — fonte sintética desabilitada.');
-    }
-    if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
-      console.warn('[live] STRICT_REAL_ONLY=true + nenhum provider na chain — scanner inerte (retorna []).');
-      return new EmptyLiveScanner();
-    }
-    console.log('[live] ApiLiveScanner ativo (STRICT) — provider: ' + (apiFootball.providerName || '?') +
-                ' · chain: ' + (apiFootball.priority?.join('→') || '?'));
-    return new ApiLiveScanner();
+  if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
+    console.warn('[live] Nenhum provider real configurado — scanner inerte (retorna []). ' +
+                 'Painel exibirá "Dados indisponíveis no momento." até FOOTBALL_PROVIDER_PRIORITY ser ajustado.');
+    return new EmptyLiveScanner();
   }
-
-  // 2) Dev com DEMO_MODE EXPLICITAMENTE solicitado pelo usuário
-  if (DEMO) {
-    console.warn('[live] DemoLiveScanner ativo (DEMO_MODE=true) — emitindo dados SINTÉTICOS, ' +
-                 'signals NÃO são reais e devem ser ignorados em produção.');
-    return new DemoLiveScanner();
-  }
-
-  // 3) Dev sem DEMO mas com algum provider real (sofascore/tsdb/apisports/etc.)
-  //    O orchestrator footballProvider.isConfigured() retorna true para qualquer
-  //    provider disponível — incluindo sofascore que NÃO precisa de chave.
-  if (apiFootball.hasAnyConfiguredProvider?.() || apiFootball.isConfigured?.()) {
-    console.log('[live] ApiLiveScanner ativo via orchestrator — provider: ' +
-                (apiFootball.providerName || '?') +
-                ' (priority: ' + (apiFootball.priority?.join('→') || '?') + ')');
-    return new ApiLiveScanner();
-  }
-
-  // 4) Último recurso: nenhum provider real E sem DEMO_MODE explícito.
-  //    NÃO devolvemos DemoLiveScanner — seria fonte de signals fake.
-  console.warn('[live] Nenhum provider real configurado e DEMO_MODE!=true. ' +
-               'Scanner inerte — bot.js NÃO emitirá signals até você ajustar o .env.');
-  return new EmptyLiveScanner();
+  console.log('[live] ApiLiveScanner ativo' + (STRICT_REAL_ONLY ? ' (STRICT)' : '') +
+              ' — provider: ' + (apiFootball.providerName || '?') +
+              ' · chain: ' + (apiFootball.priority?.join('→') || '?'));
+  return new ApiLiveScanner();
 }
 
 module.exports = { createLiveScanner };

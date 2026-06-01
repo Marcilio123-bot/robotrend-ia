@@ -223,7 +223,6 @@ app.get('/api/health', (req, res) => {
     service: 'Robotrend IA',
     version: APP_VERSION,
     edition: 'SaaS · Bet365 · Production',
-    demo: String(process.env.DEMO_MODE || 'true') === 'true',
     telegram: String(process.env.TELEGRAM_ENABLED || 'false') === 'true',
     postgres: db.isPostgres(),
     render: isOnRender(),
@@ -550,7 +549,10 @@ app.post('/api/signals/test',
   auth.requireAuth(db),
   auth.requireAdmin,
   async (req, res) => {
-    const demo = {
+    // Payload de teste manual — gatilho admin-only para validar o canal
+    // Telegram. NÃO é um signal real; o `id` `test-1` é bloqueado pelo
+    // FAKE-MATCH GUARD em qualquer pipeline automático.
+    const testPayload = {
       matchId: 'test-1', home: 'Flamengo', away: 'Vasco',
       league: 'Brasileirão Série A', minute: 72,
       market: 'Escanteios', verdict: '🔥 PRESSÃO FORTE DETECTADA',
@@ -561,11 +563,12 @@ app.post('/api/signals/test',
       momentum: { score: 74, label: 'SUBINDO' },
       snapshot: { corners: 9, dangerousAttacks: 78, shots: 17, shotsOnTarget: 6, possession: 58, score: { home: 1, away: 0 } },
       createdAt: new Date().toISOString(),
+      __test: true,
     };
-    const tg = await sendSignal(demo);
-    io.emit('signal:new', { ...demo, telegram: tg });
+    const tg = await sendSignal(testPayload);
+    io.emit('signal:new', { ...testPayload, telegram: tg });
     metrics.recordSignal();
-    res.json({ ok: true, telegram: tg, signal: demo });
+    res.json({ ok: true, telegram: tg, signal: testPayload });
   }
 );
 

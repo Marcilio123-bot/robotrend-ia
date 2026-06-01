@@ -15,7 +15,6 @@ services:
       - ../.env
     environment:
       DATABASE_URL: postgres://robotrend:${POSTGRES_PASSWORD:-robotrend}@db:5432/robotrend
-      DEMO_MODE: "${DEMO_MODE:-false}"
       NODE_ENV: "${NODE_ENV:-production}"
     depends_on:
       db:

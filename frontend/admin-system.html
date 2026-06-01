@@ -80,7 +80,6 @@
           <div class="sys-row"><span class="label">Football provider ativo</span> <span class="val" id="d-fp">—</span> <span id="d-fp-pill"></span></div>
           <div class="sys-row"><span class="label">Football chain</span> <span class="val" id="d-fp-chain">—</span> <span></span></div>
           <div class="sys-row"><span class="label">Telegram</span> <span class="val" id="d-telegram">—</span> <span></span></div>
-          <div class="sys-row"><span class="label">Demo mode</span> <span class="val" id="d-demo">—</span> <span></span></div>
           <div class="sys-row"><span class="label">PID</span> <span class="val" id="d-pid">—</span> <span></span></div>
           <div class="sys-row"><span class="label">Memória RSS</span> <span class="val" id="d-mem">—</span> <span></span></div>
         </div>
@@ -152,7 +151,7 @@
           // Detalhes
           setText('d-service',  h.service || '—');
           setText('d-version',  h.version || '—');
-          setText('d-env',      h.demo ? 'demo' : 'real');
+          setText('d-env',      h.render ? 'production' : (h.publicUrl?.startsWith('http://localhost') ? 'development' : 'production'));
           setText('d-render',   h.render ? '☁ Render' : '');
           setText('d-public-url', h.publicUrl || '(local)');
           setText('d-cors',     String(h.corsOrigins ?? '—'));
@@ -166,7 +165,6 @@
             : '<span class="sys-pill err">● desligado</span>');
           setText('d-fp-chain', (h.football?.priority || []).join(' → '));
           setText('d-telegram', h.telegram ? 'ativo' : 'desligado');
-          setText('d-demo',     h.demo ? 'SIM (atenção)' : 'não');
           setText('d-pid',      String(h.pid || '—'));
           // memória vem do /api/metrics se quisermos; aqui um placeholder
           setText('d-mem',      '(via /api/metrics)');

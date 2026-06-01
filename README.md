@@ -106,7 +106,7 @@ Robotrend/
 │   ├── analyzer.js        ← motor IA (score + risco + odd)
 │   ├── corners.js         ← escanteios + momentum + HOT/WARM/COLD/DANGER
 │   ├── btts.js            ← BTTS + Over 2.5 + histórico visual
-│   ├── live.js            ← scanner ao vivo (demo + API-Football)
+│   ├── live.js            ← scanner ao vivo (providers reais)
 │   ├── prelive.js         ← scanner pré-live (BTTS)
 │   └── telegram.js        ← mensagens ultra premium
 ├── frontend/
@@ -244,10 +244,17 @@ TELEGRAM_BOT_TOKEN=
 DATABASE_URL=
 
 # IA
-DEMO_MODE=true
 ANTI_FAKE_PRESSURE=true
 ML_AUTOTUNE=true
 SIGNAL_MIN_SCORE=80
+
+# Football providers REAIS (failover automático).
+# Sem provider configurado, o painel exibe "Dados indisponíveis no momento."
+# (não existe mais provider/scanner sintético / DEMO_MODE).
+FOOTBALL_PROVIDER_PRIORITY=bet365data,thesportsdb,football-data,apisports
+RAPIDAPI_KEY=
+FOOTBALL_DATA_KEY=
+API_FOOTBALL_KEY=
 ```
 
 ---

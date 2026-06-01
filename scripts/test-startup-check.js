@@ -9,7 +9,7 @@ const sc = require('../backend/startup-check');
 
 function reset() {
   for (const k of ['DATABASE_URL', 'PGHOST', 'JWT_SECRET', 'SESSION_SECRET',
-                   'ALLOWED_ORIGINS', 'APP_URL', 'PUBLIC_URL', 'DEMO_MODE',
+                   'ALLOWED_ORIGINS', 'APP_URL', 'PUBLIC_URL',
                    'STRICT_REAL_ONLY', 'BOOTSTRAP_ADMIN_PASSWORD', 'NODE_ENV',
                    'RENDER', 'RENDER_SERVICE_ID', 'RENDER_EXTERNAL_URL', 'RENDER_SERVICE_URL']) {
     delete process.env[k];

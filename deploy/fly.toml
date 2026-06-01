@@ -10,7 +10,6 @@ primary_region = "gru"
 [env]
   NODE_ENV = "production"
   PORT = "3010"
-  DEMO_MODE = "false"
   ANTI_FAKE_PRESSURE = "true"
   ML_AUTOTUNE = "true"
   SIGNAL_MIN_SCORE = "80"

@@ -1,8 +1,9 @@
 /**
  * Robotrend IA — Análise Pré-Live (BTTS)
  *
- * Em DEMO_MODE gera fixtures com histórico simulado para os últimos 6
- * jogos de cada time. Em produção busca esses dados na API-Football.
+ * Busca exclusivamente fixtures REAIS via providers configurados em
+ * FOOTBALL_PROVIDER_PRIORITY. Se nenhum provider real estiver disponível,
+ * retorna lista vazia — partidas sintéticas foram removidas do sistema.
  */
 
 'use strict';
@@ -11,89 +12,12 @@ const { analyzePrelive } = require('./analyzer');
 const freshness = require('./freshness');
 const apiFootball = require('./services/footballProvider');
 
-const DEMO = String(process.env.DEMO_MODE || 'false').toLowerCase() === 'true';
-const API_KEY = (process.env.API_FOOTBALL_KEY || '').trim();
-
 const ENV = process.env.NODE_ENV || 'development';
 const STRICT_REAL_ONLY = (() => {
   const raw = process.env.STRICT_REAL_ONLY;
   if (raw == null || raw === '') return ENV === 'production' || ENV === 'staging';
   return String(raw).toLowerCase() === 'true';
 })();
-
-const DEMO_FIXTURES = [
-  { home: 'Flamengo', away: 'Palmeiras', league: 'Brasileirão Série A' },
-  { home: 'Real Madrid', away: 'Atlético de Madrid', league: 'La Liga' },
-  { home: 'Manchester City', away: 'Arsenal', league: 'Premier League' },
-  { home: 'Inter', away: 'Milan', league: 'Serie A Italiana' },
-  { home: 'Bayern', away: 'Leverkusen', league: 'Bundesliga' },
-  { home: 'PSG', away: 'Monaco', league: 'Ligue 1' },
-  { home: 'Boca Juniors', away: 'River Plate', league: 'Libertadores' },
-  { home: 'São Paulo', away: 'Corinthians', league: 'Brasileirão Série A' },
-];
-
-function randInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function chance(p) {
-  return Math.random() < p;
-}
-
-function buildLast6(profile) {
-  const list = [];
-  for (let i = 0; i < 6; i++) {
-    const scored = chance(profile.scoreChance) ? randInt(1, 3) : 0;
-    const conceded = chance(profile.concedeChance) ? randInt(1, 3) : 0;
-    list.push({
-      goalsFor: scored,
-      goalsAgainst: conceded,
-      shots: randInt(8, 18),
-    });
-  }
-  return list;
-}
-
-function buildDemoFixtures() {
-  // Limita ao máximo de horas válidas da janela pré-live
-  const maxHours = Math.min(freshness.FUTURE_HOURS_LIMIT, 12);
-  return DEMO_FIXTURES.map((f, i) => {
-    const homeProfile = { scoreChance: 0.7 + Math.random() * 0.25, concedeChance: 0.4 + Math.random() * 0.4 };
-    const awayProfile = { scoreChance: 0.55 + Math.random() * 0.3, concedeChance: 0.45 + Math.random() * 0.4 };
-    // Espalha fixtures nas próximas N horas (sempre futuro próximo, nunca passado)
-    const offsetHours = 0.5 + ((i % maxHours) * (maxHours - 0.5)) / DEMO_FIXTURES.length;
-    return {
-      id: `pre-${i + 1}`,
-      home: f.home,
-      away: f.away,
-      league: f.league,
-      startsAt: new Date(Date.now() + offsetHours * 3600 * 1000).toISOString(),
-      homeLast6: buildLast6(homeProfile),
-      awayLast6: buildLast6(awayProfile),
-      isFromLiveAPI: false,
-      source: 'demo-prelive',
-      lastApiUpdate: null,
-    };
-  });
-}
-
-class DemoPreliveScanner {
-  list() {
-    const fixtures = buildDemoFixtures();
-    const before = fixtures.length;
-    const valid = freshness.filterUpcoming(fixtures, (fx, reason) => {
-      console.log(`[prelive] ignoring old fixture: ${fx.home} x ${fx.away} (${reason})`);
-    });
-    const removed = before - valid.length;
-    if (removed > 0) console.log(`[PRELIVE FILTER] ${removed} fixtures removidos`);
-    // Propaga tags de origem na análise para o guard em bot.runPrelive saber
-    return valid.map((fx) => Object.assign(analyzePrelive(fx), {
-      source: fx.source,
-      isFromLiveAPI: fx.isFromLiveAPI,
-      lastApiUpdate: fx.lastApiUpdate,
-    }));
-  }
-}
 
 // Máximo de fixtures pré-live que enriquecemos por ciclo. Cada fixture
 // custa 2 calls (last6 home + last6 away). 5 fixtures = 10 calls.
@@ -188,23 +112,24 @@ class ApiPreliveScanner {
   }
 }
 
+/**
+ * Scanner inerte (substitui o antigo DemoPreliveScanner).
+ * Usado quando não há provider real configurado — devolve [] e deixa o
+ * painel exibir "Dados indisponíveis no momento.".
+ */
+class EmptyPreliveScanner {
+  async list() { return []; }
+}
+
 function createPreliveScanner() {
-  if (STRICT_REAL_ONLY) {
-    if (DEMO) {
-      console.warn('[prelive] STRICT_REAL_ONLY=true sobrepõe DEMO_MODE — fonte sintética desabilitada.');
-    }
-    if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
-      console.warn('[prelive] STRICT_REAL_ONLY=true + nenhum provider na chain — scanner retornará [].');
-      return { list: async () => [] };
-    }
-    console.log('[prelive] ApiPreliveScanner (STRICT) — provider: ' + (apiFootball.providerName || '?'));
-    return new ApiPreliveScanner();
-  }
-  if (DEMO) return new DemoPreliveScanner();
   if (apiFootball.hasAnyConfiguredProvider?.() || apiFootball.isConfigured?.()) {
+    console.log('[prelive] ApiPreliveScanner' + (STRICT_REAL_ONLY ? ' (STRICT)' : '') +
+                ' — provider: ' + (apiFootball.providerName || '?'));
     return new ApiPreliveScanner();
   }
-  return new DemoPreliveScanner();
+  console.warn('[prelive] Nenhum provider real configurado — scanner inerte. ' +
+               'Painel exibirá "Dados indisponíveis no momento." até FOOTBALL_PROVIDER_PRIORITY ser ajustado.');
+  return new EmptyPreliveScanner();
 }
 
 module.exports = { createPreliveScanner };
