@@ -28,10 +28,11 @@ const { isProductionLike } = require('../startup-check');
 
 /**
  * Defaults — usados SOMENTE se as ENVs não estiverem definidas.
- * Em produção, sempre forneça BOOTSTRAP_ADMIN_* via Render Environment.
+ * Em produção, sempre forneça BOOTSTRAP_ADMIN_* via Render Environment
+ * (a warning em `bootstrapMasterAdmin` avisa quando defaults são usados).
  */
 const DEFAULT_EMAIL    = 'admin@robotrend.local';
-const DEFAULT_PASSWORD = 'marciliosantos548675';
+const DEFAULT_PASSWORD = 'change_me_in_environment';
 
 /** Roles consideradas "master-level" — não rebaixar se já for uma delas. */
 const MASTER_ROLES = new Set(['master', 'admin', 'owner', 'super_admin']);

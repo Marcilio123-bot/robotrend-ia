@@ -19,8 +19,8 @@ ALLOWED_ORIGINS=https://seu_dominio.com
 
 > ⚠️ `DEMO_MODE` e `DEMO_PROVIDER_ENABLED` foram **removidos** do sistema.
 > Não os defina em painel — o startup-check bloqueará o boot se detectar.
-> Quando os providers reais (Bet365Data / TheSportsDB / football-data /
-> API-Sports) falham ou não estão configurados, o painel passa a exibir
+> Quando os providers reais (API-Sports / TheSportsDB / football-data)
+> falham ou não estão configurados, o painel passa a exibir
 > "Dados indisponíveis no momento." em vez de partidas sintéticas.
 
 ## Render.com

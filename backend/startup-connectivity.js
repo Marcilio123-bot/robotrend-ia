@@ -147,9 +147,7 @@ function printConnectivityReport() {
     `    APP_URL=${envString('APP_URL') || '(auto)'}`,
     '',
     '  ── Providers live (failover hibrido) ──',
-    `    FOOTBALL_PROVIDER_PRIORITY=${envString('FOOTBALL_PROVIDER_PRIORITY') || '(default: bet365data,thesportsdb,football-data,apisports)'}`,
-    `    RAPIDAPI_KEY=${envString('RAPIDAPI_KEY') ? `set(${envString('RAPIDAPI_KEY').length})` : 'MISSING (bet365data desligado)'}`,
-    `    RAPIDAPI_HOST=${envString('RAPIDAPI_HOST') || 'bet365data.p.rapidapi.com'}`,
+    `    FOOTBALL_PROVIDER_PRIORITY=${envString('FOOTBALL_PROVIDER_PRIORITY') || '(default: apisports,thesportsdb,football-data)'}`,
     `    FOOTBALL_DATA_KEY=${envString('FOOTBALL_DATA_KEY') ? 'set' : 'MISSING'}`,
     `    API_FOOTBALL_KEY=${envString('API_FOOTBALL_KEY') ? 'set' : 'MISSING'}`,
     `    API_FOOTBALL_HOST=${envString('API_FOOTBALL_HOST') || 'v3.football.api-sports.io'}`,
@@ -183,9 +181,6 @@ async function probeOptionalDns(report) {
 
   const apiHost = envString('API_FOOTBALL_HOST') || 'v3.football.api-sports.io';
   hosts.push({ label: 'API-Football', host: apiHost.replace(/^https?:\/\//, '').split('/')[0] });
-
-  const rapidHost = envString('RAPIDAPI_HOST') || 'bet365data.p.rapidapi.com';
-  hosts.push({ label: 'Bet365Data', host: rapidHost.replace(/^https?:\/\//, '').split('/')[0] });
 
   const results = [];
   for (const h of hosts) {

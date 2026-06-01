@@ -85,16 +85,16 @@ services:
       # NÃO defina PGHOST=postgres — causa getaddrinfo ENOTFOUND no Render.
       # DATABASE_URL vem do bloco fromDatabase abaixo.
       - key: FOOTBALL_PROVIDER_PRIORITY
-        value: bet365data,thesportsdb,football-data,apisports
-      # Bet365Data RapidAPI (provider primário em produção).
-      # Cole RAPIDAPI_KEY no painel Environment do Web Service.
-      - key: RAPIDAPI_KEY
-        sync: false
-      - key: RAPIDAPI_HOST
-        value: bet365data.p.rapidapi.com
-      - key: FOOTBALL_DATA_KEY
-        sync: false
+        value: apisports,thesportsdb,football-data
+      # API-Football (api-football.com / API-Sports) — PROVIDER PRIMÁRIO.
+      # Cole API_FOOTBALL_KEY no painel Environment (Render → Service → Environment).
+      # Host DIRETO da api-football.com aceita header x-apisports-key automaticamente
+      # (detectado em runtime em backend/services/apiFootball.js).
       - key: API_FOOTBALL_KEY
+        sync: false
+      - key: API_FOOTBALL_HOST
+        value: v3.football.api-sports.io
+      - key: FOOTBALL_DATA_KEY
         sync: false
       - key: ODDS_API_KEY
         sync: false

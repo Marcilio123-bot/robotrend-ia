@@ -16,13 +16,12 @@
  *      para o frontend mostrar de quantas fontes veio.
  *
  * Ordem default (FOOTBALL_PROVIDER_PRIORITY):
- *   bet365data → thesportsdb → football-data → apisports
+ *   apisports → thesportsdb → football-data
  *
- *   - Bet365Data (RapidAPI) é PRIMARY: live + odds + stats com contrato comercial
+ *   - API-Sports (api-football.com) é PRIMARY: live + stats + odds + predictions
  *   - TheSportsDB e football-data como fallback gratuito
- *   - API-Sports só se houver chave paga
  *   - SofaScore REMOVIDO do default (Cloudflare bloqueia com HTTP 403)
- *     Para reabilitar manualmente: FOOTBALL_PROVIDER_PRIORITY=bet365data,sofascore,…
+ *     Para reabilitar manualmente: FOOTBALL_PROVIDER_PRIORITY=apisports,sofascore,…
  *
  * Se TODOS os providers reais falharem ou nenhum estiver configurado, a chain
  * devolve lista vazia (e o caller deve exibir "Dados indisponíveis no momento.").
@@ -35,8 +34,6 @@
 'use strict';
 
 const REGISTRY = {
-  'bet365data':    () => require('./bet365dataProvider'),
-  bet365:          () => require('./bet365dataProvider'),
   'football-data': () => require('./footballDataProvider'),
   footballdata:    () => require('./footballDataProvider'),
   thesportsdb:     () => require('./thesportsdbProvider'),
@@ -47,12 +44,14 @@ const REGISTRY = {
 function parsePriority() {
   // Compat: FOOTBALL_PROVIDER (singular) seleciona um único; PRIORITY define a lista.
   const single = String(process.env.FOOTBALL_PROVIDER || '').toLowerCase().trim();
-  // Ordem default: Bet365Data primário (RapidAPI, odds + live + stats).
+  // Ordem default: API-Football (apisports) primário.
   // SofaScore foi REMOVIDO do default — Cloudflare bloqueia com HTTP 403 em produção.
   // Para reabilitar, defina FOOTBALL_PROVIDER_PRIORITY manualmente.
-  const list   = String(process.env.FOOTBALL_PROVIDER_PRIORITY || 'bet365data,thesportsdb,football-data,apisports')
+  const list   = String(process.env.FOOTBALL_PROVIDER_PRIORITY || 'apisports,thesportsdb,football-data')
     .toLowerCase().split(',').map((s) => s.trim()).filter(Boolean)
-    // Defesa: ignora silenciosamente qualquer "demo" que venha de configs antigas.
+    // Defesa: ignora silenciosamente "demo" que venha de configs antigas.
+    // Qualquer outro nome desconhecido é descartado pelo filter contra
+    // REGISTRY logo abaixo (linha de retorno).
     .filter((n) => n !== 'demo');
 
   if (single && REGISTRY[single]) {
