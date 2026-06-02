@@ -395,12 +395,12 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     let totalCorners = 0, totalShots = 0, totalDang = 0, totalGoals = 0, totalCardsY = 0, totalCardsR = 0;
     let bttsCount = 0;
     for (const m of filtered) {
-      totalCorners += m.stats.corners.total || 0;
-      totalShots   += m.stats.shots.total || 0;
-      totalDang    += m.stats.dangerousAttacks.total || 0;
-      totalGoals   += (m.score.home || 0) + (m.score.away || 0);
-      totalCardsY  += m.stats.cards.yellow.total || 0;
-      totalCardsR  += m.stats.cards.red.total || 0;
+      totalCorners += m.stats?.corners?.total || 0;
+      totalShots   += m.stats?.shots?.total || 0;
+      totalDang    += m.stats?.dangerousAttacks?.total || 0;
+      totalGoals   += (m.score?.home || 0) + (m.score?.away || 0);
+      totalCardsY  += m.stats?.cards?.yellow?.total || 0;
+      totalCardsR  += m.stats?.cards?.red?.total || 0;
       if ((m.score.home || 0) > 0 && (m.score.away || 0) > 0) bttsCount++;
     }
 

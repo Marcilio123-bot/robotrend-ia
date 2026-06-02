@@ -232,6 +232,118 @@
     return !!(err && err.status === 402 && err.locked);
   }
 
+  /**
+   * Normaliza payloads REST/socket — aceita matches, games, fixtures ou data.*.
+   * O backend oficial expõe `matches`; rotas legadas ou proxies podem variar.
+   */
+  function extractMatchesList(body) {
+    if (!body || typeof body !== 'object') return [];
+    const candidates = [
+      body.matches,
+      body.games,
+      body.fixtures,
+      body.data?.matches,
+      body.data?.games,
+      body.data?.fixtures,
+    ];
+    for (const c of candidates) {
+      if (Array.isArray(c)) return c;
+    }
+    return [];
+  }
+
+  function applyFeedMetaFromResponse(body, source) {
+    if (!body?.meta) return;
+    state.runtime.feedMeta = {
+      ...body.meta,
+      provider: body.meta.provider?.active || body.meta.provider || '—',
+      safeMode: !!body.meta.provider?.safeMode || !!body.meta.safeMode,
+      bySource: body.meta.bySource || {},
+      topLeagues: body.meta.topLeagues || [],
+      lastUpdate: body.generatedAt,
+      lastSource: source,
+    };
+    state.activeProvider = state.runtime.feedMeta.provider || state.activeProvider;
+  }
+
+  /**
+   * Ingestão única do feed — usada por REST bootstrap, socket tick e resync.
+   * Não substitui o mapa por lista vazia se já há jogos (evita apagar tick WS).
+   */
+  function ingestMatchesPayload(body, { source = 'unknown', force = false } = {}) {
+    const list = extractMatchesList(body);
+    const generatedAt = body?.generatedAt;
+    if (body?.poller) state.poller = body.poller;
+    if (body?.reason != null) state.runtime.reason = body.reason;
+    applyFeedMetaFromResponse(body, source);
+    if (!list.length && state.matches.size > 0 && !force) {
+      bumpLastUpdated(generatedAt);
+      syncFeedMetaFromState({ source: `${source}-preserve`, generatedAt });
+      return { ingested: 0, preserved: true };
+    }
+    if (list.length || force || state.matches.size === 0) {
+      replaceMatches(list, generatedAt, { force });
+      bumpRuntime({ poll: true });
+    }
+    return { ingested: list.length, preserved: false };
+  }
+
+  /** Snapshot REST — mesma fonte que o usuário valida em /api/football/live. */
+  async function fetchLiveSnapshot() {
+    const r = await api('/api/football/live');
+    return ingestMatchesPayload(r, { source: 'live-rest', force: false });
+  }
+
+  async function fetchScannerSnapshot() {
+    const r = await api('/api/football/scanner');
+    return ingestMatchesPayload(r, { source: 'scanner-rest', force: false });
+  }
+
+  async function fetchPanelSnapshot() {
+    const r = await api('/api/football/live/panel');
+    return ingestMatchesPayload(r, { source: 'panel-rest', force: false });
+  }
+
+  /**
+   * Bootstrap do feed: tenta /live (leve, confiável), depois scanner e panel.
+   * Panel traz ligas/agregados mas já falhou em prod quando stats vinham null.
+   */
+  async function bootstrapLiveFeed() {
+    const steps = [
+      { name: 'live', fn: fetchLiveSnapshot },
+      { name: 'scanner', fn: fetchScannerSnapshot },
+      { name: 'panel', fn: fetchPanelSnapshot },
+    ];
+    let lastErr = null;
+    for (const step of steps) {
+      try {
+        const r = await step.fn();
+        if (r.ingested > 0 || state.matches.size > 0) {
+          logEvent('bootstrap-feed', { via: step.name, ingested: r.ingested, total: state.matches.size });
+          return { ok: true, via: step.name, count: state.matches.size };
+        }
+      } catch (e) {
+        lastErr = e;
+        console.warn(`[football] bootstrap ${step.name} falhou`, e.message);
+        logEvent('bootstrap-feed-fail', { via: step.name, err: e.message });
+      }
+    }
+    if (state.matches.size === 0) {
+      try {
+        const rr = await api('/api/football/poller/resync', { method: 'POST' });
+        ingestMatchesPayload(rr, { source: 'resync', force: true });
+        state.runtime.reason = rr.reason || null;
+        if (state.matches.size > 0) {
+          return { ok: true, via: 'resync', count: state.matches.size };
+        }
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (lastErr) state.runtime.reason = state.runtime.reason || 'bootstrap-failed';
+    return { ok: state.matches.size > 0, via: null, count: state.matches.size };
+  }
+
   // ============================================================
   //  SOCKET.IO REALTIME
   // ============================================================
@@ -244,9 +356,8 @@
     }
     updateConn('connecting', 'conectando…');
     // URL absoluta garante WSS em produção (Render) e HTTP em localhost.
-    // Sem isso, alguns navegadores tratam '/football' como path do origin atual
-    // e podem cair em proxies/extensions que bloqueiam o handshake.
     const origin = window.location.origin;
+    const token = window.RobotrendAuth?.getToken?.() || null;
     const sock = io(`${origin}/football`, {
       transports: ['websocket', 'polling'],
       reconnection: true,
@@ -255,8 +366,7 @@
       reconnectionDelayMax: 5000,
       timeout: 10000,
       withCredentials: true,
-      // upgrade WS→polling em caso de falha persistente é o default;
-      // mantemos polling no array para fallback automático.
+      auth: token ? { token } : {},
     });
     state.socket = sock;
     console.log('[LIVE] socket.io → ' + origin + '/football (transports: websocket→polling)');
@@ -266,6 +376,9 @@
       updateConn('online', `realtime online · ${state.runtime.transport}`);
       syncPrefs();
       logEvent('connect', { transport: state.runtime.transport });
+      if (state.matches.size === 0) {
+        fetchLiveSnapshot().then(() => render()).catch(() => {});
+      }
       // Re-subscribe rooms ativas após reconnect
       for (const id of state.runtime.subsFixtures) sock.emit('subscribe', { type: 'fixture', id });
       // Subscribe top 5 do snapshot atual (dispara enricher no backend)
@@ -302,13 +415,17 @@
     sock.on('hello', (h) => { logEvent('hello', h); bumpRuntime({ socket: true }); });
     sock.on('tick', (p) => {
       state.poller = p.poller || state.poller;
-      const n = (p.matches || []).length;
+      const list = extractMatchesList(p);
+      const n = list.length;
       if (n > 0) {
         state.runtime.stableTicks = (state.runtime.stableTicks || 0) + 1;
         if (state.runtime.stableTicks >= 2) state.runtime.reconnectAt = 0;
       }
       state.runtime.lastTickAt = Date.now();
-      replaceMatches(p.matches || [], p.generatedAt);
+      ingestMatchesPayload(
+        { matches: list, generatedAt: p.generatedAt, poller: p.poller },
+        { source: 'socket-tick', force: false },
+      );
       // O tick socket NÃO carrega meta completa — sintetiza a partir do que
       // chegou para manter o painel SCANNER em sync (senão fica em 0/0/0).
       syncFeedMetaFromState({ source: 'socket-tick', generatedAt: p.generatedAt });
@@ -444,8 +561,8 @@
       state.sseFallback = es;
       es.addEventListener('tick', (e) => {
         const p = JSON.parse(e.data);
-        replaceMatches(p.matches || [], p.generatedAt);
-        bumpRuntime({ poll: true, socket: true });
+        ingestMatchesPayload(p, { source: 'sse-tick', force: false });
+        bumpRuntime({ socket: true });
         updateConn('online', '🟢 conectado · SSE'); render();
       });
       es.addEventListener('match:update', (e) => {
@@ -1052,14 +1169,23 @@
     return false;
   }
 
-  function replaceMatches(list, generatedAt) {
+  function replaceMatches(list, generatedAt, { force = false } = {}) {
+    if (!Array.isArray(list)) return;
+    if (!list.length && state.matches.size > 0 && !force) {
+      if (window.__ROBOTREND_DEBUG) {
+        console.log('[LIVE MATCHES] lista vazia ignorada — preservando', state.matches.size, 'no state');
+      }
+      bumpLastUpdated(generatedAt);
+      return;
+    }
     if (window.__ROBOTREND_DEBUG) {
-      console.log('[LIVE MATCHES RECEIVED]', list?.length || 0, 'matches @', generatedAt);
+      console.log('[LIVE MATCHES RECEIVED]', list.length, 'matches @', generatedAt);
     }
     const now = Date.now();
     const incoming = new Set();
     for (const m of list) {
-      const id = String(m.id);
+      const id = String(m.id ?? m.fixtureId ?? '');
+      if (!id || id === 'undefined') continue;
       incoming.add(id);
       const prev = state.matches.get(id);
       m._serverMinute = Number(m.minute || 0);
@@ -2456,8 +2582,7 @@
 
     try {
       const r = await api('/api/football/poller/resync', { method: 'POST' });
-      state.poller = r.poller || state.poller;
-      if (Array.isArray(r.matches)) replaceMatches(r.matches, r.generatedAt);
+      ingestMatchesPayload(r, { source: 'resync', force: true });
       state.runtime.reason = r.reason || null;
       logEvent('resync', { count: r.count, reason: r.reason });
       bumpRuntime({ poll: !!r.count });
@@ -2568,24 +2693,7 @@
     try {
       const r = await api('/api/football/scanner');
       console.log('SCANNER RESPONSE', r);
-      if (r?.meta) {
-        state.runtime.feedMeta = {
-          ...r.meta,
-          provider: r.meta.provider?.active || '—',
-          safeMode: !!r.meta.provider?.safeMode,
-          bySource: r.meta.bySource || {},
-          topLeagues: r.meta.topLeagues || [],
-          lastUpdate: r.generatedAt,
-          lastSource: 'scanner-rest',
-        };
-      } else {
-        console.warn('SCANNER RESPONSE sem r.meta — sintetizando a partir do estado');
-      }
-      if (Array.isArray(r?.matches)) {
-        replaceMatches(r.matches, r.generatedAt);
-        bumpRuntime({ poll: true });
-      }
-      // Mesmo com meta vindo do backend, garante que totalReceived bate com state.matches
+      ingestMatchesPayload(r, { source: 'scanner-refresh', force: false });
       syncFeedMetaFromState({ source: 'scanner-rest-sync', generatedAt: r?.generatedAt });
       console.log('FEED META', state.runtime.feedMeta);
       console.log('MODE', state.mode);
@@ -2751,31 +2859,12 @@
     updateConn('connecting', 'inicializando…');
 
     try {
-      const r = await api('/api/football/live/panel');
-      state.poller = r.poller;
-      if (r.meta) state.runtime.feedMeta = {
-        ...r.meta,
-        provider: r.meta.provider?.active || '—',
-        safeMode: !!r.meta.provider?.safeMode,
-        bySource: r.meta.bySource || {},
-        topLeagues: r.meta.topLeagues || [],
-      };
-      if (r.matches) {
-        replaceMatches(r.matches, r.generatedAt);
-        bumpRuntime({ poll: true });
-      }
-      // REST vazio → tenta resync para pegar motivo técnico
-      if (!r.matches || !r.matches.length) {
-        try {
-          const rr = await api('/api/football/poller/resync', { method: 'POST' });
-          state.runtime.reason = rr.reason || null;
-          if (Array.isArray(rr.matches) && rr.matches.length) {
-            replaceMatches(rr.matches, rr.generatedAt);
-            bumpRuntime({ poll: true });
-          }
-        } catch (_) {}
-      }
-      logEvent('bootstrap', { matches: r.matches?.length || 0, signals: r.matches?.reduce((n, m) => n + (m.signals?.length || 0), 0) || 0 });
+      const boot = await bootstrapLiveFeed();
+      logEvent('bootstrap', {
+        via: boot.via,
+        matches: state.matches.size,
+        signals: Array.from(state.matches.values()).reduce((n, m) => n + (m.signals?.length || 0), 0),
+      });
       bumpRuntime({ poll: true, enriched: true });
       render();
     } catch (e) {
