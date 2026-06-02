@@ -743,7 +743,43 @@
     return t.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
+  /* ------------------------------------------------------------
+     normalizePreliveItem
+     ------------------------------------------------------------
+     Garante consistência de tipos no payload do backend (ou de
+     caches antigos): odd como Number com ponto decimal, confidence
+     numérica, booleans saneados. NUNCA descarta um item por valor
+     de shouldSignal/confidence/risk — apenas saneia campos.
+     ------------------------------------------------------------ */
+  function normalizePreliveItem(fx) {
+    if (!fx || typeof fx !== 'object') return null;
+    const out = { ...fx };
+    // odd: aceita Number ou string ("1,17" PT, "1.17" US) → Number ou null
+    if (out.odd != null) {
+      const n = Number(String(out.odd).replace(',', '.'));
+      out.odd = Number.isFinite(n) ? n : null;
+    }
+    // confidence: força Number 0–100 (defensivo — analyzePrelive já devolve número)
+    const c = Number(out.confidence);
+    out.confidence = Number.isFinite(c) ? Math.max(0, Math.min(100, c)) : 0;
+    // booleans saneados — qualquer string "true"/"false" vira boolean real
+    out.shouldSignal = out.shouldSignal === true || out.shouldSignal === 'true';
+    out.stale        = out.stale        === true || out.stale        === 'true';
+    return out;
+  }
+
   function renderPreliveFixtures() {
+    /* ----------------------------------------------------------
+       REGRA DA SEÇÃO "JOGOS PRÉ-LIVE"
+       ----------------------------------------------------------
+       Esta tabela exibe TODOS os fixtures recebidos do backend,
+       independentemente de shouldSignal / confidence / risk.
+       Esses campos servem APENAS de informação visual (badges).
+       O único filtro defensivo aqui descarta objetos sem nome
+       de mandante NEM visitante (lixo de cache antigo). Tudo o
+       mais — incluindo confidence=0, risk=ALTO e shouldSignal=
+       false — DEVE aparecer.
+       ---------------------------------------------------------- */
     const body = $('#prelive-fixtures-body');
     const countEl = $('#prelive-fixtures-count');
     if (!body) return;
@@ -829,6 +865,14 @@
   }
 
   function renderPreliveSignals() {
+    /* ----------------------------------------------------------
+       REGRA DA SEÇÃO "PALPITES PRÉ-LIVE"
+       ----------------------------------------------------------
+       SOMENTE aqui filtramos por shouldSignal && !stale. Estes
+       cards são opcionais — se nenhum jogo atender ao critério,
+       mostramos um fallback informativo, mas a tabela de
+       fixtures continua íntegra acima.
+       ---------------------------------------------------------- */
     const host = $('#prelive-signals');
     const status = $('#prelive-signals-status');
     if (!host) return;
@@ -847,10 +891,11 @@
     }
 
     if (!tradable.length) {
-      const total = (lastPrelive || []).length;
+      // Conta APENAS fixtures válidos (mesma regra de renderPreliveFixtures)
+      const total = (lastPrelive || []).filter((fx) => fx && (fx.home || fx.away)).length;
       host.innerHTML = `<div class="col-span-full saas-card saas-empty">${
         total
-          ? 'Nenhum palpite pré-live atende ao critério (BTTS — SIM com IA ≥ 75%) no momento.'
+          ? `Nenhum sinal no momento — ${total} jogo${total === 1 ? '' : 's'} pré-live disponível${total === 1 ? '' : 'is'} na tabela abaixo.`
           : 'Aguardando análise pré-live…'
       }</div>`;
       return;
@@ -860,15 +905,20 @@
 
   function setPrelive(list, opts = {}) {
     if (!Array.isArray(list)) return;
+    // Normalização defensiva: sanitiza odd/confidence/booleans antes de armazenar
+    // — NUNCA descarta itens por shouldSignal/confidence/risk (regra do produto:
+    // fixtures sempre aparecem; signals são opcionais).
+    const normalized = list.map(normalizePreliveItem).filter(Boolean);
     // [PRELIVE FRONT DEBUG] temporário — remover após diagnóstico
-    console.log('[PRELIVE FRONT] recebidos:', list);
-    console.log('[PRELIVE FRONT] render count:', list?.length, 'source:', opts.source || '?');
-    lastPrelive = list;
+    console.log('[PRELIVE FRONT] recebidos:', normalized.length, 'itens — source:', opts.source || '?');
+    if (normalized.length) console.log('[PRELIVE FRONT] sample[0]:', normalized[0]);
+    console.log('[PRELIVE FRONT] render count:', normalized.length);
+    lastPrelive = normalized;
     preliveLastUpdateAt = Date.now();
     try { renderPreliveFixtures(); } catch (e) { console.error('[PRELIVE FRONT] render fixtures error:', e); }
     try { renderPreliveSignals(); }  catch (e) { console.error('[PRELIVE FRONT] render signals error:', e); }
     if (opts.source) {
-      try { window.RobotrendBus?.emit('robotrend:prelive-render', { count: list.length, source: opts.source }); } catch (_) {}
+      try { window.RobotrendBus?.emit('robotrend:prelive-render', { count: normalized.length, source: opts.source }); } catch (_) {}
     }
   }
 
