@@ -23,6 +23,12 @@ const SCAN_INTERVAL = Number(process.env.LIVE_SCAN_INTERVAL_MS || 15000);
 const BASE_MIN_SCORE = Number(process.env.SIGNAL_MIN_SCORE || 80);
 const SENT_TTL_MS = 30 * 60 * 1000; // limpa entradas com >30 min
 
+// Intervalo do scheduler pré-live. Cada ciclo custa até 1 + 2×PRELIVE_MAX_FIXTURES
+// chamadas à API-Football (default: 1 + 10 = 11). 10min => ~1584 calls/dia,
+// que cabem no plano Pro (7500/dia) com folga sobre o poller (~2880/dia).
+// Defina PRELIVE_REFRESH_MS=0 para desligar o scheduler (REST/socket sob demanda).
+const PRELIVE_INTERVAL_MS = Number(process.env.PRELIVE_REFRESH_MS ?? 10 * 60 * 1000);
+
 const ENV = process.env.NODE_ENV || 'development';
 const STRICT_REAL_ONLY = (() => {
   const raw = process.env.STRICT_REAL_ONLY;
@@ -67,11 +73,29 @@ class RobotrendBot {
       SCAN_INTERVAL
     );
     this.cleanupTimer = setInterval(() => this.cleanup(), 5 * 60 * 1000);
+
+    // Scheduler pré-live: alimenta o socket `prelive:update` sem precisar de
+    // clique do usuário. Respeita preliveEnabled + safe-mode + cooldown
+    // interno do runPrelive (30min por matchId p/ envio Telegram).
+    if (PRELIVE_INTERVAL_MS > 0) {
+      this.log.info('[prelive] scheduler ativo', { intervalMs: PRELIVE_INTERVAL_MS });
+      // boot delay: deixa o poller live popular antes de bater nos endpoints prelive
+      setTimeout(() => {
+        this.runPrelive().catch((e) => this.log.warn('prelive boot tick error', { err: e.message }));
+      }, 8_000);
+      this.preliveTimer = setInterval(
+        () => this.runPrelive().catch((e) => this.log.warn('prelive tick error', { err: e.message })),
+        PRELIVE_INTERVAL_MS
+      );
+    } else {
+      this.log.warn('[prelive] scheduler desligado (PRELIVE_REFRESH_MS=0) — só atualiza via REST sob demanda');
+    }
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    if (this.preliveTimer) clearInterval(this.preliveTimer);
   }
 
   /* ============================================================
