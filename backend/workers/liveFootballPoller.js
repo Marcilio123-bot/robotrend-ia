@@ -31,6 +31,11 @@ const history     = require('../services/footballHistory');
 const events      = require('../services/footballEvents');
 const metrics     = require('../services/metrics');
 const { normalizeFixture } = require('../services/fixtureNormalizer');
+const {
+  isLiveMatch,
+  statusGroup,
+  matchDebugFields,
+} = require('../services/liveMatchFilter');
 const { logger }  = require('../logger');
 
 const log = logger.child({ module: 'liveFootballPoller' });
@@ -139,84 +144,7 @@ const FALLBACK_CLOCK_MS = Number(process.env.FOOTBALL_FALLBACK_CLOCK_MS || 5_000
 const LIVE_CLOCK_ENABLED = String(process.env.LIVE_CLOCK_ENABLED ?? 'true').toLowerCase() !== 'false';
 const FORCE_REALTIME = String(process.env.FOOTBALL_FORCE_REALTIME ?? 'true').toLowerCase() !== 'false';
 
-// Status enum por categoria. LIVE_STATUSES = whitelist estrita de partidas
-// que devem aparecer no painel ao vivo. Qualquer outra categoria (FT/AET/PEN
-// / "Finished" / "Match Finished" / etc.) é DROP imediato — sem cache, sem
-// drift local, sem nada. Evita o bug de jogos congelados em 120'.
-const LIVE_STATUSES = new Set([
-  '1H', 'HT', '2H', 'ET', 'BT', 'LIVE', 'INT', 'P',
-  'INPLAY', 'IN_PLAY', 'IN-PLAY', 'IN PROGRESS', 'IN_PROGRESS',
-  'INPROGRESS', 'IN-PROGRESS',
-]);
-const NS_STATUSES = new Set([
-  'NS', 'NOT STARTED', 'NOTSTARTED', 'NOT_STARTED',
-  'SCHEDULED', 'TIMED',
-]);
-const FT_STATUSES = new Set([
-  'FT', 'AET', 'PEN', 'AWD', 'WO', 'ABD', 'CANC',
-  'FINISHED', 'MATCH FINISHED', 'AFTER PENALTIES', 'AFTER EXTRA TIME',
-  'CANCELLED', 'POSTPONED', 'PST', 'SUSP', 'SUSPENDED',
-]);
-const HT_STATUSES = new Set(['HT', 'HALFTIME', 'HALF TIME']);
-
-/** Janela: kickoff entre -30min e +3h (eventsday / status parcial). */
-function isKickoffInPlayWindow(m) {
-  const raw = m?.kickoffAt || m?.date || m?.fixture?.date;
-  if (!raw) return false;
-  const t = new Date(raw).getTime();
-  if (!Number.isFinite(t)) return false;
-  const hoursFromNow = (t - Date.now()) / 3_600_000;
-  return hoursFromNow >= -0.5 && hoursFromNow <= 3;
-}
-
-/** Normaliza string de status (case + trim) e retorna categoria. */
-function statusGroup(m) {
-  const sRaw = String(m?.status || '').toUpperCase().trim();
-  const longRaw = String(m?.statusLong || '').toUpperCase().trim();
-  const min = Number(m?.minute || 0);
-
-  if (FT_STATUSES.has(sRaw) || FT_STATUSES.has(longRaw)) return 'FT';
-  // Minuto real do provider → ao vivo mesmo sem status LIVE perfeito (TheSportsDB).
-  if (min > 0 && min < 120) return 'LIVE';
-  if (LIVE_STATUSES.has(sRaw) || LIVE_STATUSES.has(longRaw)) return 'LIVE';
-  if (HT_STATUSES.has(sRaw) || HT_STATUSES.has(longRaw)) return 'HT';
-  if (NS_STATUSES.has(sRaw) || NS_STATUSES.has(longRaw)) return 'NS';
-  if (isKickoffInPlayWindow(m)) return 'LIVE';
-  // Desconhecido: não assumir FT (isso zerava o painel com status NS/parcial).
-  return 'NS';
-}
-
-/** True se o match deve aparecer no painel live/scanner. */
-function isLiveMatch(m) {
-  const grp = statusGroup(m);
-  if (grp === 'FT') return false;
-  const min = Number(m?.minute || 0);
-  if (min >= 120) return false;
-  if (grp === 'NS') {
-    const raw = m?.kickoffAt || m?.date || m?.fixture?.date;
-    if (raw) {
-      const t = new Date(raw).getTime();
-      if (Number.isFinite(t)) {
-        const hoursFromNow = (t - Date.now()) / 3_600_000;
-        if (hoursFromNow > 24) return false;
-      }
-    }
-    return true;
-  }
-  return true;
-}
-
-/** Payload detalhado para [MATCH DEBUG] reasons.notLive */
-function matchDebugFields(m) {
-  return {
-    id: m?.id != null ? String(m.id) : null,
-    status: m?.status ?? null,
-    statusLong: m?.statusLong ?? null,
-    minute: m?.minute ?? null,
-    kickoffAt: m?.kickoffAt || m?.date || null,
-    provider: m?.provider || m?.flags?.source || null,
-  };
-}
+const LINGER_LOG = String(process.env.FOOTBALL_LINGER_LOG ?? 'true').toLowerCase() !== 'false';
 
 /**
  * Momentum Drift Engine — random walk leve com bias por contexto.
@@ -273,6 +201,8 @@ class LiveFootballPoller {
     /** id → ticks consecutivos ausentes do feed (antes de match:remove). */
     this._missCounts = new Map();
     this.lastRawSnapshot = [];
+    /** Última comparação API vs cache (diagnóstico de fixtures fantasmas). */
+    this._lastFeedCompare = null;
     this.stats = {
       ticks: 0,
       ticksSuccess: 0,
@@ -513,6 +443,7 @@ class LiveFootballPoller {
       stats: { ...this.stats },
       tracked: this.cache.size,
       lastFilter: this._lastDebugSnapshot ? { ...this._lastDebugSnapshot } : null,
+      feedCompare: this.getLastFeedCompare(),
     };
   }
 
@@ -566,9 +497,33 @@ class LiveFootballPoller {
 
   /**
    * Snapshot atual das partidas (sem custo de API — usa cache do poller).
+   * Sempre filtra FT/NS antigos — evita vazar jogos encerrados para REST/WS.
    */
   getMatches() {
-    return Array.from(this.cache.values());
+    return Array.from(this.cache.values()).filter((m) => isLiveMatch(m));
+  }
+
+  getLastFeedCompare() {
+    return this._lastFeedCompare ? { ...this._lastFeedCompare } : null;
+  }
+
+  /**
+   * Remove do cache jogos que não passam mais no filtro ao vivo (FT, kickoff antigo).
+   * Emite match:remove para o frontend limpar cards.
+   */
+  _purgeNonLiveFromCache(reason = 'purge') {
+    const removed = [];
+    for (const [id, m] of this.cache) {
+      if (isLiveMatch(m)) continue;
+      this.cache.delete(id);
+      this._missCounts.delete(id);
+      removed.push({ id, ...matchDebugFields(m) });
+      try { events.emit('match:remove', { matchId: id, match: m }); } catch (_) {}
+    }
+    if (removed.length && LINGER_LOG) {
+      console.warn(`[LIVE LINGER] ${removed.length} removido(s) do cache (${reason})`, removed.slice(0, 12));
+    }
+    return removed;
   }
 
   getMatch(id) {
@@ -611,6 +566,9 @@ class LiveFootballPoller {
     }
 
     try {
+      const apiRawCount = Array.isArray(raw) ? raw.length : 0;
+      const purgedPre = this._purgeNonLiveFromCache('pre-tick');
+
       const beforeFilter = (Array.isArray(raw) ? raw : [])
         .map((fx) => {
           try { return normalizeFixture(fx); }
@@ -705,14 +663,13 @@ class LiveFootballPoller {
         }
       }
 
+      const fromStale = !!raw.__stale;
+      const fallbackReason = raw.__fallbackReason || null;
+
       this.stats.lastSize = matches.length;
       this.stats.ticks++;
       this.lastTickAt = Date.now();
       this._heartbeat('tick');
-      g_tracked.set(matches.length);
-
-      const fromStale = !!raw.__stale;
-      const fallbackReason = raw.__fallbackReason || null;
 
       if (fromStale) {
         m_ticks.inc(1, { source: 'fallback' });
@@ -770,6 +727,8 @@ class LiveFootballPoller {
         history.recordSnapshot(m, { prev }).catch(() => {});
 
         if (!prev) {
+          // Snapshot stale não deve ressuscitar fixtures antigas no cache.
+          if (fromStale) continue;
           this.cache.set(id, m);
           events.emit('match:upsert', { match: m });
           continue;
@@ -836,17 +795,44 @@ class LiveFootballPoller {
         events.emit('match:remove', { matchId: id, match: removed });
       }
 
+      const purgedPost = this._purgeNonLiveFromCache('post-tick');
+      const liveInCache = this.getMatches();
+      g_tracked.set(liveInCache.length);
+
+      this._lastFeedCompare = {
+        ts: Date.now(),
+        apiRawCount,
+        normalizedCount: beforeFilter.length,
+        liveAfterFilter: matches.length,
+        cacheSize: this.cache.size,
+        restGetMatchesCount: liveInCache.length,
+        fromStale: !!fromStale,
+        purgedPre: purgedPre.length,
+        purgedPost: purgedPost.length,
+        fallbackReason: fallbackReason || null,
+      };
+      if (LINGER_LOG) {
+        console.log('[LIVE FEED]', JSON.stringify(this._lastFeedCompare));
+        if (apiRawCount > liveInCache.length + 2) {
+          const linger = [...this.cache.keys()].filter((id) => !matches.some((m) => String(m.id) === id));
+          if (linger.length) {
+            console.warn('[LIVE LINGER] cache maior que tick live — ids extras', linger.slice(0, 15));
+          }
+        }
+      }
+
       this.stats.lastDurationMs = Date.now() - t0;
       try {
         m_tick_lat.observe(this.stats.lastDurationMs, { source: fromStale ? 'fallback' : 'live' });
       } catch (_) {}
       const payload = {
-        matches,
+        matches: liveInCache,
         generatedAt: new Date().toISOString(),
         durationMs: this.stats.lastDurationMs,
         source: fromStale ? 'fallback-cache' : 'live',
         fromStale,
         fallbackReason,
+        feedCompare: this._lastFeedCompare,
       };
       try { events.emit('tick', payload); } catch (_) {}
       try { events.emit('matches:update', payload); } catch (_) {}

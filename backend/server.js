@@ -333,7 +333,12 @@ app.get('/api/debug/apifootball', (req, res) => {
   const remainingRatio = safeCall(af && af.remainingRatio);
 
   let pollerSnap = null;
-  try { pollerSnap = getPoller().snapshot(); } catch (_) {}
+  let feedCompare = null;
+  try {
+    const poller = getPoller();
+    pollerSnap = poller.snapshot();
+    feedCompare = poller.getLastFeedCompare?.() || pollerSnap?.feedCompare || null;
+  } catch (_) {}
   let qmSnap = null;
   try { qmSnap = quotaMonitor.snapshot(); } catch (_) {}
   let enricherSnap = null;
@@ -354,6 +359,7 @@ app.get('/api/debug/apifootball', (req, res) => {
     safeMode,
     remainingRatio,
     poller: pollerSnap,
+    feedCompare,
     enricher: enricherSnap,
     quotaMonitor: qmSnap,
   });

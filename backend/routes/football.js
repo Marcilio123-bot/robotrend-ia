@@ -47,6 +47,7 @@ const metrics = require('../services/metrics');
 const signalsEngine = require('../services/signalsEngine');
 const betSignalEngine = require('../services/betSignalEngine');
 const consensus = require('../consensus');
+const { isLiveMatch } = require('../services/liveMatchFilter');
 const { getPoller } = require('../workers/liveFootballPoller');
 const { getEnricher } = require('../services/fixtureEnricher');
 const { normalizeFixture, statName, ensureAllMinimal } = require('../services/fixtureNormalizer');
@@ -200,20 +201,6 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
                        APENAS matches ao vivo (sem filtros de query).
      Tanto /live (com filtros) quanto /scanner (raw) consomem `liveMatches()`.
      ============================================================ */
-  const FT_STATUSES_ROUTE = new Set([
-    'FT', 'AET', 'PEN', 'AWD', 'WO', 'ABD', 'CANC', 'FINISHED', 'MATCH FINISHED',
-    'POSTPONED', 'PST', 'SUSP', 'CANCELLED',
-  ]);
-  function isLive(m) {
-    const min = Number(m?.minute || 0);
-    if (min > 0 && min < 120) return true;
-    const status = String(m?.status || '').toUpperCase().trim();
-    const long = String(m?.statusLong || '').toUpperCase().trim();
-    if (FT_STATUSES_ROUTE.has(status) || FT_STATUSES_ROUTE.has(long)) return false;
-    if (min >= 120) return false;
-    return true;
-  }
-
   async function liveMatches({ aggregate } = {}) {
     let matches = poller.getMatches();
     if (!matches.length && !(af.isSafeMode && af.isSafeMode())) {
@@ -239,7 +226,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
         console.warn(`[SCANNER PROVIDER] aggregated fetch falhou: ${e.message} — usando cache do poller`);
       }
     }
-    return matches.filter(isLive);
+    return matches.filter(isLiveMatch);
   }
 
   /**
@@ -302,6 +289,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
         tracked: poller.snapshot().tracked,
         alive: poller.snapshot().alive,
         lastTickAt: poller.snapshot().lastTickAt,
+        feedCompare: poller.getLastFeedCompare?.() || poller.snapshot().feedCompare || null,
       },
     };
   }

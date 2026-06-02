@@ -18,6 +18,37 @@
   const ALL_MARKETS = ['corners', 'goals', 'btts', 'cards', 'pressure'];
   /** Tempo que um jogo pode sumir do feed antes de ser removido da UI (evita flicker no restart). */
   const MATCH_VANISH_GRACE_MS = 90_000;
+  const FINISHED_STATUSES_CLIENT = new Set([
+    'FT', 'AET', 'PEN', 'AWD', 'WO', 'ABD', 'CANC', 'PST', 'POSTPONED', 'SUSP', 'CANCELLED', 'FINISHED',
+    'MATCH FINISHED', 'AFTER PENALTIES', 'AFTER EXTRA TIME',
+  ]);
+  const LIVE_KICKOFF_PAST_H = 4;
+
+  /** Espelho do filtro do backend — descarta FT e kickoff > 4h no passado. */
+  function isClientLiveMatch(m) {
+    if (!m) return false;
+    const st = String(m.status || '').toUpperCase().trim();
+    const stL = String(m.statusLong || '').toUpperCase().trim();
+    if (FINISHED_STATUSES_CLIENT.has(st) || FINISHED_STATUSES_CLIENT.has(stL)) return false;
+    const min = Number(m.minute || 0);
+    if (min >= 120) return false;
+    const raw = m.kickoffAt || m.date;
+    if (raw) {
+      const h = (new Date(raw).getTime() - Date.now()) / 3_600_000;
+      if (h < -LIVE_KICKOFF_PAST_H) return false;
+      if (h > 24) return false;
+    }
+    return true;
+  }
+
+  function filterLiveMatchesOnly(list) {
+    if (!Array.isArray(list)) return [];
+    const out = list.filter(isClientLiveMatch);
+    if (window.__ROBOTREND_DEBUG && list.length !== out.length) {
+      console.warn('[LIVE FILTER client]', list.length - out.length, 'descartado(s) (FT/kickoff antigo)');
+    }
+    return out;
+  }
   /** Após disconnect do socket, não remove jogos por N ms (servidor reiniciando). */
   const RECONNECT_GRACE_MS = 120_000;
 
@@ -271,7 +302,7 @@
    * Não substitui o mapa por lista vazia se já há jogos (evita apagar tick WS).
    */
   function ingestMatchesPayload(body, { source = 'unknown', force = false } = {}) {
-    const list = extractMatchesList(body);
+    const list = filterLiveMatchesOnly(extractMatchesList(body));
     const generatedAt = body?.generatedAt;
     if (body?.poller) state.poller = body.poller;
     if (body?.reason != null) state.runtime.reason = body.reason;
@@ -1159,6 +1190,7 @@
   /** Mantém jogo na UI durante grace (restart do backend / tick instável). */
   function shouldHoldVanishedMatch(m) {
     if (!m) return false;
+    if (!isClientLiveMatch(m)) return false;
     const now = Date.now();
     if (state.runtime.reconnectAt && (now - state.runtime.reconnectAt) < RECONNECT_GRACE_MS) {
       return true;
