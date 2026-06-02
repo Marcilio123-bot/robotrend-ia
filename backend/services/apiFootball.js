@@ -156,7 +156,7 @@ const CB_COOLDOWN_MS   = Number(process.env.API_FOOTBALL_CB_COOLDOWN_MS || 60_00
  * TTL por endpoint (ms). Conservador. Livre para tunar via env.
  */
 const TTL_BY_ENDPOINT = {
-  'fixtures?live=all'      : Number(process.env.AF_TTL_LIVE         || 8_000),
+  'fixtures?live=all'      : Number(process.env.AF_TTL_LIVE         || 30_000),
   'fixtures'               : Number(process.env.AF_TTL_FIXTURES     || 15 * 60_000),
   'fixtures/statistics'    : Number(process.env.AF_TTL_STATS        || 12_000),
   'fixtures/events'        : Number(process.env.AF_TTL_EVENTS       || 12_000),

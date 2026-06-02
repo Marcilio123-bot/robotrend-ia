@@ -75,9 +75,11 @@ function classifyError(err) {
   return { soft: false, reason: code || 'unknown' };
 }
 
-// Intervalo de poll da API-Football. Default 5 min (288 req/dia, dentro do
-// plano free de 100/dia se ENRICH_ENABLED=false). Override via FOOTBALL_POLL_INTERVAL_MS.
-const DEFAULT_INTERVAL_MS = 300_000;
+// Intervalo de poll da API-Football. Default 30s (~2880 req/dia, exige
+// plano pago — ajuste API_FOOTBALL_RATE_PER_DAY junto). Override via
+// FOOTBALL_POLL_INTERVAL_MS. AF_TTL_LIVE deve acompanhar o mesmo valor
+// para que cache fresh dedupe qualquer fallback (live.js/consensus).
+const DEFAULT_INTERVAL_MS = 30_000;
 const INTERVAL_MS         = Number(process.env.FOOTBALL_POLL_INTERVAL_MS || DEFAULT_INTERVAL_MS);
 
 // Filtro de ligas excluídas (amador, categoria de base, reservas, feminino).

@@ -39,7 +39,7 @@ const { getEnricher } = require('./services/fixtureEnricher');
 async function main() {
   log.info('worker starting…', {
     redis: !!process.env.REDIS_URL,
-    pollInterval: process.env.FOOTBALL_POLL_INTERVAL_MS || 12000,
+    pollInterval: process.env.FOOTBALL_POLL_INTERVAL_MS || 30000,
   });
 
   await footballHistory.init();

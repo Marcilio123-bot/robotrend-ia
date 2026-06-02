@@ -41,15 +41,28 @@ services:
       - key: LIVE_SCAN_INTERVAL_MS
         value: "15000"
       # ----------------------------------------------------------
-      # API-FOOTBALL — economia de quota (plano Free = 100 req/dia)
+      # API-FOOTBALL — config definitiva para plano Pro (7500 req/dia)
       # ----------------------------------------------------------
-      # Intervalo do poller central (ms). 300000 = 5 min => 288 req/dia.
+      # Intervalo do poller central (ms). 30000 = 30 s => ~2880 req/dia
+      # apenas do endpoint /fixtures?live=all. Operação contínua 24h.
       - key: FOOTBALL_POLL_INTERVAL_MS
-        value: "300000"
+        value: "30000"
       # TTL do cache fresh do endpoint /fixtures?live=all.
-      # 300000ms = 5 min: alinhado com o intervalo do poller.
+      # 30000ms = 30 s: alinhado com o intervalo do poller para dedup
+      # entre poller central e qualquer fallback (live.js / consensus).
       - key: AF_TTL_LIVE
-        value: "300000"
+        value: "30000"
+      # Cap diário do limitador local. Plano Pro = 7500/dia; mantemos
+      # ~7% de margem para enrich sob demanda, retries e picos REST.
+      # Sem isso, o default do código é 95 (free tier) e o sistema
+      # bloqueia após ~48 min de polling a 30 s.
+      - key: API_FOOTBALL_RATE_PER_DAY
+        value: "7000"
+      # Cap por minuto. Poller usa 2/min (1 a cada 30s); 30 dá folga
+      # para enrich (2/req), bursts de detalhe e forceRefresh.
+      # Default do código = 5 (insuficiente para enrich + poller).
+      - key: API_FOOTBALL_RATE_PER_MIN
+        value: "30"
       # Bot consensus desligado: NÃO repete getLiveFixtures a cada 15s.
       # Modos válidos: strict | relaxed | off. Aqui ficamos em off.
       - key: MATCH_CONSENSUS_MODE
