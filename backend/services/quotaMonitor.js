@@ -49,7 +49,6 @@ function tick() {
   const q = apiFootball.quota();
   const safe = apiFootball.safeMode ? apiFootball.safeMode() : { active: false };
   events.emit('quota', { quota: q, safeMode: safe });
-  // Sofascore não tem headers de quota — skipa o log diário com nulls.
   if (q.dailyLimit != null) appendDailyLog(q);
   if (q.dailyLimit && q.dailyRemaining != null) {
     const pct = q.dailyRemaining / q.dailyLimit;

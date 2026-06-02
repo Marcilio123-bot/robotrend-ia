@@ -201,29 +201,13 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
                        APENAS matches ao vivo (sem filtros de query).
      Tanto /live (com filtros) quanto /scanner (raw) consomem `liveMatches()`.
      ============================================================ */
-  async function liveMatches({ aggregate } = {}) {
+  async function liveMatches() {
     let matches = poller.getMatches();
     if (!matches.length && !(af.isSafeMode && af.isSafeMode())) {
       const snap = poller.snapshot();
       if (!snap.lastTickAt) {
         await poller.forceRefresh();
         matches = poller.getMatches();
-      }
-    }
-    // Scanner pode pedir agregação direta (query ?aggregate=true) mesmo com
-    // cache cheio. Bate em todos os providers em paralelo, normaliza e dedupa.
-    // Útil para maximizar cobertura quando o provider primário está com
-    // poucos jogos visíveis. NUNCA bloqueia — em erro, devolve o cache.
-    if (aggregate === true && typeof af.getLiveFixturesAggregated === 'function') {
-      try {
-        const raw = await af.getLiveFixturesAggregated();
-        if (raw.length) {
-          matches = raw.map((fx) => {
-            try { return normalizeFixture(fx); } catch { return null; }
-          }).filter(Boolean);
-        }
-      } catch (e) {
-        console.warn(`[SCANNER PROVIDER] aggregated fetch falhou: ${e.message} — usando cache do poller`);
       }
     }
     return matches.filter(isLiveMatch);
@@ -247,7 +231,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   /**
    * Constrói o bloco `meta` exposto por /live e /scanner.
    * Centraliza a leitura de provider/quota/origem para o frontend
-   * conseguir mostrar "📡 Scanner: 87 jogos · provider: sofascore".
+   * conseguir mostrar "📡 Scanner: 87 jogos · API-Football".
    */
   function buildLiveMeta(allLive, afterFilter) {
     const pollerSnap = poller.snapshot?.() || {};
@@ -320,10 +304,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   router.get('/scanner', asyncHandler(async (req, res) => {
     noStore(res);
 
-    // SCANNER aceita uma flag opcional `aggregate=true` para forçar agregação
-    // multi-provider. Por padrão segue a env SCANNER_AGGREGATE_PROVIDERS.
-    const forceAggregate = String(req.query.aggregate || '').toLowerCase() === 'true';
-    const allLive = await liveMatches({ aggregate: forceAggregate || undefined });
+    // SCANNER usa o snapshot do poller (única fonte API-Football).
+    const allLive = await liveMatches();
     console.log(`[LIVE MATCHES RECEIVED] /scanner — ${allLive.length} matches (provider ativo: ${af.providerName})`);
 
     // Filtros de NAVEGAÇÃO permitidos (não-IA)
@@ -349,10 +331,9 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       safeMode: af.isSafeMode?.() || false,
       meta: buildLiveMeta(allLive, matches),
       consensus: { mode: 'off', applied: false, reason: 'scanner-bypass' },
-      aggregation: {
-        enabled: forceAggregate || af.AGGREGATE_PROVIDERS,
-        priority: af.priority || af.status?.()?.priority || [],
+      provider: {
         active: af.providerName,
+        priority: af.priority || [],
       },
       hint: 'Modo SCANNER — todos os jogos ao vivo, sem filtros IA, sem consensus. ' +
             'Use /api/football/live para o feed com filtros + score IA.',
@@ -1060,7 +1041,6 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       else if (apiStatus.breaker?.state === 'OPEN') reason = 'circuit-open';
       else if ((apiStatus.quota?.dailyRemaining ?? 1) <= 0) reason = 'quota-exhausted';
       else if (
-        snap.lastFallbackReason === 'no_provider_configured' ||
         snap.lastFallbackReason === 'api_not_configured' ||
         !af.isConfigured?.()
       ) reason = 'data-unavailable';

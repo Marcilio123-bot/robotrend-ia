@@ -1,7 +1,7 @@
 /**
  * Robotrend IA — Football Live (frontend)
  *
- * Dashboard estilo Bet365/Flashscore:
+ * Dashboard live estilo Flashscore:
  *   - 3 painéis (Ligas | Partidas | Detalhe)
  *   - Realtime via Socket.io namespace /football (rooms: lobby / fixture / league)
  *   - Filtros avançados (liga, busca, minuto, pressão, BTTS)
@@ -150,7 +150,7 @@
       stableTicks: 0,
 
       // META do feed atual (vem do backend em /live e /scanner)
-      // Usado pela barra "📡 87 recebidos · 75 exibidos · 12 filtrados · provider: sofascore"
+      // Usado pela barra "📡 87 recebidos · 75 exibidos · 12 filtrados"
       feedMeta: {
         totalReceived: 0,
         totalAfterFilter: 0,
@@ -1446,8 +1446,8 @@
 
   /**
    * Atualiza a barra de meta logo abaixo dos botões de modo:
-   *   📡 SCANNER · 87 recebidos · 87 exibidos · 0 filtrados · provider: sofascore
-   *   🎯 SINAIS  · 87 recebidos · 12 exibidos · 75 filtrados pela IA · provider: sofascore
+   *   📡 SCANNER · 87 recebidos · 87 exibidos · 0 filtrados
+   *   🎯 SINAIS  · 87 recebidos · 12 exibidos · 75 filtrados pela IA
    *
    * Lê `state.runtime.feedMeta` (vem do backend) e dos contadores locais.
    */
@@ -1612,12 +1612,9 @@
   }
 
   function providerLimitedBannerHTML() {
-    const prov = state.runtime.feedMeta?.provider || state.activeProvider || 'provider';
-    const partial = state.runtime.feedMeta?.provider?.active === 'thesportsdb'
-      || String(prov).toLowerCase() === 'thesportsdb';
     return `
       <div class="fb-provider-limited" role="status" style="margin-bottom:12px;padding:10px 14px;border-radius:10px;border:1px solid rgba(251,191,36,.35);background:rgba(251,191,36,.08);font-size:13px;color:#fbbf24">
-        ⚠ Dados limitados do provider (<strong>${escapeHtml(String(prov))}</strong>)${partial ? ' · TheSportsDB' : ''} — exibindo placar/minuto; stats IA podem ser parciais.
+        ⚠ Dados limitados da API-Football — exibindo placar/minuto; stats IA podem ser parciais.
       </div>`;
   }
 
@@ -1967,7 +1964,7 @@
         return {
           icon: '🚫',
           title: 'Dados indisponíveis no momento.',
-          body: 'Os provedores oficiais (Bet365Data / TheSportsDB / football-data / API-Sports) estão fora do ar ou sem créditos. O painel volta automaticamente assim que houver dados reais.',
+          body: 'A API-Football (API-Sports) está indisponível, sem chave válida ou sem quota. Verifique API_FOOTBALL_KEY e API_FOOTBALL_HOST no ambiente. O painel volta automaticamente quando houver dados reais.',
           action: '↻ Tentar novamente',
         };
       }

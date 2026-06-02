@@ -1,4 +1,4 @@
-# 🤖 Robotrend IA · v5.0.0 SaaS · Bet365 Edition
+# 🤖 Robotrend IA · v5.0.0 SaaS Edition
 
 **Plataforma profissional de sinais esportivos** com autenticação, planos SaaS (FREE/VIP/PREMIUM), pagamentos (Stripe + Mercado Pago + PIX), painel admin, PWA, Docker e ML-ready.
 
@@ -248,13 +248,11 @@ ANTI_FAKE_PRESSURE=true
 ML_AUTOTUNE=true
 SIGNAL_MIN_SCORE=80
 
-# Football providers REAIS (failover automático).
-# Sem provider configurado, o painel exibe "Dados indisponíveis no momento."
-# (não existe mais provider/scanner sintético / DEMO_MODE).
-FOOTBALL_PROVIDER_PRIORITY=bet365data,thesportsdb,football-data,apisports
-RAPIDAPI_KEY=
-FOOTBALL_DATA_KEY=
+# API-Football (API-Sports) — ÚNICA fonte de dados de partidas.
+# Sem chave válida, o painel exibe "Dados indisponíveis no momento."
+# (não existe provider/scanner sintético / DEMO_MODE / fallback gratuito).
 API_FOOTBALL_KEY=
+API_FOOTBALL_HOST=v3.football.api-sports.io
 ```
 
 ---
@@ -273,4 +271,4 @@ API_FOOTBALL_KEY=
 
 ---
 
-**Robotrend IA · v5.0.0 SaaS · Bet365 Edition** · pronto para vender assinaturas. 🚀
+**Robotrend IA · v5.0.0 SaaS Edition** · pronto para vender assinaturas. 🚀

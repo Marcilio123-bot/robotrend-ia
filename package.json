@@ -1,7 +1,7 @@
 {
   "name": "robotrend-ia",
   "version": "5.0.0",
-  "description": "Robotrend IA v5 Commercial — Bet365 SaaS · backtest, anti-fake-pressure v2, score adaptativo, watchdog, beta fechado, painel de resultados, qualidade IA, cupons/convites",
+  "description": "Robotrend IA v5 Commercial — SaaS · backtest, anti-fake-pressure v2, score adaptativo, watchdog, beta fechado, painel de resultados, qualidade IA, cupons/convites",
   "main": "backend/server.js",
   "engines": {
     "node": ">=20.0.0 <25"

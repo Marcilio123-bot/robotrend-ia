@@ -52,8 +52,7 @@ function statName(stats, teamId, type) {
    ============================================================ */
 function normalizeFixture(fx) {
   if (!fx) return null;
-  // Idempotência: se já está no schema unificado (vindo de um provider que
-  // pré-normaliza, ex.: sofascoreProvider), retorna como está.
+  // Idempotência: se já está no schema unificado, retorna como está.
   if (fx.flags && fx.flags.source && fx.score && fx.teams?.home?.name != null) {
     return fx;
   }

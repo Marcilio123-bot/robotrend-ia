@@ -1,9 +1,9 @@
 /**
  * Robotrend IA — Análise Pré-Live (BTTS)
  *
- * Busca exclusivamente fixtures REAIS via providers configurados em
- * FOOTBALL_PROVIDER_PRIORITY. Se nenhum provider real estiver disponível,
- * retorna lista vazia — partidas sintéticas foram removidas do sistema.
+ * Busca exclusivamente fixtures REAIS via API-Football (API-Sports).
+ * Se a API-Football não estiver configurada, retorna lista vazia —
+ * partidas sintéticas foram removidas do sistema.
  */
 
 'use strict';
@@ -26,8 +26,8 @@ const PRELIVE_MAX_FIXTURES = Number(process.env.PRELIVE_MAX_FIXTURES || 5);
 
 class ApiPreliveScanner {
   async list() {
-    if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
-      console.warn('[prelive] nenhum provider configurado na chain — retornando [].');
+    if (!apiFootball.isConfigured?.()) {
+      console.warn('[prelive] API-Football não configurada — retornando [].');
       return [];
     }
     // SAFE-MODE: não consome API. Devolve [] e deixa o frontend exibir aviso.
@@ -114,21 +114,21 @@ class ApiPreliveScanner {
 
 /**
  * Scanner inerte (substitui o antigo DemoPreliveScanner).
- * Usado quando não há provider real configurado — devolve [] e deixa o
- * painel exibir "Dados indisponíveis no momento.".
+ * Usado quando a API-Football não está configurada — devolve [] e deixa
+ * o painel exibir "Dados indisponíveis no momento.".
  */
 class EmptyPreliveScanner {
   async list() { return []; }
 }
 
 function createPreliveScanner() {
-  if (apiFootball.hasAnyConfiguredProvider?.() || apiFootball.isConfigured?.()) {
+  if (apiFootball.isConfigured?.()) {
     console.log('[prelive] ApiPreliveScanner' + (STRICT_REAL_ONLY ? ' (STRICT)' : '') +
-                ' — provider: ' + (apiFootball.providerName || '?'));
+                ' — provider: API-Football');
     return new ApiPreliveScanner();
   }
-  console.warn('[prelive] Nenhum provider real configurado — scanner inerte. ' +
-               'Painel exibirá "Dados indisponíveis no momento." até FOOTBALL_PROVIDER_PRIORITY ser ajustado.');
+  console.warn('[prelive] API-Football não configurada — scanner inerte. ' +
+               'Painel exibirá "Dados indisponíveis no momento." até API_FOOTBALL_KEY ser preenchida.');
   return new EmptyPreliveScanner();
 }
 

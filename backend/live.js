@@ -1,13 +1,12 @@
 /**
  * Robotrend IA — Scanner Ao Vivo (LIVE)
  *
- * Consulta exclusivamente os providers REAIS configurados em
- * FOOTBALL_PROVIDER_PRIORITY via o orquestrador `footballProvider`.
+ * Consulta exclusivamente a API-Football (API-Sports) via o serviço
+ * `footballProvider` (proxy para `apiFootball`).
  *
- * Se nenhum provider real estiver configurado OU todos falharem, o scanner
- * devolve lista vazia ("Dados indisponíveis no momento."). NÃO existe
- * fallback para partidas sintéticas — qualquer fonte fictícia foi
- * removida do sistema.
+ * Se a API-Football não estiver configurada ou falhar, o scanner devolve
+ * lista vazia e o painel exibe "Dados indisponíveis no momento.".
+ * NÃO existe fallback para partidas sintéticas nem providers secundários.
  */
 
 'use strict';
@@ -33,7 +32,7 @@ const STRICT_REAL_ONLY = (() => {
 const MATCH_DEBUG_ENABLED = String(process.env.MATCH_DEBUG || 'true').toLowerCase() !== 'false';
 
 /**
- * Live scanner usando os providers reais (via footballProvider orchestrator).
+ * Live scanner usando a API-Football (via footballProvider).
  */
 class ApiLiveScanner {
   constructor() {
@@ -156,7 +155,7 @@ class ApiLiveScanner {
 
   async fetchLiveFixtures() {
     if (!apiFootball.isConfigured()) {
-      console.warn('[live] nenhum provider real configurado — retornando vazio.');
+      console.warn('[live] API-Football não configurada — retornando vazio.');
       return [];
     }
     // ZERO API CALL aqui — o poller central é o único owner do endpoint
@@ -188,23 +187,15 @@ class ApiLiveScanner {
    * formato legacy esperado pelo analyzer/freshness/etc.
    *
    * IMPORTANTE — kickoff fallback:
-   *   Providers free (TheSportsDB) podem não devolver `dateEvent`/`strTimestamp`
-   *   em certos eventos. Sem timestamp, `freshness.checkMatchStrict` rejeita
-   *   o match com "sem timestamp real" — derrubando jogos LIVE válidos no
-   *   STRICT_REAL_ONLY (default em production). Quando o provider entregou
-   *   apenas o minuto, derivamos kickoffAt = now - minute*60s.
-   *
-   * IMPORTANTE — provider:
-   *   `source` é mantido como 'api-football' por compat (signal source guard
-   *   espera `api-*`). O provider original (thesportsdb/sofascore/apisports)
-   *   fica preservado em `provider` para logs e diagnóstico.
+   *   Em casos raros a API-Football pode não devolver kickoff exato. Quando
+   *   só temos o minuto, derivamos kickoffAt = now - minute*60s para que
+   *   `freshness.checkMatchStrict` não rejeite o match em STRICT_REAL_ONLY.
    */
   mapNormalizedMatch(m) {
     const minute = Number(m.minute || 0);
     const kickoffRaw = m.kickoffAt || m.date || null;
     const kickoffFallback = kickoffRaw
       || new Date(Date.now() - Math.max(0, minute) * 60_000).toISOString();
-    const originalProvider = m.provider || m.flags?.source || null;
     return {
       id: String(m.fixtureId || m.id),
       home: m.home,
@@ -227,8 +218,8 @@ class ApiLiveScanner {
       isLive: freshness.isLiveStatus(m.status),
       isFromLiveAPI: true,
       source: 'api-football',
-      provider: originalProvider || 'api-football',
-      dataQuality: m.dataQuality || (originalProvider === 'thesportsdb' || originalProvider === 'sofascore' ? 'partial' : 'full'),
+      provider: 'api-football',
+      dataQuality: m.dataQuality || 'full',
       lastApiUpdate: m.lastApiUpdate || Date.now(),
     };
   }
@@ -278,10 +269,10 @@ class ApiLiveScanner {
 }
 
 /**
- * Scanner inerte — devolve lista vazia. Único fallback quando nenhum provider
- * real está disponível. Substituiu o antigo DemoLiveScanner: o sistema NUNCA
- * mais devolve partidas sintéticas — preferimos exibir "Dados indisponíveis
- * no momento." no painel do que arriscar emitir signals fake.
+ * Scanner inerte — devolve lista vazia quando a API-Football não está
+ * configurada. O sistema NUNCA devolve partidas sintéticas — preferimos
+ * exibir "Dados indisponíveis no momento." no painel do que arriscar emitir
+ * signals fake.
  */
 class EmptyLiveScanner {
   constructor() { this.history = new Map(); this.acceptedOnce = new Set(); }
@@ -290,14 +281,13 @@ class EmptyLiveScanner {
 }
 
 function createLiveScanner() {
-  if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
-    console.warn('[live] Nenhum provider real configurado — scanner inerte (retorna []). ' +
-                 'Painel exibirá "Dados indisponíveis no momento." até FOOTBALL_PROVIDER_PRIORITY ser ajustado.');
+  if (!apiFootball.isConfigured?.()) {
+    console.warn('[live] API-Football não configurada — scanner inerte (retorna []). ' +
+                 'Painel exibirá "Dados indisponíveis no momento." até API_FOOTBALL_KEY ser preenchida.');
     return new EmptyLiveScanner();
   }
   console.log('[live] ApiLiveScanner ativo' + (STRICT_REAL_ONLY ? ' (STRICT)' : '') +
-              ' — provider: ' + (apiFootball.providerName || '?') +
-              ' · chain: ' + (apiFootball.priority?.join('→') || '?'));
+              ' — provider: API-Football');
   return new ApiLiveScanner();
 }
 

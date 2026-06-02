@@ -288,16 +288,13 @@ class RobotrendBot {
 
       // FAKE-MATCH GUARD — defesa SEMPRE ativa (não depende de STRICT).
       // IDs `demo-*` (ou qualquer prefixo sintético) e matches sem origem
-      // real (source !== 'api-football' / sem provider conhecido) NUNCA
-      // devem gerar signal Telegram. Cinto de segurança: o provider/scanner
-      // sintético foi removido do sistema, mas mantemos o guard para barrar
-      // qualquer fonte residual ou regressão futura.
+      // real (source !== 'api-football') NUNCA devem gerar signal Telegram.
+      // Cinto de segurança: provider sintético foi removido do sistema, mas
+      // mantemos o guard para barrar qualquer regressão futura.
       const isDemoId = String(match.id || '').startsWith('demo-');
       const knownRealSource = match.source === 'api-football'
-        || match.provider === 'sofascore'
-        || match.provider === 'thesportsdb'
+        || match.provider === 'api-football'
         || match.provider === 'apisports'
-        || match.provider === 'football-data'
         || match.isFromLiveAPI === true;
       if (isDemoId || !knownRealSource) {
         console.log(`[SIGNAL BLOCK] ${match.home} x ${match.away} bloqueado: fonte sintética/desconhecida (id=${match.id}, source=${match.source || match.provider || 'unknown'})`);

@@ -75,10 +75,9 @@ function classifyError(err) {
   return { soft: false, reason: code || 'unknown' };
 }
 
-// Intervalo de poll. Providers gratuitos (thesportsdb/sofascore) → 15s.
-// API-Sports (pago/quota) → 5 min. Override via FOOTBALL_POLL_INTERVAL_MS.
-const PROVIDER_NAME = String(process.env.FOOTBALL_PROVIDER || '').toLowerCase();
-const DEFAULT_INTERVAL_MS = PROVIDER_NAME === 'apisports' ? 300_000 : 15_000;
+// Intervalo de poll da API-Football. Default 5 min (288 req/dia, dentro do
+// plano free de 100/dia se ENRICH_ENABLED=false). Override via FOOTBALL_POLL_INTERVAL_MS.
+const DEFAULT_INTERVAL_MS = 300_000;
 const INTERVAL_MS         = Number(process.env.FOOTBALL_POLL_INTERVAL_MS || DEFAULT_INTERVAL_MS);
 
 // Filtro de ligas excluídas (amador, categoria de base, reservas, feminino).
@@ -549,12 +548,12 @@ class LiveFootballPoller {
 
     let raw = [];
     try {
-      if (!apiFootball.hasAnyConfiguredProvider?.() && !apiFootball.isConfigured?.()) {
+      if (!apiFootball.isConfigured?.()) {
         // Não derruba o poller; mantém vivo com heartbeat e cache anterior.
-        this.lastFallbackReason = 'no_provider_configured';
-        raw = this._fallbackSnapshot('no_provider_configured');
+        this.lastFallbackReason = 'api_not_configured';
+        raw = this._fallbackSnapshot('api_not_configured');
         if (this.stats.ticks === 0 && this.stats.ticksFallback <= 1) {
-          log.warn('poller em modo passivo — nenhum provider na FOOTBALL_PROVIDER_PRIORITY (heartbeat ativo)');
+          log.warn('poller em modo passivo — API_FOOTBALL_KEY ausente/inválida (heartbeat ativo)');
         }
       } else {
         raw = await this._safeFetchLiveFixtures();
@@ -584,14 +583,12 @@ class LiveFootballPoller {
       // FT/AET/PEN/Finished/etc. são descartados — não entram no cache.
       const matches = priorityFiltered.filter((m) => isLiveMatch(m));
 
-      // Marca origem + qualidade dos dados (free vs full) em cada match.
-      // 'partial' = provider só dá placar/minuto/status (TheSportsDB livescore);
-      // 'full'    = provider entrega stats avançadas (API-Sports paga).
-      const providerName = apiFootball.providerName || (apiFootball.status?.()?.provider) || 'unknown';
-      const isPartialProvider = providerName === 'thesportsdb' || providerName === 'sofascore';
+      // Marca origem da API-Football em cada match. Como a única fonte é
+      // a API-Sports paga, dataQuality é sempre 'full' (stats avançadas).
+      const providerName = apiFootball.providerName || 'apisports';
       for (const mm of matches) {
         mm.provider = providerName;
-        mm.dataQuality = mm.dataQuality || (isPartialProvider ? 'partial' : 'full');
+        mm.dataQuality = mm.dataQuality || 'full';
         if (mm.flags) mm.flags.source = providerName;
       }
       if (beforeFilter.length !== matches.length) {
@@ -778,7 +775,7 @@ class LiveFootballPoller {
 
       // Remoção de matches que sumiram (jogo encerrou ou saiu de live).
       // Exige REMOVE_MISS_TICKS ausências consecutivas — evita flicker quando
-      // o provider (TheSportsDB/SofaScore) oscila entre ticks após restart.
+      // a API-Football oscila entre ticks após restart.
       for (const id of seen) this._missCounts.delete(id);
       for (const id of [...this.cache.keys()]) {
         if (seen.has(id)) continue;

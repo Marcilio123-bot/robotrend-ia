@@ -231,7 +231,7 @@ app.get('/api/health', (req, res) => {
     ok: true,
     service: 'Robotrend IA',
     version: APP_VERSION,
-    edition: 'SaaS · Bet365 · Production',
+    edition: 'SaaS · Production',
     telegram: String(process.env.TELEGRAM_ENABLED || 'false') === 'true',
     postgres: db.isPostgres(),
     render: isOnRender(),
@@ -311,8 +311,6 @@ app.get('/api/debug/apifootball', (req, res) => {
     API_FOOTBALL_HOST: process.env.API_FOOTBALL_HOST || null,
     API_FOOTBALL_KEY_present: Boolean(process.env.API_FOOTBALL_KEY),
     API_FOOTBALL_KEY_length:  (process.env.API_FOOTBALL_KEY || '').length,
-    FOOTBALL_PROVIDER: process.env.FOOTBALL_PROVIDER || null,
-    FOOTBALL_PROVIDER_PRIORITY: process.env.FOOTBALL_PROVIDER_PRIORITY || null,
     FOOTBALL_POLL_INTERVAL_MS: process.env.FOOTBALL_POLL_INTERVAL_MS || null,
     FOOTBALL_POLLER_ENABLED: process.env.FOOTBALL_POLLER_ENABLED || null,
     AF_TTL_LIVE: process.env.AF_TTL_LIVE || null,
@@ -1181,9 +1179,7 @@ async function main() {
     oddsOptional: !process.env.ODDS_API_KEY || String(process.env.ODDS_OPTIONAL || '').toLowerCase() === 'true',
   });
   if (!af.isConfigured()) {
-    log.warn('Nenhum provider live configurado — modo degradado (poller heartbeat, scanner vazio)');
-  } else if (!process.env.API_FOOTBALL_KEY) {
-    log.info('API_FOOTBALL_KEY ausente — usando failover: ' + (af.priority || []).join(' → '));
+    log.warn('API-Football não configurada — modo degradado (poller heartbeat, scanner vazio). Defina API_FOOTBALL_KEY.');
   }
 
   try { attachFootballRealtime(io, { db, auth }); }

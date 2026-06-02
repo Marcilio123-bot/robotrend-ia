@@ -1,12 +1,11 @@
 /**
  * Robotrend IA — API-Football Service (API-Sports)
  *
- * Cliente único e centralizado para o endpoint direto da API-Sports.
+ * Cliente único e centralizado para o endpoint direto da API-Sports
+ * (api-football.com / api-sports.io). É a ÚNICA fonte de dados de
+ * partidas suportada pelo sistema.
  *   Base URL : https://v3.football.api-sports.io
  *   Header   : x-apisports-key (ÚNICO header de autenticação aceito)
- *
- * Suporta também o host legacy RapidAPI (`*.p.rapidapi.com`) — detectado
- * pelo host configurado.
  *
  * Funcionalidades:
  *   - Axios instance com headers sanitizados (remove User-Agent)
@@ -98,9 +97,8 @@ function readConfig() {
   const key = readApiKey();
   const host = normalizeHost(process.env.API_FOOTBALL_HOST || DEFAULT_HOST)
     || normalizeHost(DEFAULT_HOST);
-  const isRapidApi = /\.rapidapi\.com$/i.test(host);
-  const baseURL = isRapidApi ? buildHttpsBase(host, 'v3') : buildHttpsBase(host);
-  return { key, host, baseURL, isRapidApi };
+  const baseURL = buildHttpsBase(host);
+  return { key, host, baseURL };
 }
 
 /** Chave + host + baseURL válidos — único gate antes de qualquer HTTP. */
@@ -180,9 +178,6 @@ const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 25 });
 let _httpClient = null;
 
 function buildAuthHeaders(cfg = readConfig()) {
-  if (cfg.isRapidApi) {
-    return { 'x-rapidapi-key': cfg.key, 'x-rapidapi-host': cfg.host };
-  }
   return { 'x-apisports-key': cfg.key };
 }
 
@@ -779,7 +774,6 @@ function status() {
     hasKey: Boolean(c.key),
     host: c.host || null,
     baseURL: configured ? c.baseURL : null,
-    legacyRapidApi: c.isRapidApi,
     httpClientReady: Boolean(_httpClient),
     timeoutMs: TIMEOUT_MS,
     retryMax: RETRY_MAX,

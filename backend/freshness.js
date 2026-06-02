@@ -28,10 +28,9 @@ const LIVE_STATUSES = new Set([
   'BT',   // intervalo da prorrogação
   'P',    // pênaltis (ainda em andamento)
   'LIVE', // genérico
-  'INT',  // intervalo (alguns providers)
+  'INT',  // intervalo
   'INPLAY', 'IN_PLAY', 'IN-PLAY',
 ]);
-const PARTIAL_LIVE_PROVIDERS = new Set(['thesportsdb', 'sofascore']);
 
 // Status que indicam jogo ENCERRADO / inválido (sempre rejeitar)
 const FINISHED_STATUSES = new Set([
@@ -95,8 +94,7 @@ function checkMatch(match) {
     return { ok: true, reason: `status live: ${status}` };
   }
 
-  // 3) Provider sem status string: usa flag isLive + minuto.
-  //    Ex.: TheSportsDB livescore que entrega só minuto e flag.
+  // 3) Sem status string: usa flag isLive + minuto.
   if (match.isLive === true && Number.isFinite(match.minute) && match.minute >= 1 && match.minute <= 95) {
     return { ok: true, reason: `live (min ${match.minute})` };
   }
@@ -188,7 +186,6 @@ function checkMatchStrict(match) {
 
   const status = getStatus(match);
   const min = Number(match?.minute);
-  const provider = String(match?.provider || match?.flags?.source || '').toLowerCase();
 
   if (isFinishedStatus(status)) {
     return { ok: false, reason: `status finalizado: ${status}` };
@@ -197,7 +194,6 @@ function checkMatchStrict(match) {
     return { ok: false, reason: `minuto inválido/travado: ${min}` };
   }
 
-  // Minuto real → ao vivo mesmo se status vier NS/parcial (TheSportsDB eventsday).
   if (Number.isFinite(min) && min > 0 && min < 120) {
     const t = getMatchTimestamp(match);
     if (t != null) {
@@ -215,9 +211,6 @@ function checkMatchStrict(match) {
 
   const t = getMatchTimestamp(match);
   if (t == null) {
-    if (PARTIAL_LIVE_PROVIDERS.has(provider) && (isLiveStatus(status) || status === 'NS')) {
-      return { ok: true, reason: `provider parcial (${provider}) sem kickoff exato` };
-    }
     return { ok: false, reason: 'sem timestamp real (kickoffAt/date/fixture.date)' };
   }
   const hoursAgo = (Date.now() - t) / 3_600_000;
@@ -232,21 +225,7 @@ function checkMatchStrict(match) {
     return { ok: true, reason: `live confirmado: ${status}`, hoursAgo };
   }
 
-  // NS / status textual parcial em provider gratuito — não zerar painel em produção.
-  if (PARTIAL_LIVE_PROVIDERS.has(provider)) {
-    const st = String(status).toUpperCase();
-    if (st === 'NS' || st === 'NOT STARTED' || st === 'TIMED' || st === 'SCHEDULED') {
-      if (hoursAgo >= -0.5) {
-        return { ok: true, reason: `provider parcial (${provider}) status=${status}`, hoursAgo };
-      }
-    }
-  }
-
-  if (!isLiveStatus(status)) {
-    return { ok: false, reason: `status não-live: ${status}` };
-  }
-
-  return { ok: true, reason: `live confirmado: ${status}`, hoursAgo };
+  return { ok: false, reason: `status não-live: ${status}` };
 }
 
 function isUpcomingMatchStrict(fixture) {

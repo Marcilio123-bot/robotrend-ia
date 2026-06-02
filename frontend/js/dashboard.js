@@ -167,7 +167,7 @@
       '<div class="saas-card" style="text-align:center; padding:32px; opacity:.85;">' +
       '<div style="font-size:15px; font-weight:600; margin-bottom:6px;">Dados indisponíveis no momento.</div>' +
       '<div class="text-sm" style="opacity:.7;">' +
-      'Aguardando resposta dos provedores oficiais. O painel atualiza automaticamente quando houver dados reais.' +
+      'Aguardando resposta da API-Football. O painel atualiza automaticamente quando houver dados reais.' +
       '</div></div>';
   }
 

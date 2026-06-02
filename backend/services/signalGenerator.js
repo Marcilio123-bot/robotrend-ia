@@ -352,9 +352,9 @@ function generateSignals(match) {
 /* ============================================================
    FREE PROVIDER MODE
    ------------------------------------------------------------
-   Sinais quando o provider só fornece placar + minuto + status
-   (TheSportsDB livescore, ScoreBat, etc.). NÃO usamos corners,
-   dangerousAttacks, shotsOnTarget, possession aqui.
+   Sinais quando a API-Football só devolve placar + minuto + status
+   (sem statistics ainda). NÃO usamos corners, dangerousAttacks,
+   shotsOnTarget, possession aqui.
 
    Regras (lista oficial):
      OVER 1.5
@@ -475,7 +475,7 @@ function buildUnderFreeSignal(m) {
  *
  * NÃO depende de stats avançadas (corners, dangerousAttacks, shotsOnTarget,
  * possession). Bloqueia FT/0'. Garante UI acionável quando o pipeline
- * está rodando com TheSportsDB ou outro provider gratuito.
+ * ainda não recebeu enrichment da API-Football.
  */
 function generatePartialSignals(match) {
   if (!match) return [];

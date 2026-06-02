@@ -18,7 +18,7 @@
  *                  • partial       → ≥1 mas <N fontes concordam (dentro da tolerância)
  *                  • single-source → apenas 1 fonte ou divergência grande
  *              Nenhum match é descartado. Ideal para mostrar dados no painel
- *              mesmo quando providers FREE (TheSportsDB) divergem do API-Football.
+ *              mesmo quando alguma fonte (status / events / odds) diverge.
  *
  *  - OFF     → bypass total. Engine NÃO faz HTTP, devolve a lista intacta
  *              anotada como `single-source`. Use quando o poller único já
@@ -105,7 +105,7 @@ const TS_TOLERANCE_MS    = Number(process.env.CONSENSUS_TS_TOLERANCE_MS    || 60
 const FETCH_TIMEOUT_MS   = Number(process.env.CONSENSUS_FETCH_TIMEOUT_MS   || 10_000);
 
 const API_FOOTBALL_KEY  = process.env.API_FOOTBALL_KEY;
-const API_FOOTBALL_HOST = process.env.API_FOOTBALL_HOST || 'api-football-v1.p.rapidapi.com';
+const API_FOOTBALL_HOST = process.env.API_FOOTBALL_HOST || 'v3.football.api-sports.io';
 const ODDS_API_KEY      = (process.env.ODDS_API_KEY || '').trim();
 
 /* ============================================================
@@ -174,9 +174,7 @@ async function fetchStatusSource() {
   }
   // Reusa o cache/quota do serviço centralizado (chamada compartilhada
   // com events e com live.js — o dedup in-flight garante 1 round-trip).
-  // `aggregate:false` força failover sequencial — não faz sentido agregar
-  // aqui porque o consensus já compara source-by-source.
-  const response = await apiFootball.getLiveFixtures({ aggregate: false });
+  const response = await apiFootball.getLiveFixtures();
   const out = new Map();
   for (const fx of response || []) {
     const status = fx?.fixture?.status?.short;
@@ -198,7 +196,7 @@ async function fetchEventsSource() {
     console.warn('[CONSENSUS] API_FOOTBALL não configurada — source events vazia (sem HTTP)');
     return new Map();
   }
-  const response = await apiFootball.getLiveFixtures({ aggregate: false });
+  const response = await apiFootball.getLiveFixtures();
   const out = new Map();
   for (const fx of response || []) {
     const elapsed = fx?.fixture?.status?.elapsed;

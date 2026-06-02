@@ -981,7 +981,7 @@ function buildHints(breakdown) {
   const not = breakdown['not-enriched']?.count || 0;
   const ns  = breakdown['no-stats']?.count || 0;
   if ((not + ns) / inP > 0.7) {
-    hints.push(`> ${Math.round((not + ns) * 100 / inP)}% dos jogos não estão enriquecidos. Provider atual provavelmente é FREE (sem stats). Ative TEST_MODE ou use API-Sports/SofaScore.`);
+    hints.push(`> ${Math.round((not + ns) * 100 / inP)}% dos jogos não estão enriquecidos. Verifique a quota da API-Football ou ative ENRICH_ENABLED.`);
   }
   if ((breakdown['minute-out-of-range']?.count || 0) / Math.max(inP, 1) > 0.4) {
     hints.push('> 40% dos jogos caem fora da janela 20-85 min. Considere ajustar BET_SIGNAL_MIN_MINUTE/MAX_MINUTE.');
