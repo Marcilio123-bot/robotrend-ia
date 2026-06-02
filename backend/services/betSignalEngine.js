@@ -67,6 +67,7 @@ const TICK_MS        = Number(process.env.BET_SIGNAL_TICK_MS         || 90_000);
 
 // === MODOS DIAGNÓSTICO ===========================================
 const DEBUG_MODE     = String(process.env.BET_SIGNAL_DEBUG     || 'false').toLowerCase() === 'true';
+const PIPELINE_LOG   = DEBUG_MODE || String(process.env.LIVE_SIGNAL_DEBUG || 'false').toLowerCase() === 'true';
 const TEST_MODE      = String(process.env.BET_SIGNAL_TEST_MODE || 'false').toLowerCase() === 'true';
 const TEST_MIN_CONF  = Number(process.env.BET_SIGNAL_TEST_MIN_CONFIDENCE || 70);
 
@@ -729,7 +730,19 @@ function emit(signal) {
   });
   // Atualiza melhor aposta do momento (apenas premium concorre)
   if (signal.tier === 'premium') refreshBestSignal(signal);
-  // Emite no event bus — footballRealtime broadcasta para `/football` socket.
+  const socketPayload = {
+    type: signal.type,
+    market: signal.market,
+    prediction: signal.prediction,
+    confidence: signal.confidence,
+    oddEstimated: signal.oddEstimated,
+    matchId: signal.matchId,
+    home: signal.match?.home,
+    away: signal.match?.away,
+    minute: signal.match?.minute,
+  };
+  console.log('[LIVE SOCKET EMIT] payload', socketPayload);
+  // Emite no event bus — footballRealtime broadcasta para dashboard (signal:new).
   events.emit('signal:new', signal);
 }
 
@@ -758,6 +771,31 @@ function dropAndLog(stage, m, extra = {}) {
   if (DEBUG_MODE) {
     log.info('bet signal DROP', { stage, match: matchSummary(m), ...extra });
   }
+  if (PIPELINE_LOG) {
+    const label = matchSummary(m);
+    console.log(`[LIVE SIGNAL DROP] ${stage} | ${label.label} | ${extra.reason || extra.prediction || JSON.stringify(extra).slice(0, 120)}`);
+  }
+}
+
+/**
+ * Fallback LOCAL (zero API): placar/minuto → stats mínimos para o engine
+ * analisar. Não altera thresholds de aposta — só destrava ENRICH_ENABLED=false.
+ */
+function ensureMinimalMatchStats(m) {
+  if (TEST_MODE || !m) return;
+  if (m.enriched && m.stats && !m.enrichedPartial) return;
+  if (m.enriched && m.stats) return;
+  try {
+    const { applyMinimalEnrichment } = require('./fixtureNormalizer');
+    applyMinimalEnrichment(m);
+    const id = String(m.fixtureId || m.id || '');
+    if (id) {
+      try {
+        const poller = getPoller();
+        poller.cache?.set?.(id, m);
+      } catch (_) { /* poller opcional */ }
+    }
+  } catch (_) { /* defensivo */ }
 }
 
 function processMatch(m) {
@@ -769,6 +807,7 @@ function processMatch(m) {
   // Em TEST_MODE processamos qualquer fixture (mesmo sem enriquecimento)
   // para o usuário ver SE alguma coisa estaria sendo gerada.
   if (!TEST_MODE) {
+    ensureMinimalMatchStats(m);
     if (!m.enriched) { dropAndLog('not-enriched', m); return; }
     if (!m.stats)    { dropAndLog('no-stats', m); return; }
   } else {
@@ -845,20 +884,53 @@ let lastTickAt = null;
 let lastTickSummary = null;
 
 function tick() {
-  if (!ENABLED) return;
+  if (!ENABLED) {
+    console.log('[LIVE DEBUG] pipeline skipped — BET_SIGNAL_ENABLED=false');
+    return;
+  }
   const t0 = Date.now();
   resetTickFunnel();
+  console.log('[LIVE DEBUG] pipeline start');
   try {
     const poller = getPoller();
     const matches = poller.getMatches();
+    const enrichedCount = matches.filter((m) => m?.enriched && m?.stats).length;
+    console.log('[LIVE DEBUG] input matches count', matches.length);
+    console.log('[LIVE DEBUG] enriched matches count', enrichedCount);
+    if (PIPELINE_LOG) {
+      console.log('[LIVE DEBUG] thresholds', {
+        minConf: MIN_CONFIDENCE,
+        odd: [MIN_ODD, MAX_ODD],
+        minute: [MIN_MINUTE, MAX_MINUTE],
+      });
+    }
     for (const m of matches) processMatch(m);
   } catch (e) {
     log.error('tick error', { err: e.message });
+    console.log('[LIVE DEBUG] pipeline error', e.message);
   } finally {
     const dur = Date.now() - t0;
     m_lat.observe(dur);
     lastTickAt = Date.now();
     lastTickSummary = { ...tickFunnel, durationMs: dur };
+    const notEnriched = tickFunnel['not-enriched'] || 0;
+    const noStats = tickFunnel['no-stats'] || 0;
+    const lowConf = tickFunnel['low-confidence'] || 0;
+    const emitted = tickFunnel.emitted || 0;
+    console.log('[LIVE DEBUG] dropped not-enriched count', notEnriched);
+    console.log('[LIVE DEBUG] dropped no-stats count', noStats);
+    console.log('[LIVE DEBUG] dropped low-confidence count', lowConf);
+    console.log('[LIVE DEBUG] emitted signals count', emitted);
+    console.log('[LIVE DEBUG] pipeline end', {
+      durationMs: dur,
+      minuteOutOfRange: tickFunnel['minute-out-of-range'] || 0,
+      oddOutOfRange: tickFunnel['odd-out-of-range'] || 0,
+      cooldown: tickFunnel.cooldown || 0,
+      computeNull: tickFunnel['compute-null'] || 0,
+      recentBuffer: recent.length,
+      socketEvent: 'signal:new',
+      payloadType: 'bet:opportunity',
+    });
     if (DEBUG_MODE || TEST_MODE) {
       log.info('bet signal tick summary', {
         mode: TEST_MODE ? 'TEST' : (DEBUG_MODE ? 'DEBUG' : 'PROD'),
@@ -876,9 +948,14 @@ function tick() {
 }
 
 function start() {
-  if (!ENABLED) { log.warn('betSignalEngine desabilitado (BET_SIGNAL_ENABLED=false)'); return; }
+  if (!ENABLED) {
+    log.warn('betSignalEngine desabilitado (BET_SIGNAL_ENABLED=false)');
+    console.log('[LIVE DEBUG] betSignalEngine NOT started — BET_SIGNAL_ENABLED=false');
+    return;
+  }
   if (started) return;
   started = true;
+  console.log('[LIVE DEBUG] betSignalEngine started', { tickMs: TICK_MS, minConfidence: MIN_CONFIDENCE });
   log.info('betSignalEngine started', {
     mode: TEST_MODE ? 'TEST' : (DEBUG_MODE ? 'DEBUG' : 'PROD'),
     tickMs: TICK_MS,

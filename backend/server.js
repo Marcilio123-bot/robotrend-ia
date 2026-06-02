@@ -999,6 +999,17 @@ io.on('connection', async (socket) => {
   socket.emit('analyses:update', snap.analyses);
   socket.emit('stats:update', await db.getStats());
   socket.emit('signals:list', await db.listSignals(20));
+  // Snapshot do betSignalEngine (painel "Sinais em tempo real" / #live-signals).
+  try {
+    const betRecent = betSignalEngine.listRecent({ limit: 12, minConfidence: 0 });
+    socket.emit('bet-signals:list', betRecent);
+    console.log('[LIVE SOCKET EMIT] bet-signals:list', { count: betRecent.length, socketId: socket.id });
+    if (betRecent.length) {
+      log.debug('ws bet-signals:list snapshot', { count: betRecent.length, socketId: socket.id });
+    }
+  } catch (e) {
+    log.warn('ws bet-signals:list snapshot falhou', { err: e.message });
+  }
 
   socket.on('disconnect', () => {
     metrics.recordWsDisconnect(socket.user);

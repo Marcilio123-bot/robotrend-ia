@@ -409,6 +409,13 @@ function attachFootballRealtime(io, opts = {}) {
   }
 
   events.on('signal:new', (signal) => {
+    console.log('[LIVE SOCKET EMIT] broadcast signal:new', {
+      type: signal?.type,
+      market: signal?.market,
+      confidence: signal?.confidence,
+      matchId: signal?.matchId,
+      empty: !signal || (!signal.market && !signal.prediction),
+    });
     emitTieredToSockets('lobby', 'signal:new', signal);
     const fr = `fixture:${signal.matchId}`;
     if (fr) emitTieredToSockets(fr, 'signal:new', signal);

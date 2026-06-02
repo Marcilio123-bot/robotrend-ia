@@ -407,10 +407,49 @@ class FixtureEnricher {
   }
 }
 
+/**
+ * Bootstrap LOCAL (zero API) para o feed de sinais ao vivo.
+ * Quando ENRICH_ENABLED=false o enricher automático não roda; sem stats o
+ * betSignalEngine descarta 100% dos jogos. Esta função aplica
+ * applyMinimalEnrichment nos top-N jogos live para destravar o pipeline
+ * sem alterar regras de aposta (dados reais de placar/minuto).
+ */
+const BET_FEED_BOOTSTRAP_TOP = Number(process.env.BET_SIGNAL_BOOTSTRAP_TOP || 10);
+
+function sortMatchesForBootstrap(matches) {
+  return matches.slice().sort((a, b) => {
+    const ga = (a.score?.home || 0) + (a.score?.away || 0);
+    const gb = (b.score?.home || 0) + (b.score?.away || 0);
+    if (gb !== ga) return gb - ga;
+    return (b.minute || 0) - (a.minute || 0);
+  });
+}
+
+function bootstrapMinimalForBetFeed(poller, matches, limit = BET_FEED_BOOTSTRAP_TOP) {
+  if (!poller || !matches?.length || limit <= 0) return { applied: 0, candidates: 0 };
+  const top = sortMatchesForBootstrap(matches).slice(0, limit);
+  let applied = 0;
+  for (const m of top) {
+    const id = String(m.fixtureId || m.id);
+    if (!id) continue;
+    const cached = poller.getMatch?.(id) || poller.cache?.get?.(id) || m;
+    // Não sobrescreve enrichment completo da API (stats reais).
+    if (cached.enriched && cached.stats && !cached.enrichedPartial) continue;
+    try {
+      applyMinimalEnrichment(cached);
+      poller.cache?.set?.(id, cached);
+      applied++;
+    } catch (e) {
+      log.warn('bet-feed minimal bootstrap fail', { id, err: e.message });
+    }
+  }
+  return { applied, candidates: top.length };
+}
+
 let _singleton = null;
 function getEnricher() {
   if (!_singleton) _singleton = new FixtureEnricher();
   return _singleton;
 }
 
-module.exports = { FixtureEnricher, getEnricher };
+module.exports = { FixtureEnricher, getEnricher, bootstrapMinimalForBetFeed };

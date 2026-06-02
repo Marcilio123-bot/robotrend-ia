@@ -837,7 +837,13 @@ class LiveFootballPoller {
       try { events.emit('matches:update', payload); } catch (_) {}
 
       try {
-        const { getEnricher } = require('../services/fixtureEnricher');
+        const { getEnricher, bootstrapMinimalForBetFeed } = require('../services/fixtureEnricher');
+        // Feed de sinais: bootstrap local SEMPRE (zero API) para jogos sem stats.
+        // Com ENRICH_ENABLED=true o enricher também enfileira stats reais depois.
+        const boot = bootstrapMinimalForBetFeed(this, matches);
+        if (boot.applied > 0) {
+          console.log('[LIVE DEBUG] minimal stats bootstrap (local, zero API)', boot);
+        }
         getEnricher().bootstrapTop(matches);
       } catch (_) { /* enricher opcional */ }
 

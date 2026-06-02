@@ -64,9 +64,11 @@ class RobotrendBot {
     this.log.info('scanner started', { interval: SCAN_INTERVAL, minScore: this.minScore,
       liveEnabled: this.liveEnabled, preliveEnabled: this.preliveEnabled });
     if (this.liveEnabled) {
+      console.log('[LIVE DEBUG] bot live scanner started (runOnce interval)', { intervalMs: SCAN_INTERVAL });
       this.runOnce().catch((e) => this.log.error('tick error', { err: e.message }));
     } else {
       this.log.warn('[live] scanner iniciado em modo PAUSADO (LIVE_ENABLED=false)');
+      console.log('[LIVE DEBUG] bot live scanner PAUSED — LIVE_ENABLED=false');
     }
     this.timer = setInterval(
       () => this.runOnce().catch((e) => this.log.error('tick error', { err: e.message })),

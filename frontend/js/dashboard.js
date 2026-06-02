@@ -968,11 +968,22 @@
       const min = isMaster ? 0 : 70;
       const limit = isMaster ? 12 : 6;
       const r = await fetch(`/api/football/bet-signals?limit=${limit}&minConfidence=${min}`);
-      if (!r.ok) return;
+      if (!r.ok) {
+        console.warn('[LIVE SIGNAL REST] HTTP', r.status);
+        return;
+      }
       const data = await r.json();
-      lastBetSignals = data.signals || [];
-      renderBetSignals();
-    } catch (_) {}
+      console.log('[LIVE SIGNAL REST]', { count: data?.signals?.length ?? 0, tier: data?.tier });
+      const incoming = data.signals || [];
+      if (incoming.length) {
+        lastBetSignals = incoming;
+        renderBetSignals();
+      } else if (!lastBetSignals.length) {
+        renderBetSignals();
+      }
+    } catch (err) {
+      console.error('[LIVE SIGNAL REST ERROR]', err);
+    }
   }
 
   /* ============================================================
@@ -1123,8 +1134,18 @@
   });
   socket.on('signals:list', (l) => {
     window.RobotrendHeartbeat?.markSocketActivity('signals:list');
+    console.log('[LIVE SIGNAL SOCKET] signals:list (histórico DB)', Array.isArray(l) ? l.length : 0);
     lastSignals = l || [];
     renderSignals();
+  });
+
+  // Snapshot inicial do betSignalEngine ao conectar (painel #live-signals).
+  socket.on('bet-signals:list', (signals) => {
+    window.RobotrendHeartbeat?.markSocketActivity('bet-signals:list');
+    console.log('[LIVE SIGNAL SOCKET] bet-signals:list', Array.isArray(signals) ? signals.length : signals);
+    if (!Array.isArray(signals) || !signals.length) return;
+    lastBetSignals = signals;
+    renderBetSignals();
   });
 
   // prelive:update — broadcast do bot.runPrelive() (scheduler ou REST).
@@ -1141,6 +1162,15 @@
   //   - FREE recebe payload sem premiumInsight (locked=true)
   //   - PREMIUM recebe payload completo + sound + notification
   socket.on('signal:new', (signal) => {
+    console.log('[LIVE SIGNAL SOCKET]', signal);
+    console.log('[LIVE SIGNAL SOCKET] signal:new', {
+      type: signal?.type,
+      market: signal?.market,
+      confidence: signal?.confidence,
+      home: signal?.match?.home || signal?.home,
+      away: signal?.match?.away || signal?.away,
+    });
+    window.RobotrendHeartbeat?.markSocketActivity('signal:new');
     const isPrem = isPremiumUser();
     if (signal?.type === 'bet:opportunity') {
       lastBetSignals.unshift(signal);
@@ -1212,7 +1242,7 @@
   // "Dados indisponíveis no momento." em vez de ficar piscando vazio.
   detectFootballAvailability().then(() => loadLiveFromApi());
   loadSignals();
-  loadBetSignals();
+  loadBetSignals();                                  // boot: REST fallback do painel #live-signals
   loadBestSignal();
   loadPrelive();                                     // boot: carrega snapshot inicial via REST (se autorizado)
   // Garantia extra: se o script carregar antes do DOM estar pronto,
@@ -1220,6 +1250,7 @@
   // refaz a chamada REST, useful em cold-start lento.
   window.addEventListener('load', () => {
     try { loadPrelive(); } catch (e) { console.error('[PRELIVE FRONT] load handler error:', e); }
+    try { loadBetSignals(); } catch (e) { console.error('[LIVE SIGNAL FRONT] load handler error:', e); }
   });
   setInterval(loadLiveFromApi, 30_000);              // backup REST do poller football
   setInterval(loadBetSignals,  60_000);              // backup polling caso socket caia
