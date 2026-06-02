@@ -40,6 +40,34 @@ services:
         value: "80"
       - key: LIVE_SCAN_INTERVAL_MS
         value: "15000"
+      # ----------------------------------------------------------
+      # API-FOOTBALL — economia de quota (plano Free = 100 req/dia)
+      # ----------------------------------------------------------
+      # Provider singular usado pelo poller para escolher o intervalo
+      # default (apisports => 5min). Sem isso o default cai p/ 15s.
+      - key: FOOTBALL_PROVIDER
+        value: apisports
+      # Intervalo do poller central (ms). 300000 = 5 min => 288 req/dia.
+      - key: FOOTBALL_POLL_INTERVAL_MS
+        value: "300000"
+      # TTL do cache fresh do endpoint /fixtures?live=all.
+      # 300000ms = 5 min: alinhado com o intervalo do poller.
+      - key: AF_TTL_LIVE
+        value: "300000"
+      # Bot consensus desligado: NÃO repete getLiveFixtures a cada 15s.
+      # Modos válidos: strict | relaxed | off. Aqui ficamos em off.
+      - key: MATCH_CONSENSUS_MODE
+        value: "off"
+      # FixtureEnricher automático desligado para não gastar 2 req por
+      # fixture (stats+events). Quando alguém abre uma fixture na UI o
+      # enricher é chamado sob demanda separadamente — esse flag corta
+      # apenas o pipeline automático (queueFromPoller / autoEnrich).
+      - key: ENRICH_ENABLED
+        value: "false"
+      # Apenas UM processo deve rodar o poller. Como NÃO existe service
+      # `type: worker` neste blueprint, o web é o único poller.
+      - key: FOOTBALL_POLLER_ENABLED
+        value: "true"
       - key: BCRYPT_ROUNDS
         value: "12"
       - key: RATE_LIMIT_WINDOW_MS

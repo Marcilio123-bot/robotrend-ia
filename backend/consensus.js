@@ -63,17 +63,38 @@ const STRICT_REAL_ONLY = (() => {
 /* ============================================================
    MATCH_CONSENSUS_MODE — strict | relaxed | off
    ------------------------------------------------------------
-   Default:
-     - STRICT  se STRICT_REAL_ONLY=true (compat com setup antigo)
-     - RELAXED em qualquer outro caso (segue a recomendação do user)
+   Default = OFF.
+
+   Por quê?
+     A engine de consensus chama apiFootball.getLiveFixtures DUAS vezes
+     por ciclo do bot (uma para `status`, outra para `events`). Mesmo
+     com dedup de in-flight isso, somado ao poller central, estourava
+     o plano Free (100 req/dia). Em produção com plano Free queremos
+     ZERO HTTP extra do consensus — o poller já é fonte de verdade.
+
+   Para reativar:
+     MATCH_CONSENSUS_MODE=relaxed   (recomendado em planos pagos)
+     MATCH_CONSENSUS_MODE=strict    (Signal Mode com cash bot)
+
+   Kill-switch independente do modo (belt-and-suspenders):
+     CONSENSUS_API_DISABLED=true    força fetchStatusSource e
+                                    fetchEventsSource a devolverem
+                                    Map vazio sem chamar a API.
    ============================================================ */
 const VALID_MODES = new Set(['strict', 'relaxed', 'off']);
 const CONSENSUS_MODE = (() => {
   const raw = String(process.env.MATCH_CONSENSUS_MODE || '').trim().toLowerCase();
   if (VALID_MODES.has(raw)) return raw;
-  return STRICT_REAL_ONLY ? 'strict' : 'relaxed';
+  return 'off';
 })();
-console.log(`[CONSENSUS] modo ativo: ${CONSENSUS_MODE.toUpperCase()} (env MATCH_CONSENSUS_MODE=${process.env.MATCH_CONSENSUS_MODE || '(default)'})`);
+const CONSENSUS_API_DISABLED = (() => {
+  const raw = String(process.env.CONSENSUS_API_DISABLED || '').trim().toLowerCase();
+  if (raw === 'true' || raw === '1' || raw === 'yes') return true;
+  if (raw === 'false' || raw === '0' || raw === 'no') return false;
+  // Default segue o modo: off => API bloqueada (não há razão para chamar)
+  return CONSENSUS_MODE === 'off';
+})();
+console.log(`[CONSENSUS] modo ativo: ${CONSENSUS_MODE.toUpperCase()} (env MATCH_CONSENSUS_MODE=${process.env.MATCH_CONSENSUS_MODE || '(default)'}) · apiDisabled=${CONSENSUS_API_DISABLED}`);
 
 // Retries default rebaixado para 1: apiFootball já faz retry interno
 // com backoff exponencial, então retentar aqui só gerava 3x mais log
@@ -141,6 +162,12 @@ async function withRetry(name, fn, retries = RETRIES, baseDelay = RETRY_DELAY_MS
    Cada um retorna um Map<matchKey, { status, timestamp, raw }>
    ============================================================ */
 async function fetchStatusSource() {
+  if (CONSENSUS_API_DISABLED) {
+    // Hard guard: NUNCA bater na API quando o consensus está em OFF
+    // (ou quando o operador explicitamente desligou). Garante que
+    // este módulo não consume quota da API-Football.
+    return new Map();
+  }
   if (!apiFootball.isConfigured()) {
     console.warn('[CONSENSUS] API_FOOTBALL não configurada — source status vazia (sem HTTP)');
     return new Map();
@@ -164,6 +191,9 @@ async function fetchStatusSource() {
 }
 
 async function fetchEventsSource() {
+  if (CONSENSUS_API_DISABLED) {
+    return new Map();
+  }
   if (!apiFootball.isConfigured()) {
     console.warn('[CONSENSUS] API_FOOTBALL não configurada — source events vazia (sem HTTP)');
     return new Map();
@@ -466,6 +496,7 @@ module.exports = {
   withRetry,
   STRICT_REAL_ONLY,
   CONSENSUS_MODE,
+  CONSENSUS_API_DISABLED,
   TS_TOLERANCE_MS,
   RETRIES,
   SOURCE_NAMES,

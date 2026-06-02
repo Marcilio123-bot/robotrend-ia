@@ -284,6 +284,81 @@ app.get('/api/system/status', (req, res) => {
   res.json(bot.systemStatus());
 });
 
+/* ============================================================
+   DEBUG — diagnóstico do consumo da API-Football
+   ------------------------------------------------------------
+   Endpoint público (read-only) para inspecionar:
+     - status() do client central (host, baseURL, breaker, cache)
+     - quota() devolvido pelos headers x-ratelimit-* (último response)
+     - safeMode() snapshot
+     - remainingRatio() — fração de quota restante (header OU bucket local)
+     - knobs de quota carregados do env (consensus, poller, enricher, TTL)
+     - snapshot do quotaMonitor + poller
+   ============================================================ */
+app.get('/api/debug/apifootball', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  let af = null;
+  try { af = require('./services/apiFootball'); } catch (_) { af = null; }
+  let consensus = null;
+  try { consensus = require('./consensus'); } catch (_) { consensus = null; }
+
+  const safeCall = (fn, fallback = null) => {
+    try { return typeof fn === 'function' ? fn() : fallback; }
+    catch (e) { return { error: e.message }; }
+  };
+
+  const env = {
+    API_FOOTBALL_HOST: process.env.API_FOOTBALL_HOST || null,
+    API_FOOTBALL_KEY_present: Boolean(process.env.API_FOOTBALL_KEY),
+    API_FOOTBALL_KEY_length:  (process.env.API_FOOTBALL_KEY || '').length,
+    FOOTBALL_PROVIDER: process.env.FOOTBALL_PROVIDER || null,
+    FOOTBALL_PROVIDER_PRIORITY: process.env.FOOTBALL_PROVIDER_PRIORITY || null,
+    FOOTBALL_POLL_INTERVAL_MS: process.env.FOOTBALL_POLL_INTERVAL_MS || null,
+    FOOTBALL_POLLER_ENABLED: process.env.FOOTBALL_POLLER_ENABLED || null,
+    AF_TTL_LIVE: process.env.AF_TTL_LIVE || null,
+    LIVE_SCAN_INTERVAL_MS: process.env.LIVE_SCAN_INTERVAL_MS || null,
+    MATCH_CONSENSUS_MODE: process.env.MATCH_CONSENSUS_MODE || null,
+    CONSENSUS_API_DISABLED: process.env.CONSENSUS_API_DISABLED || null,
+    ENRICH_ENABLED: process.env.ENRICH_ENABLED || null,
+    ENRICH_TICK_MS: process.env.ENRICH_TICK_MS || null,
+    POLLER_ENRICH_TOP: process.env.POLLER_ENRICH_TOP || null,
+    API_FOOTBALL_RATE_PER_DAY: process.env.API_FOOTBALL_RATE_PER_DAY || null,
+    API_FOOTBALL_RATE_PER_MIN: process.env.API_FOOTBALL_RATE_PER_MIN || null,
+    NODE_ENV: process.env.NODE_ENV || null,
+  };
+
+  const status      = safeCall(af && af.status);
+  const quota       = safeCall(af && af.quota);
+  const safeMode    = safeCall(af && af.safeMode);
+  const remainingRatio = safeCall(af && af.remainingRatio);
+
+  let pollerSnap = null;
+  try { pollerSnap = getPoller().snapshot(); } catch (_) {}
+  let qmSnap = null;
+  try { qmSnap = quotaMonitor.snapshot(); } catch (_) {}
+  let enricherSnap = null;
+  try { enricherSnap = getEnricher().snapshot(); } catch (_) {}
+
+  res.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    env,
+    consensus: consensus ? {
+      mode: consensus.CONSENSUS_MODE,
+      apiDisabled: consensus.CONSENSUS_API_DISABLED,
+      sources: consensus.SOURCE_NAMES,
+      oddsEnabled: consensus.ODDS_ENABLED,
+    } : null,
+    status,
+    quota,
+    safeMode,
+    remainingRatio,
+    poller: pollerSnap,
+    enricher: enricherSnap,
+    quotaMonitor: qmSnap,
+  });
+});
+
 app.post('/api/live/toggle', auth.requireSystemToggle(db), (req, res) => {
   const desired = req.body && typeof req.body.enabled === 'boolean' ? req.body.enabled : !bot.liveEnabled;
   const r = bot.setLiveEnabled(desired);
