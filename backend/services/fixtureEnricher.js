@@ -387,6 +387,32 @@ class FixtureEnricher {
           `shotsOnTarget=${(home.shotsOnTarget ?? 0) + (away.shotsOnTarget ?? 0)} ` +
           `dur=${Date.now() - t0}ms events=${Array.isArray(eventsResp) ? eventsResp.length : 0}`
         );
+        // Sample BRUTO do response — primeiro fixture de cada tick (controlado por _firstSampleTs).
+        // Imprime types disponíveis + valores brutos. Útil pra detectar:
+        // (a) array vazio = plano não cobre stats live para essa liga
+        // (b) types diferentes = schema do provider mudou
+        // (c) values null/string = parsing precisa ajustar
+        const now = Date.now();
+        if (!this._lastSampleAt || now - this._lastSampleAt > 60_000) {
+          this._lastSampleAt = now;
+          if (isArr && statsResp.length) {
+            const sample0 = statsResp[0];
+            const types = (sample0?.statistics || []).map((s) => s?.type);
+            console.log(
+              `[STATS FETCH SAMPLE] fixtureId=${id} ` +
+              `team0=${sample0?.team?.name}#${sample0?.team?.id} ` +
+              `typesAvailable=${JSON.stringify(types)} ` +
+              `rawTeam0=${JSON.stringify(sample0).slice(0, 800)}`
+            );
+          } else {
+            console.log(
+              `[STATS FETCH SAMPLE] fixtureId=${id} EMPTY response — provider não retornou stats. ` +
+              `Possíveis causas: (a) plano API-Football não inclui stats live nesta liga; ` +
+              `(b) jogo recém-iniciado, stats ainda não disponíveis; ` +
+              `(c) liga sem cobertura de live stats. Resp bruto: ${JSON.stringify(statsResp).slice(0, 200)}`
+            );
+          }
+        }
       } catch (_) { /* log defensivo — nunca quebrar enrichment */ }
 
       // Garante que temos o match no cache do poller para mesclar

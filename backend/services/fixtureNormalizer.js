@@ -173,6 +173,30 @@ function applyEnrichment(match, statsResp, eventsResp) {
     passAccuracy: { home: passAccHome, away: passAccAway },
   };
 
+  // [ENRICH APPLY] — confirma que applyEnrichment FULL rodou e quais
+  // números foram extraídos da resposta da API. Se aqui vier tudo 0
+  // mas statsResp tinha array, o problema é o `statName()` (ex.: nome
+  // do stat mudou no provider) OU o teamId não bateu.
+  try {
+    const respLen = Array.isArray(statsResp) ? statsResp.length : 0;
+    console.log(
+      `[ENRICH APPLY] fixtureId=${match.fixtureId || match.id} ` +
+      `respTeams=${respLen} ` +
+      `corners={h:${cornersHome},a:${cornersAway},t:${totalCorners}} ` +
+      `shots={h:${shotsHome},a:${shotsAway},t:${totalShots}} ` +
+      `shotsOnTarget={h:${sotHome},a:${sotAway},t:${totalSot}} ` +
+      `dangerousAttacks={h:${dangHome},a:${dangAway},t:${totalDang}} ` +
+      `possession={h:${possHome},a:${100 - possHome}} ` +
+      `homeId=${homeId} awayId=${awayId} elapsed=${elapsed}`
+    );
+    // Se respTeams > 0 mas todos os totais são 0, dump dos types disponíveis
+    // p/ detectar mudança de schema (ex.: "Corners" em vez de "Corner Kicks").
+    if (respLen > 0 && (totalCorners + totalShots + totalSot + totalDang) === 0) {
+      const types = (statsResp[0]?.statistics || []).map((s) => s?.type).filter(Boolean);
+      console.log(`[ENRICH APPLY] WARN allZero — types disponíveis no response[0]:`, types);
+    }
+  } catch (_) { /* nunca quebrar enrichment por log */ }
+
   match.perMinute = elapsed > 0 ? {
     corners:          +(totalCorners / elapsed).toFixed(3),
     dangerousAttacks: +(totalDang    / elapsed).toFixed(3),
@@ -267,6 +291,18 @@ function applyMinimalEnrichment(match) {
   match.enriched = true;
   match.enrichedPartial = true;
   match.enrichedAt = Date.now();
+
+  // [ENRICH APPLY] — versão MINIMAL (sem API). Confirma explicitamente
+  // que match.stats.corners.total=0 é fruto do fallback minimal e não da
+  // resposta da API. Útil quando ENRICH_ENABLED=false ou safeMode.
+  try {
+    console.log(
+      `[ENRICH APPLY] fixtureId=${match.fixtureId || match.id} mode=MINIMAL ` +
+      `corners={h:0,a:0,t:0} shots={h:0,a:0,t:0} shotsOnTarget={h:0,a:0,t:0} ` +
+      `dangerousAttacks={h:0,a:0,t:0} possession={h:50,a:50} score=${gh}-${ga} min=${min} ` +
+      `(stats reais NÃO foram solicitados — ENRICH_ENABLED=false ou safeMode)`
+    );
+  } catch (_) { /* defensivo */ }
 
   try {
     const { computeInsight } = require('./matchInsights');

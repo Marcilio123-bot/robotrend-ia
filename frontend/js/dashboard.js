@@ -80,7 +80,7 @@
   function mapApiMatchToDashboard(m) {
     if (!m) return null;
     const sc = m.score || { home: 0, away: 0 };
-    return {
+    const mapped = {
       id: String(m.fixtureId || m.id),
       home: m.home || m.teams?.home?.name || '—',
       away: m.away || m.teams?.away?.name || '—',
@@ -96,6 +96,44 @@
       shotsOnTarget: Number(m.stats?.shotsOnTarget?.total ?? m.shotsOnTarget ?? 0),
       provider: m.provider,
     };
+
+    /* ============================================================
+       [FRONTEND MATCH] — debug temporário. Imprime no máximo 3 matches
+       a cada 30s para evitar floodar o console. Mostra o que o
+       BACKEND mandou (m.stats raw) vs o que o frontend MAPEOU
+       (mapped.corners, mapped.shots…). Se backend tem números mas
+       mapped tem 0, o bug está nesse mapper.
+       Desligue com window.__ROBOT_DEBUG_FRONTEND_MATCH = false.
+       ============================================================ */
+    try {
+      const dbg = window.__ROBOT_DEBUG_FRONTEND_MATCH !== false;
+      if (dbg) {
+        window.__ROBOT_FRONT_MATCH_LOG = window.__ROBOT_FRONT_MATCH_LOG || { count: 0, ts: 0 };
+        const log = window.__ROBOT_FRONT_MATCH_LOG;
+        const now = Date.now();
+        if (now - log.ts > 30_000) { log.ts = now; log.count = 0; }
+        if (log.count < 3) {
+          log.count++;
+          console.log('[FRONTEND MATCH] fixtureId=' + mapped.id, {
+            home: mapped.home,
+            away: mapped.away,
+            minute: mapped.minute,
+            backendStats: m.stats || null,
+            backendShortcuts: { corners: m.corners, shots: m.shots, sot: m.shotsOnTarget, dang: m.dangerousAttacks },
+            frontendMapped: {
+              corners: mapped.corners,
+              shots: mapped.shots,
+              shotsOnTarget: mapped.shotsOnTarget,
+              dangerousAttacks: mapped.dangerousAttacks,
+            },
+            enriched: m.enriched,
+            enrichedPartial: m.enrichedPartial,
+          });
+        }
+      }
+    } catch (_) { /* nunca quebrar render */ }
+
+    return mapped;
   }
 
   /**

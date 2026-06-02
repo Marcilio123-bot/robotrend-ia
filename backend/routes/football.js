@@ -1089,6 +1089,99 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   });
 
   /**
+   * GET /api/football/bet-signals/diag/stats/:id
+   *
+   * Dump CRU da resposta /fixtures/statistics para um fixture específico.
+   * Útil quando os logs [STATS FETCH] mostram array vazio e queremos ver
+   * exatamente o que a API-Football devolveu (com todos os types
+   * disponíveis), sem precisar acessar o backend manualmente.
+   *
+   * Auth: requireAuth(db) OU ?token=$METRICS_TOKEN
+   *
+   * Resposta:
+   *   {
+   *     ok: true,
+   *     fixtureId, durationMs,
+   *     response: <bruto da API-Football>,           // truncado a 8KB
+   *     extracted: { corners, shots, sot, dang, … }, // o que applyEnrichment extrairia
+   *     typesByTeam: [['Corner Kicks','Total Shots',…], […]]
+   *   }
+   */
+  router.get('/bet-signals/diag/stats/:id', diagAuth, asyncHandler(async (req, res) => {
+    noStore(res);
+    const id = req.params.id;
+    const t0 = Date.now();
+    let response = null;
+    let error = null;
+    try {
+      const apiFootballMod = require('../services/apiFootball');
+      response = await apiFootballMod.getFixtureStatistics(id);
+    } catch (e) {
+      error = { code: e.code, message: e.message, status: e.status };
+    }
+    const durMs = Date.now() - t0;
+
+    // Espelha exatamente a lógica do fixtureNormalizer.applyEnrichment
+    function findVal(team, type) {
+      const row = (team?.statistics || []).find((s) => s?.type === type);
+      const v = row?.value;
+      if (v == null) return 0;
+      if (typeof v === 'string' && v.endsWith('%')) return Number(v.slice(0, -1)) || 0;
+      return Number(v) || 0;
+    }
+    const teams = Array.isArray(response) ? response : [];
+    const t0t = teams[0] || {};
+    const t1t = teams[1] || {};
+    const extracted = {
+      teams: teams.length,
+      home: {
+        teamId: t0t?.team?.id, teamName: t0t?.team?.name,
+        corners: findVal(t0t, 'Corner Kicks'),
+        shots: findVal(t0t, 'Total Shots'),
+        shotsOnTarget: findVal(t0t, 'Shots on Goal'),
+        shotsOffTarget: findVal(t0t, 'Shots off Goal'),
+        dangerousAttacks: findVal(t0t, 'Dangerous Attacks'),
+        attacks: findVal(t0t, 'Attacks'),
+        possession: findVal(t0t, 'Ball Possession'),
+        yellow: findVal(t0t, 'Yellow Cards'),
+        red: findVal(t0t, 'Red Cards'),
+        fouls: findVal(t0t, 'Fouls'),
+        passAccuracy: findVal(t0t, 'Passes %'),
+      },
+      away: {
+        teamId: t1t?.team?.id, teamName: t1t?.team?.name,
+        corners: findVal(t1t, 'Corner Kicks'),
+        shots: findVal(t1t, 'Total Shots'),
+        shotsOnTarget: findVal(t1t, 'Shots on Goal'),
+        shotsOffTarget: findVal(t1t, 'Shots off Goal'),
+        dangerousAttacks: findVal(t1t, 'Dangerous Attacks'),
+        attacks: findVal(t1t, 'Attacks'),
+        possession: findVal(t1t, 'Ball Possession'),
+        yellow: findVal(t1t, 'Yellow Cards'),
+        red: findVal(t1t, 'Red Cards'),
+        fouls: findVal(t1t, 'Fouls'),
+        passAccuracy: findVal(t1t, 'Passes %'),
+      },
+    };
+    const typesByTeam = teams.map((t) => (t?.statistics || []).map((s) => s?.type));
+
+    res.json({
+      ok: !error,
+      fixtureId: id,
+      durationMs: durMs,
+      apiResponse: response,
+      apiResponseTruncated: JSON.stringify(response || null).length > 8192,
+      extracted,
+      typesByTeam,
+      error,
+      hint: !error && (!teams.length || (!extracted.home.corners && !extracted.away.corners
+        && !extracted.home.shots && !extracted.away.shots))
+        ? 'API respondeu mas extracted está zerado/vazio. Veja typesByTeam para confirmar se o schema mudou.'
+        : null,
+    });
+  }));
+
+  /**
    * GET /api/football/bet-signals/debug
    *  Diagnóstico do pipeline de sinais (admin):
    *    - funil completo (input → enriched → minute → compute → conf → odd → cooldown → emitted)
