@@ -352,6 +352,21 @@ class FixtureEnricher {
       m_skip.inc(1, { reason: 'api-not-configured' });
       return { ok: false, reason: 'api-not-configured' };
     }
+    // [ENRICH CLEANUP] Valida que a fixture ainda existe no cache do poller
+    // ANTES de gastar chamadas de API. Jogos encerrados/purgados devolvem
+    // getMatch=null; sem este guard, getFixtureStatistics + getFixtureEvents
+    // seriam chamados (2 calls) só para descobrir o no-match logo depois.
+    // Remove também da systemQueue + lastEnrichedAt para não reentrar como
+    // pending a cada tick (o enricher não escuta match:remove).
+    const sid = String(id);
+    if (!this.poller?.getMatch?.(sid)) {
+      this.systemQueue.delete(sid);
+      this.lastEnrichedAt.delete(sid);
+      this.inflight.delete(sid);
+      m_skip.inc(1, { reason: 'no-match' });
+      console.log(`[ENRICH CLEANUP] fixtureId=${id} removed reason=no-match`);
+      return { ok: false, reason: 'no-match-in-poller' };
+    }
     this.inflight.add(id);
     const t0 = Date.now();
     try {
@@ -415,10 +430,15 @@ class FixtureEnricher {
         }
       } catch (_) { /* log defensivo — nunca quebrar enrichment */ }
 
-      // Garante que temos o match no cache do poller para mesclar
+      // Garante que temos o match no cache do poller para mesclar.
+      // Race: a fixture pode ter sido purgada (jogo encerrado) entre o guard
+      // inicial e o retorno da API. Limpa fila + cooldown para não reentrar.
       let match = this.poller?.getMatch?.(id);
       if (!match) {
+        this.systemQueue.delete(String(id));
+        this.lastEnrichedAt.delete(String(id));
         m_skip.inc(1, { reason: 'no-match' });
+        console.log(`[ENRICH CLEANUP] fixtureId=${id} removed reason=no-match`);
         return { ok: false, reason: 'no-match-in-poller' };
       }
 

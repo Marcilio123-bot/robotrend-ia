@@ -118,6 +118,38 @@ const cooldowns = new Map();  // `${matchId}:${market}` -> ts
 const recent = [];            // ring buffer dos últimos sinais
 
 /* ============================================================
+   MEMÓRIA PERMANENTE POR FIXTURE — "1 sinal por mercado por jogo"
+   ------------------------------------------------------------
+   Uma vez que um mercado é EMITIDO para uma fixture, ele NUNCA mais é
+   reemitido para essa fixture (mais forte que o cooldown, que é temporal).
+   Mercados opostos também travam: emitido um lado, o outro fica proibido.
+     emittedMarketsByFixture: { [fixtureId]: { over25, under25, btts,
+                                               cornersOver, cornersUnder } }
+   ============================================================ */
+const emittedMarketsByFixture = new Map();
+const OPPOSITE_MARKET_KEY = {
+  over25:       'under25',
+  under25:      'over25',
+  cornersOver:  'cornersUnder',
+  cornersUnder: 'cornersOver',
+  // 'btts' não tem chave oposta: Sim e Não compartilham a key 'btts',
+  // então o gate already-emitted já cobre "BTTS SIM depois BTTS NÃO".
+};
+function getEmittedMarkets(fixtureId) {
+  const id = String(fixtureId);
+  let rec = emittedMarketsByFixture.get(id);
+  if (!rec) {
+    rec = { over25: false, under25: false, btts: false, cornersOver: false, cornersUnder: false };
+    emittedMarketsByFixture.set(id, rec);
+  }
+  return rec;
+}
+function markMarketEmitted(fixtureId, marketKey) {
+  if (!marketKey) return;
+  getEmittedMarkets(fixtureId)[marketKey] = true;
+}
+
+/* ============================================================
    DIAGNÓSTICO — contadores por estágio + amostra de descartes
    ------------------------------------------------------------
    Cada tick zera `tickFunnel`; os totais acumulados ficam em `funnelTotals`.
@@ -1361,14 +1393,19 @@ function processMatch(m) {
   recordFunnel('computed');
   m_processed.inc();
 
-  // === 5 mercados ativos (WIN/1X2 removido por decisão de produto) ===
+  // === Mercados independentes (corners over/under + BTTS) ===
   const rawCandidates = [
     { market: 'corners',      fn: () => computeCornersBet(m)      }, // cornersOver
     { market: 'cornersUnder', fn: () => computeCornersUnderBet(m) },
     { market: 'btts',         fn: () => computeBttsBet(m)         },
-    { market: 'over25',       fn: () => computeOver25Bet(m)       },
-    { market: 'under25',      fn: () => computeUnder25Bet(m)      },
   ];
+
+  // === GOLS (Over/Under 2.5) — MUTUAMENTE EXCLUSIVOS ===
+  // Calcula os dois lados (mesmo modelo Poisson), escolhe o de maior
+  // probabilidade e exige separação mínima de 10 p.p. (senão market-conflict).
+  // Injeta no máximo UM lado de gols por fixture por tick no fluxo de gates.
+  const goalsWinner = resolveGoalsWinner(m, sigStats);
+  if (goalsWinner) rawCandidates.push({ market: goalsWinner.market, fn: () => goalsWinner });
 
   for (const { market, fn } of rawCandidates) {
     const c = safe(fn);
@@ -1435,6 +1472,39 @@ function processMatch(m) {
       tickDecisions.push(decision);
       continue;
     }
+    // === Dedup PERMANENTE: 1 sinal por mercado por fixture ===
+    // Gate aplicado ANTES do cooldown para que repetições do mesmo mercado
+    // (ou do mercado oposto) já emitido reportem o motivo correto.
+    const marketKey = deriveMarketKey(c.market); // btts|over25|under25|cornersOver|cornersUnder
+    const emittedRec = getEmittedMarkets(sigStats.fixtureId);
+    if (marketKey && emittedRec[marketKey]) {
+      console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=already-emitted`);
+      if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP already-emitted | ${m.home} x ${m.away} | market=${c.market}`);
+      recordMarketFunnel(c.market, 'already-emitted');
+      dropAndLog('already-emitted', m, { market: c.market, confidence: c.confidence, prediction: c.prediction });
+      decision = {
+        ...decision, result: 'DROP', reason: 'already-emitted',
+        confidence: c.confidence, odd: c.oddEstimated, prediction: c.prediction,
+      };
+      logDecision(decision);
+      tickDecisions.push(decision);
+      continue;
+    }
+    const oppKey = marketKey ? OPPOSITE_MARKET_KEY[marketKey] : null;
+    if (oppKey && emittedRec[oppKey]) {
+      console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=opposite-market-already-emitted opposite=${oppKey}`);
+      if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP opposite-market-already-emitted | ${m.home} x ${m.away} | market=${c.market} | opposite=${oppKey}`);
+      recordMarketFunnel(c.market, 'opposite-market-already-emitted');
+      dropAndLog('opposite-market-already-emitted', m, { market: c.market, opposite: oppKey, confidence: c.confidence, prediction: c.prediction });
+      decision = {
+        ...decision, result: 'DROP', reason: 'opposite-market-already-emitted',
+        opposite: oppKey, confidence: c.confidence, odd: c.oddEstimated, prediction: c.prediction,
+      };
+      logDecision(decision);
+      tickDecisions.push(decision);
+      continue;
+    }
+
     const key = `${m.fixtureId}:${c.market}`;
     if (!canFire(key)) {
       console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=cooldown cooldownMs=${COOLDOWN_MS}`);
@@ -1470,7 +1540,85 @@ function processMatch(m) {
     logDecision(decision);
     tickDecisions.push(decision);
     emit(buildSignal(m, c));
+    // Trava permanente: este mercado (e seu oposto) não reemite p/ esta fixture.
+    markMarketEmitted(sigStats.fixtureId, marketKey);
   }
+}
+
+/**
+ * Seleção mutuamente exclusiva do mercado de gols (Over/Under 2.5).
+ * ------------------------------------------------------------------
+ * Calcula os DOIS lados a partir do mesmo modelo Poisson, mas devolve no
+ * máximo UM candidato — o de maior probabilidade — para o fluxo de gates.
+ *
+ * Regras:
+ *   - Ambos null (3+ gols já marcados ou sem dados) → compute-null nos dois.
+ *   - abs(pOver - pUnder) < 10 p.p. → DROP reason=market-conflict (nenhum).
+ *   - Caso contrário → o lado de MENOR prob é descartado (lower-probability)
+ *     e o lado vencedor segue para confidence/odd/cooldown normalmente.
+ *
+ * Não altera o cálculo (Poisson/λ) — apenas decide qual lado concorre.
+ */
+function resolveGoalsWinner(m, sigStats) {
+  const mkDecision = (market, result, reason, r) => {
+    const d = {
+      market, fixtureId: sigStats.fixtureId,
+      match: `${m.home} x ${m.away}`, min: sigStats.min,
+      result, reason,
+    };
+    if (r) { d.probability = r.probability; d.odd = r.oddEstimated; d.prediction = r.prediction; }
+    logDecision(d);
+    tickDecisions.push(d);
+  };
+
+  const rOver  = safe(() => computeOver25Bet(m));
+  const rUnder = safe(() => computeUnder25Bet(m));
+
+  // Ambos sem candidato → jogo resolvido (3+ gols) ou sem dados.
+  if (!rOver && !rUnder) {
+    for (const mk of ['over25', 'under25']) {
+      recordFunnel('compute-null');
+      recordMarketFunnel(mk, 'compute-null');
+      recordDrop({ stage: 'compute-null', market: mk, match: matchSummary(m), reason: 'goals: mercado resolvido (3+ gols) ou sem dados' });
+      console.log(`${marketTag(mk)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=compute-null`);
+      mkDecision(mk, 'DROP', 'compute-null', null);
+    }
+    return null;
+  }
+
+  // Defensivo: se só um lado existir, ele vira o candidato único.
+  if (!rOver || !rUnder) {
+    return rOver || rUnder;
+  }
+
+  const pOver  = rOver.probability;
+  const pUnder = rUnder.probability;
+  const diff = Math.abs(pOver - pUnder);
+
+  // Conflito: diferença < 10 p.p. → mercado indefinido, não emite nenhum lado.
+  if (diff < 10) {
+    for (const r of [rOver, rUnder]) {
+      recordMarketFunnel(r.market, 'candidate');
+      recordMarketFunnel(r.market, 'market-conflict');
+      recordDrop({ stage: 'market-conflict', market: r.market, match: matchSummary(m), reason: `pOver=${pOver}% pUnder=${pUnder}% diff=${diff} < 10` });
+      console.log(`${marketTag(r.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=market-conflict pOver=${pOver} pUnder=${pUnder} diff=${diff}`);
+      mkDecision(r.market, 'DROP', 'market-conflict', r);
+    }
+    if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP market-conflict | ${m.home} x ${m.away} | goals | pOver=${pOver} pUnder=${pUnder} diff=${diff} < 10`);
+    return null;
+  }
+
+  // Seleciona o lado de maior probabilidade; suprime o outro.
+  const winner = pOver >= pUnder ? rOver : rUnder;
+  const loser  = pOver >= pUnder ? rUnder : rOver;
+
+  recordMarketFunnel(loser.market, 'candidate');
+  recordMarketFunnel(loser.market, 'lower-probability');
+  recordDrop({ stage: 'lower-probability', market: loser.market, match: matchSummary(m), reason: `suprimido: menor probabilidade (${loser.probability}% vs ${winner.probability}%)` });
+  console.log(`${marketTag(loser.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=lower-probability prob=${loser.probability} winner=${winner.market}@${winner.probability}`);
+  mkDecision(loser.market, 'DROP', 'lower-probability', loser);
+
+  return winner;
 }
 
 /**
@@ -1872,7 +2020,8 @@ function buildHints(breakdown) {
  * e `markets.lastTick` para diagnóstico do último ciclo.
  */
 // Motivos de drop sempre presentes na resposta por mercado (default 0).
-const MARKET_DROP_KEYS = ['compute-null', 'low-confidence', 'odd-out-of-range', 'cooldown'];
+// 'market-conflict' / 'lower-probability' aplicam-se ao par de gols (Over/Under).
+const MARKET_DROP_KEYS = ['compute-null', 'low-confidence', 'odd-out-of-range', 'cooldown', 'market-conflict', 'lower-probability', 'already-emitted', 'opposite-market-already-emitted'];
 function normalizeMarketEntry(src) {
   const drops = {};
   for (const r of MARKET_DROP_KEYS) drops[r] = (src?.drops?.[r]) || 0;
