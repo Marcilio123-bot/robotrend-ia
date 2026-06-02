@@ -937,6 +937,112 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   });
 
   /**
+   * GET /api/football/bet-signals/diag
+   *
+   * Diagnóstico de pipeline (qualquer usuário autenticado OU bypass via
+   * METRICS_TOKEN). Pensado para comparar rapidamente o estado do engine
+   * entre dev e Render quando /bet-signals retorna count=0.
+   *
+   * Auth:
+   *  - Sessão normal (req.user) — qualquer tier
+   *  - OU ?token=$METRICS_TOKEN ou header x-metrics-token  → bypass via curl
+   *
+   * Campos: engineRunning / engineEnabled / liveMatches / signalsInMemory /
+   * lastTickAt / lastSignalAt / lastEmittedTickAgo / enrichEnabled /
+   * apiFootballStatus / pollerRunning / pollerLastTickAt / thresholds /
+   * lastTickFunnel / process.
+   */
+  function diagAuth(req, res, next) {
+    const token = process.env.METRICS_TOKEN;
+    const provided = req.query.token || req.get('x-metrics-token');
+    if (token && provided && String(provided) === String(token)) return next();
+    return requireAuth(db)(req, res, next);
+  }
+
+  router.get('/bet-signals/diag', diagAuth, (req, res) => {
+    noStore(res);
+    let engineSnap = null, pollerSnap = null, apiStatus = null, recentList = [];
+    try { engineSnap = betSignalEngine.snapshot(); } catch (e) { engineSnap = { error: e.message }; }
+    try { pollerSnap = poller.snapshot(); }         catch (e) { pollerSnap = { error: e.message }; }
+    try { apiStatus  = af.status(); }               catch (e) { apiStatus  = { error: e.message }; }
+    try { recentList = betSignalEngine.listRecent({ limit: 1, minConfidence: 0 }) || []; }
+    catch (_) { recentList = []; }
+
+    const liveMatches = (poller.getMatches?.() || []).length;
+    const lastSignal = recentList[0] || null;
+
+    res.json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+
+      engineRunning:    !!engineSnap?.started,
+      engineEnabled:    !!engineSnap?.enabled,
+      signalsInMemory:  engineSnap?.recent ?? 0,
+      lastTickAt:       engineSnap?.lastTickAt || null,
+      lastSignalAt:     lastSignal?.createdAt || null,
+      lastEmittedTickAgo: engineSnap?.lastTickAt
+        ? Date.now() - engineSnap.lastTickAt
+        : null,
+
+      liveMatches,
+      pollerRunning:    !!pollerSnap?.running,
+      pollerLastTickAt: pollerSnap?.lastTickAt || null,
+      pollerInterval:   pollerSnap?.intervalMs || null,
+      pollerCacheSize:  pollerSnap?.tracked ?? null,
+      pollerAlive:      !!pollerSnap?.alive,
+      pollerLastError:  pollerSnap?.lastError || pollerSnap?.lastFallbackReason || null,
+      pollerConsecutiveFailures: pollerSnap?.consecutiveFailures ?? null,
+
+      enrichEnabled: String(process.env.ENRICH_ENABLED || 'true').toLowerCase() !== 'false',
+      strictRealOnly: String(process.env.STRICT_REAL_ONLY || '').toLowerCase() === 'true',
+      betSignalDebug: String(process.env.BET_SIGNAL_DEBUG || 'false').toLowerCase() === 'true',
+      liveSignalDebug: String(process.env.LIVE_SIGNAL_DEBUG || '').toLowerCase() === 'true',
+
+      apiFootballStatus: apiStatus ? {
+        configured: apiStatus.configured,
+        hasKey: apiStatus.hasKey,
+        host: apiStatus.host,
+        safeMode: apiStatus.safeMode,
+        breaker: apiStatus.breaker,
+        rateLimit: apiStatus.rateLimit,
+      } : null,
+
+      thresholds: {
+        minConfidence: engineSnap?.minConfidence ?? null,
+        freeMin: engineSnap?.freeMinConfidence ?? null,
+        premiumMin: engineSnap?.premiumMinConfidence ?? null,
+        oddRange: engineSnap?.oddRange ?? null,
+        minuteRange: engineSnap?.minuteRange ?? null,
+        cooldownMs: engineSnap?.cooldownMs ?? null,
+        tickMs: engineSnap?.tickMs ?? null,
+        mode: engineSnap?.mode ?? null,
+      },
+
+      lastTickFunnel: engineSnap?.lastTickSummary || null,
+      funnelTotals:   engineSnap?.funnelTotals   || null,
+
+      lastSignalSample: lastSignal ? {
+        market: lastSignal.market,
+        prediction: lastSignal.prediction,
+        confidence: lastSignal.confidence,
+        odd: lastSignal.oddEstimated,
+        tier: lastSignal.tier,
+        match: lastSignal.match
+          ? `${lastSignal.match.home} x ${lastSignal.match.away}`
+          : null,
+        minute: lastSignal.match?.minute,
+        createdAt: lastSignal.createdAt,
+      } : null,
+
+      process: {
+        pid: process.pid,
+        uptimeSec: Math.round(process.uptime()),
+        nodeVersion: process.version,
+      },
+    });
+  });
+
+  /**
    * GET /api/football/bet-signals/debug
    *  Diagnóstico do pipeline de sinais (admin):
    *    - funil completo (input → enriched → minute → compute → conf → odd → cooldown → emitted)

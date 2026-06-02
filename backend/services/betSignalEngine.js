@@ -67,7 +67,9 @@ const TICK_MS        = Number(process.env.BET_SIGNAL_TICK_MS         || 90_000);
 
 // === MODOS DIAGNÓSTICO ===========================================
 const DEBUG_MODE     = String(process.env.BET_SIGNAL_DEBUG     || 'false').toLowerCase() === 'true';
-const PIPELINE_LOG   = DEBUG_MODE || String(process.env.LIVE_SIGNAL_DEBUG || 'false').toLowerCase() === 'true';
+// PIPELINE_LOG default = true (logs [LIVE PIPELINE] sempre).
+// Defina LIVE_SIGNAL_DEBUG=false no Render para silenciar quando estiver estável.
+const PIPELINE_LOG   = DEBUG_MODE || String(process.env.LIVE_SIGNAL_DEBUG || 'true').toLowerCase() === 'true';
 const TEST_MODE      = String(process.env.BET_SIGNAL_TEST_MODE || 'false').toLowerCase() === 'true';
 const TEST_MIN_CONF  = Number(process.env.BET_SIGNAL_TEST_MIN_CONFIDENCE || 70);
 
@@ -196,6 +198,65 @@ function poisson(lambda, k) {
 }
 
 /* ============================================================
+   FALLBACK XG — quando stats avançados (corners, dangerousAttacks,
+   shotsOnTarget) não estão disponíveis (ENRICH_ENABLED=false ou
+   minimal enrichment), derivamos um xG baseline usando apenas
+   placar + minuto + posse.
+   ------------------------------------------------------------
+   Calibração:
+     - 1.30 gols/time/90min  ≈ liga média
+     - HOME_BUMP = 0.10 (vantagem de mando histórica ~10%)
+     - posse modula ±20% nos λ (idêntico ao computeWinBet)
+     - placar atual já marcado entra como "xG observado" parcial
+   ============================================================ */
+// Calibrado para que cenários comuns sem stats (0×0 35-60′, 1×0 40-50′,
+// 1×1 75-90′) caiam na janela de odd 1.80-2.20.
+const BASELINE_XG_PER_MIN = Number(process.env.BET_SIGNAL_BASELINE_XG_PER_MIN || 0.0180); // ≈ 1.62/90
+const BASELINE_HOME_BUMP  = Number(process.env.BET_SIGNAL_BASELINE_HOME_BUMP  || 0.10);
+
+function hasAdvancedStats(m) {
+  const s = m?.stats || {};
+  const sotH = n(s.shotsOnTarget?.home);
+  const sotA = n(s.shotsOnTarget?.away);
+  const dangH = n(s.dangerousAttacks?.home);
+  const dangA = n(s.dangerousAttacks?.away);
+  const cornH = n(s.corners?.home);
+  const cornA = n(s.corners?.away);
+  return (sotH + sotA + dangH + dangA + cornH + cornA) > 0;
+}
+
+/**
+ * xG por time baseado SOMENTE em placar + minuto + posse.
+ * Usado como fallback inteligente quando stats avançados são zero.
+ *  - λ_acumulado ≈ baseline_xg_per_min × min ajustado por posse + placar real
+ *  - λ_restante  = baseline_xg_per_min × remaining ajustado por posse
+ */
+function baselineXG(m) {
+  const min = Math.max(1, n(m.minute));
+  const remaining = Math.max(0, 95 - min);
+  const sh = n(m.score?.home);
+  const sa = n(m.score?.away);
+  const possH = clamp(n(m.stats?.possession?.home) || 50, 30, 70);
+  const possA = 100 - possH;
+  const possEdge = (possH - possA) / 100;
+
+  const baseRate = BASELINE_XG_PER_MIN;
+  const lamHRest = Math.max(0, baseRate * remaining * (1 + possEdge * 0.20 + BASELINE_HOME_BUMP));
+  const lamARest = Math.max(0, baseRate * remaining * (1 - possEdge * 0.20));
+
+  // λ acumulado é "placar real + tendência baseline", clamped no acumulado mínimo
+  const lamHAcum = Math.max(sh, baseRate * min * (1 + BASELINE_HOME_BUMP));
+  const lamAAcum = Math.max(sa, baseRate * min);
+
+  return {
+    lamHRest, lamARest,
+    lamHAcum, lamAAcum,
+    possH, possA, possEdge,
+    sh, sa, min, remaining,
+  };
+}
+
+/* ============================================================
    1) CORNERS — Over X.5 escanteios
    Lógica: extrapola o ritmo atual, escolhe a linha X.5 cuja projeção
    resulta em P(over) na zona 45–55% (= odd 1.80–2.20).
@@ -302,6 +363,7 @@ function computeBttsBet(m) {
   const cornA = n(m.stats?.corners?.away);
   const sotRate = (sotH + sotA) / Math.max(1, min);
   const bttsLk = clamp(n(m.bttsLikelihood), 0, 100);
+  const advanced = hasAdvancedStats(m);
 
   /**
    * xG simples baseado nos indicadores acumulados, projetado linearmente
@@ -316,8 +378,16 @@ function computeBttsBet(m) {
     return Math.max(0, xgPorMin * remaining);
   }
 
-  const lamH = sh > 0 ? 99 : lambdaRestante(sotH, dangH, cornH);
-  const lamA = sa > 0 ? 99 : lambdaRestante(sotA, dangA, cornA);
+  // FALLBACK: sem stats avançados, usa baseline xG (placar+minuto+posse)
+  let lamH, lamA;
+  if (advanced) {
+    lamH = sh > 0 ? 99 : lambdaRestante(sotH, dangH, cornH);
+    lamA = sa > 0 ? 99 : lambdaRestante(sotA, dangA, cornA);
+  } else {
+    const base = baselineXG(m);
+    lamH = sh > 0 ? 99 : base.lamHRest;
+    lamA = sa > 0 ? 99 : base.lamARest;
+  }
 
   // P(time marca pelo menos 1) = 1 - e^(-λ). Se já marcou, P=1.
   const pH = sh > 0 ? 100 : Math.round((1 - Math.exp(-lamH)) * 100);
@@ -325,8 +395,10 @@ function computeBttsBet(m) {
 
   // P(BTTS Sim) com independência
   const rawYes = Math.round((pH / 100) * (pA / 100) * 100);
-  // Mistura com bttsLikelihood (já considera placar + finalizações)
-  const adjYes = Math.round(rawYes * 0.7 + bttsLk * 0.3);
+  // Mistura com bttsLikelihood (já considera placar + finalizações). Quando não há
+  // stats avançados, bttsLk é só ruído de placar inicial — peso menor.
+  const lkWeight = advanced ? 0.30 : 0.20;
+  const adjYes = Math.round(rawYes * (1 - lkWeight) + bttsLk * lkWeight);
 
   let direction, probability;
   if (adjYes >= 50) { direction = 'sim'; probability = adjYes; }
@@ -337,10 +409,18 @@ function computeBttsBet(m) {
   if (min >= 35)             confidence += 8;
   if (min >= 55)             confidence += 8;
   if (min >= 70)             confidence += 6;
-  if (sotRate >= 0.06)       confidence += 8;
-  if (sotRate >= 0.10)       confidence += 4;
-  if (Math.min(sotH, sotA) >= 2) confidence += 8;
-  if (Math.min(dangH, dangA) >= 20) confidence += 5;
+  if (advanced) {
+    if (sotRate >= 0.06)         confidence += 8;
+    if (sotRate >= 0.10)         confidence += 4;
+    if (Math.min(sotH, sotA) >= 2)    confidence += 8;
+    if (Math.min(dangH, dangA) >= 20) confidence += 5;
+  } else {
+    // Sem stats: confiança extra vem do tempo investido no jogo + placar
+    confidence += 4;                  // base extra (substituí parte do bônus de stats)
+    if (min >= 30)            confidence += 4;
+    if (min >= 60)            confidence += 4;
+    if (sh + sa >= 1)         confidence += 6; // jogo com gol = mais sinal
+  }
   if (sh + sa >= 1)          confidence += 4; // jogo aberto
   confidence = clamp(confidence, 0, 95);
 
@@ -350,9 +430,11 @@ function computeBttsBet(m) {
     probability,
     confidence,
     oddEstimated: probToOdd(probability),
-    justification:
-      `${sh}×${sa} em ${min}′. SoT H:${sotH}/A:${sotA}, ataques perigosos ${dangH}/${dangA}. ` +
-      `P(home marca)=${pH}%, P(away marca)=${pA}% → BTTS Sim ${adjYes}%.`,
+    justification: advanced
+      ? (`${sh}×${sa} em ${min}′. SoT H:${sotH}/A:${sotA}, ataques perigosos ${dangH}/${dangA}. ` +
+         `P(home marca)=${pH}%, P(away marca)=${pA}% → BTTS Sim ${adjYes}%.`)
+      : (`${sh}×${sa} em ${min}′ (sem stats avançados — modelo baseline). ` +
+         `P(home marca)=${pH}%, P(away marca)=${pA}% → BTTS Sim ${adjYes}%.`),
     extras: {
       direction,
       pHomeScores: pH,
@@ -360,6 +442,7 @@ function computeBttsBet(m) {
       pYes: adjYes,
       lambdaHomeRemaining: +lamH.toFixed(2),
       lambdaAwayRemaining: +lamA.toFixed(2),
+      baseline: !advanced,
     },
   };
 }
@@ -388,17 +471,23 @@ function computeWinBet(m) {
   const cornA = n(m.stats?.corners?.away);
   const possH = n(m.stats?.possession?.home) || 50;
   const possA = 100 - possH;
+  const advanced = hasAdvancedStats(m);
 
-  // xG acumulado por time e taxa por minuto
-  const xgH = sotH * 0.22 + dangH * 0.005 + cornH * 0.04;
-  const xgA = sotA * 0.22 + dangA * 0.005 + cornA * 0.04;
-  const xgRateH = xgH / Math.max(1, min);
-  const xgRateA = xgA / Math.max(1, min);
-
-  // Edge de posse: (-1..1) → modulação fina (~ ±20% nos λ)
-  const possEdge = (possH - possA) / 100;
-  const lamH = Math.max(0, xgRateH * remaining * (1 + possEdge * 0.20));
-  const lamA = Math.max(0, xgRateA * remaining * (1 - possEdge * 0.20));
+  // xG acumulado por time e taxa por minuto (ou baseline quando sem stats)
+  let lamH, lamA;
+  if (advanced) {
+    const xgH = sotH * 0.22 + dangH * 0.005 + cornH * 0.04;
+    const xgA = sotA * 0.22 + dangA * 0.005 + cornA * 0.04;
+    const xgRateH = xgH / Math.max(1, min);
+    const xgRateA = xgA / Math.max(1, min);
+    const possEdge = (possH - possA) / 100;
+    lamH = Math.max(0, xgRateH * remaining * (1 + possEdge * 0.20));
+    lamA = Math.max(0, xgRateA * remaining * (1 - possEdge * 0.20));
+  } else {
+    const base = baselineXG(m);
+    lamH = base.lamHRest;
+    lamA = base.lamARest;
+  }
 
   // Probabilidade Poisson conjunta para gols ADICIONAIS
   let probH = 0, probD = 0, probA = 0;
@@ -470,8 +559,13 @@ function computeWinBet(m) {
   if (min >= 45)        confidence += 8;
   if (min >= 65)        confidence += 8;
   if (min >= 80)        confidence += 5;
-  if (edgeDiff >= 15)   confidence += 5;
-  if (edgeDiff >= 30)   confidence += 5;
+  if (advanced) {
+    if (edgeDiff >= 15)   confidence += 5;
+    if (edgeDiff >= 30)   confidence += 5;
+  } else {
+    // Sem stats avançados: corroboração só pode vir do placar+tempo
+    if (Math.abs(lead) >= 1 && min >= 60) confidence += 5;
+  }
   if (Math.abs(lead) >= 1) confidence += 5;
   if (Math.abs(lead) >= 2) confidence += 5;
   confidence = clamp(confidence, 0, 95);
@@ -803,6 +897,20 @@ function processMatch(m) {
 
   if (!m) { dropAndLog('no-match', m); return; }
 
+  const matchHead = `[LIVE PIPELINE] match id=${m.fixtureId || m.id} ${m.home} x ${m.away} ${n(m.score?.home)}-${n(m.score?.away)} (${n(m.minute)}′)`;
+  const advanced = hasAdvancedStats(m);
+  if (PIPELINE_LOG) {
+    console.log(matchHead, {
+      enriched: !!m.enriched,
+      hasStats: !!m.stats,
+      advancedStats: advanced,
+      possession: m.stats?.possession?.home ?? null,
+      shotsOnTarget: { home: n(m.stats?.shotsOnTarget?.home), away: n(m.stats?.shotsOnTarget?.away) },
+      dangerousAttacks: { home: n(m.stats?.dangerousAttacks?.home), away: n(m.stats?.dangerousAttacks?.away) },
+      corners: { home: n(m.stats?.corners?.home), away: n(m.stats?.corners?.away) },
+    });
+  }
+
   // === Gate de dados ============================================
   // Em TEST_MODE processamos qualquer fixture (mesmo sem enriquecimento)
   // para o usuário ver SE alguma coisa estaria sendo gerada.
@@ -834,11 +942,16 @@ function processMatch(m) {
     if (!c) {
       recordFunnel('compute-null');
       recordDrop({ stage: 'compute-null', market, match: matchSummary(m), reason: 'compute returned null (sem dados ou mercado resolvido)' });
-      if (DEBUG_MODE) log.info('bet signal DROP compute-null', { market, match: matchSummary(m) });
+      if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP compute-null | ${m.home} x ${m.away} | market=${market} | motivo=sem dados ou mercado resolvido`);
       continue;
     }
 
+    if (PIPELINE_LOG) {
+      console.log(`[LIVE PIPELINE] candidate ${market} | conf=${c.confidence} | prob=${c.probability} | odd=${c.oddEstimated} | ${c.prediction}`);
+    }
+
     if (c.confidence < MIN_CONFIDENCE) {
+      if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP low-confidence | ${m.home} x ${m.away} | market=${c.market} | conf=${c.confidence} < min=${MIN_CONFIDENCE} | pred=${c.prediction}`);
       dropAndLog('low-confidence', m, {
         market: c.market,
         confidence: c.confidence,
@@ -849,6 +962,7 @@ function processMatch(m) {
       continue;
     }
     if (c.oddEstimated < MIN_ODD || c.oddEstimated > MAX_ODD) {
+      if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP odd-out-of-range | ${m.home} x ${m.away} | market=${c.market} | odd=${c.oddEstimated} fora=[${MIN_ODD},${MAX_ODD}] | conf=${c.confidence} | pred=${c.prediction}`);
       dropAndLog('odd-out-of-range', m, {
         market: c.market,
         oddEstimated: c.oddEstimated,
@@ -861,6 +975,7 @@ function processMatch(m) {
     }
     const key = `${m.fixtureId}:${c.market}`;
     if (!canFire(key)) {
+      if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP cooldown | ${m.home} x ${m.away} | market=${c.market} | cooldownMs=${COOLDOWN_MS} | conf=${c.confidence} | pred=${c.prediction}`);
       dropAndLog('cooldown', m, {
         market: c.market,
         cooldownMs: COOLDOWN_MS,
@@ -870,6 +985,7 @@ function processMatch(m) {
       continue;
     }
     recordFunnel('emitted');
+    if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] EMIT ${c.market} | ${m.home} x ${m.away} | conf=${c.confidence} | odd=${c.oddEstimated} | ${c.prediction}`);
     emit(buildSignal(m, c));
   }
 }
@@ -895,6 +1011,7 @@ function tick() {
     const poller = getPoller();
     const matches = poller.getMatches();
     const enrichedCount = matches.filter((m) => m?.enriched && m?.stats).length;
+    console.log(`[ENGINE INPUT] matchesReceived=${matches.length} enriched=${enrichedCount} pollerCache=${poller.cache?.size ?? '?'}`);
     console.log('[LIVE DEBUG] input matches count', matches.length);
     console.log('[LIVE DEBUG] enriched matches count', enrichedCount);
     if (PIPELINE_LOG) {
@@ -921,6 +1038,7 @@ function tick() {
     console.log('[LIVE DEBUG] dropped no-stats count', noStats);
     console.log('[LIVE DEBUG] dropped low-confidence count', lowConf);
     console.log('[LIVE DEBUG] emitted signals count', emitted);
+    console.log(`[ENGINE SNAPSHOT] signalsInMemory=${recent.length} emittedThisTick=${emitted} lastTickAt=${new Date(lastTickAt).toISOString()}`);
     console.log('[LIVE DEBUG] pipeline end', {
       durationMs: dur,
       minuteOutOfRange: tickFunnel['minute-out-of-range'] || 0,

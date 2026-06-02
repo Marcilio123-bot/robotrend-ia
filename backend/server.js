@@ -1198,7 +1198,13 @@ async function main() {
 
   try { footballAlerts.start(); } catch (e) { log.warn('footballAlerts start falhou', { err: e.message }); }
   try { signalsEngine.start(); } catch (e) { log.warn('signalsEngine start falhou', { err: e.message }); }
-  try { betSignalEngine.start(); } catch (e) { log.warn('betSignalEngine start falhou', { err: e.message }); }
+  try {
+    betSignalEngine.start();
+    console.log('[BOOT] betSignalEngine.start() called');
+  } catch (e) {
+    log.warn('betSignalEngine start falhou', { err: e.message });
+    console.log('[BOOT] betSignalEngine.start() FAILED', e.message);
+  }
   try { quotaMonitor.start(); } catch (e) { log.warn('quotaMonitor start falhou', { err: e.message }); }
 
   const footballPoller = getPoller();
@@ -1207,10 +1213,16 @@ async function main() {
   try { enricher.start(); } catch (e) { log.warn('fixtureEnricher start falhou', { err: e.message }); }
 
   if (String(process.env.FOOTBALL_POLLER_ENABLED || 'true').toLowerCase() !== 'false') {
-    try { footballPoller.start(); }
-    catch (e) { log.warn('football poller start falhou (heartbeat tentará continuar)', { err: e.message }); }
+    try {
+      footballPoller.start();
+      console.log('[BOOT] footballPoller.start() called');
+    } catch (e) {
+      log.warn('football poller start falhou (heartbeat tentará continuar)', { err: e.message });
+      console.log('[BOOT] footballPoller.start() FAILED', e.message);
+    }
   } else {
     log.warn('football poller desabilitado (FOOTBALL_POLLER_ENABLED=false)');
+    console.log('[BOOT] footballPoller DISABLED (FOOTBALL_POLLER_ENABLED=false)');
   }
 
   try { bot.start(); } catch (e) { log.warn('bot start falhou', { err: e.message }); }

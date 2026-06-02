@@ -568,6 +568,7 @@ class LiveFootballPoller {
 
     try {
       const apiRawCount = Array.isArray(raw) ? raw.length : 0;
+      console.log(`[API-FOOTBALL] fixturesReturned=${apiRawCount}`);
       const purgedPre = this._purgeNonLiveFromCache('pre-tick');
 
       const beforeFilter = (Array.isArray(raw) ? raw : [])
@@ -797,6 +798,7 @@ class LiveFootballPoller {
       const purgedPost = this._purgeNonLiveFromCache('post-tick');
       const liveInCache = this.getMatches();
       g_tracked.set(liveInCache.length);
+      console.log(`[POLLER] liveMatches=${liveInCache.length} cacheSize=${this.cache.size} apiRaw=${apiRawCount}`);
 
       this._lastFeedCompare = {
         ts: Date.now(),
