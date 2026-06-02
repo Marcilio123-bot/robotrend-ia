@@ -971,6 +971,36 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     const liveMatches = (poller.getMatches?.() || []).length;
     const lastSignal = recentList[0] || null;
 
+    // Diagnóstico das chamadas a /fixtures/statistics — puxamos do módulo
+    // apiFootball direto (não do footballProvider, que usa delegate).
+    let statsCallDiag = null;
+    let enricherSnap = null;
+    try {
+      const apiFootballMod = require('../services/apiFootball');
+      statsCallDiag = apiFootballMod.getFixtureStatistics?.diagSnapshot?.() || null;
+    } catch (_) { statsCallDiag = null; }
+    try {
+      const { getEnricher } = require('../services/fixtureEnricher');
+      enricherSnap = getEnricher().snapshot();
+    } catch (_) { enricherSnap = null; }
+
+    // Sample do match cache: corners do top-3 live para validar pipeline
+    let sampleMatchStats = [];
+    try {
+      const top = (poller.getMatches?.() || []).slice(0, 3);
+      sampleMatchStats = top.map((m) => ({
+        fixtureId: m.fixtureId || m.id,
+        match: `${m.home} x ${m.away}`,
+        minute: m.minute,
+        enriched: !!m.enriched,
+        enrichedPartial: !!m.enrichedPartial,
+        corners: m.stats?.corners || null,
+        shots: m.stats?.shots || null,
+        shotsOnTarget: m.stats?.shotsOnTarget || null,
+        dangerousAttacks: m.stats?.dangerousAttacks || null,
+      }));
+    } catch (_) { sampleMatchStats = []; }
+
     res.json({
       ok: true,
       generatedAt: new Date().toISOString(),
@@ -997,6 +1027,22 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       strictRealOnly: String(process.env.STRICT_REAL_ONLY || '').toLowerCase() === 'true',
       betSignalDebug: String(process.env.BET_SIGNAL_DEBUG || 'false').toLowerCase() === 'true',
       liveSignalDebug: String(process.env.LIVE_SIGNAL_DEBUG || '').toLowerCase() === 'true',
+
+      // /fixtures/statistics — confirma se a API está sendo chamada
+      // e quantas respostas 200 (com array preenchido) chegaram.
+      statsApiCalls: statsCallDiag,
+      enricherStatus: enricherSnap ? {
+        enabled: enricherSnap.enabled,
+        running: enricherSnap.running,
+        lastTickAt: enricherSnap.lastTickAt,
+        tracked: enricherSnap.tracked,
+        inflight: enricherSnap.inflight,
+        systemQueue: enricherSnap.systemQueue,
+        stats: enricherSnap.stats,
+      } : null,
+      sampleMatchStats,
+      lastTickByMarket: engineSnap?.lastTickByMarket || null,
+      lastCornersStats: engineSnap?.lastCornersStats || null,
 
       apiFootballStatus: apiStatus ? {
         configured: apiStatus.configured,

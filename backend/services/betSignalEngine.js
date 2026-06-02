@@ -214,6 +214,12 @@ function poisson(lambda, k) {
 const BASELINE_XG_PER_MIN = Number(process.env.BET_SIGNAL_BASELINE_XG_PER_MIN || 0.0180); // ≈ 1.62/90
 const BASELINE_HOME_BUMP  = Number(process.env.BET_SIGNAL_BASELINE_HOME_BUMP  || 0.10);
 
+// Taxa base de escanteios — usada SOMENTE quando stats avançados não chegaram
+// (ENRICH_ENABLED=false, safeMode, ou /fixtures/statistics falhou). 0.10/min
+// ≈ 9 em 90′ (média de liga). Sem isso, computeCornersBet ficava preso em
+// "compute-null" silencioso quando corners.total=0.
+const BASELINE_CORNERS_PER_MIN = Number(process.env.BET_SIGNAL_BASELINE_CORNERS_PER_MIN || 0.10);
+
 function hasAdvancedStats(m) {
   const s = m?.stats || {};
   const sotH = n(s.shotsOnTarget?.home);
@@ -268,8 +274,10 @@ function baselineXG(m) {
 function computeCornersBet(m) {
   const min = Math.max(1, n(m.minute));
   const remaining = Math.max(0, 95 - min);
-  const total = n(m.stats?.corners?.total);
-  const rate = total / min;
+  const cornH = n(m.stats?.corners?.home);
+  const cornA = n(m.stats?.corners?.away);
+  const total = cornH + cornA;
+  const advanced = hasAdvancedStats(m);
   const dangH = n(m.stats?.dangerousAttacks?.home);
   const dangA = n(m.stats?.dangerousAttacks?.away);
   const dangBal = Math.min(dangH, dangA);
@@ -278,7 +286,51 @@ function computeCornersBet(m) {
   const sotA = n(m.stats?.shotsOnTarget?.away);
   const sotBal = Math.min(sotH, sotA);
 
-  if (remaining < 5) return null; // pouco tempo, pouca utilidade
+  // [CORNER DEBUG] visibilidade por match — mostra exatamente qual número
+  // de corners chegou ao engine vs. o que foi extraído do fixtureNormalizer.
+  if (PIPELINE_LOG) {
+    console.log(
+      `[CORNER DEBUG] fixtureId=${m.fixtureId || m.id} home=${cornH} away=${cornA} total=${total} ` +
+      `min=${min} advanced=${advanced} enrichedPartial=${!!m.enrichedPartial}`
+    );
+  }
+
+  if (remaining < 5) {
+    if (PIPELINE_LOG) console.log(`[CORNER DEBUG] DROP no-time | fixtureId=${m.fixtureId || m.id} | min=${min} remaining=${remaining}`);
+    return null;
+  }
+
+  /* ============================================================
+     RATE — taxa atual de corners/min.
+     ------------------------------------------------------------
+     Se total>0 → usa taxa observada (rate = total/min).
+     Se total=0 → escolhe entre:
+       (a) taxa OBSERVADA do match anterior em cache (m.perMinute.corners)
+       (b) BASELINE 0.10/min (≈ 9 em 90′) quando NÃO há stats avançados
+           (cenário Render: ENRICH_ENABLED=false ou /fixtures/statistics
+           ainda não populou stats). Sem isso, computeCornersBet retornava
+           null silenciosamente em todo match minimal-enriched.
+     Se total=0 E há stats avançados (enrichment OK, mas jogo realmente sem
+     corners ainda) → mantém comportamento antigo: nada a projetar com
+     confiança.
+     ============================================================ */
+  let rate;
+  let rateSource;
+  if (total > 0) {
+    rate = total / min;
+    rateSource = 'observed';
+  } else if (n(m.perMinute?.corners) > 0) {
+    rate = n(m.perMinute.corners);
+    rateSource = 'perMinute';
+  } else if (!advanced) {
+    rate = BASELINE_CORNERS_PER_MIN;
+    rateSource = 'baseline';
+  } else {
+    // total=0 com stats avançados disponíveis → jogo sem nenhum corner
+    // ainda (cenário raro com defesas dominantes). Não projetamos.
+    if (PIPELINE_LOG) console.log(`[CORNER DEBUG] DROP zero-corners-with-stats | fixtureId=${m.fixtureId || m.id} | min=${min}`);
+    return null;
+  }
 
   // Adicionais esperados no tempo restante
   const expectedAdd = rate * remaining;
@@ -289,18 +341,28 @@ function computeCornersBet(m) {
   // Varre targets candidatos buscando P ≈ 50% (zona de valor)
   // P(over X.5) = aproximada por sigmoide(z), z = (projected - (X+0.5)) / σ
   let best = null;
-  const minTarget = Math.max(total, 4);
-  const maxTarget = total + Math.max(6, Math.ceil(expectedAdd) + 4);
+  const minTarget = Math.max(Math.floor(total), 4);
+  const maxTarget = Math.max(minTarget + 1, Math.ceil(projected) + 4);
+  const probsByTarget = [];
   for (let target = minTarget; target <= maxTarget; target++) {
     const z = (projected - (target + 0.5)) / sigma;
-    // tanh aproxima razoavelmente uma CDF normal para esse range
     const prob = clamp(Math.round(50 + 50 * Math.tanh(z * 0.85)), 5, 95);
+    probsByTarget.push({ target, prob });
     if (prob < 30 || prob > 70) continue;
     if (!best || Math.abs(prob - 50) < Math.abs(best.prob - 50)) {
       best = { target, prob };
     }
   }
-  if (!best) return null;
+  if (!best) {
+    if (PIPELINE_LOG) {
+      console.log(
+        `[CORNER DEBUG] DROP no-target-in-band | fixtureId=${m.fixtureId || m.id} | ` +
+        `total=${total} rate=${rate.toFixed(2)} (${rateSource}) projected=${projected.toFixed(1)} ` +
+        `targets=${JSON.stringify(probsByTarget.slice(0, 6))}`
+      );
+    }
+    return null;
+  }
 
   // Ajustes finais de probabilidade (corroboração ofensiva)
   let probability = best.prob;
@@ -310,15 +372,25 @@ function computeCornersBet(m) {
   probability = clamp(probability, 25, 75);
 
   // Confiança = qualidade do dado
-  let confidence = 45;
+  // Sem stats avançados (rate=baseline), mantemos uma base mais conservadora
+  // — sinais ainda saem mas com confiança menor, respeitando MIN_CONFIDENCE.
+  let confidence = advanced ? 45 : 40;
   if (min >= 30)    confidence += 10;
   if (min >= 55)    confidence += 8;
   if (rate >= 0.18) confidence += 10;
   if (rate >= 0.28) confidence += 5;
-  if (dangBal >= 25) confidence += 5;
-  if (dangBal >= 50) confidence += 5;
-  if (sotBal >= 2)   confidence += 5;
-  if (pressure >= 55) confidence += 5;
+  if (advanced) {
+    if (dangBal >= 25)  confidence += 5;
+    if (dangBal >= 50)  confidence += 5;
+    if (sotBal >= 2)    confidence += 5;
+    if (pressure >= 55) confidence += 5;
+  } else {
+    // Sem stats avançados, dá um boost moderado para placar empatado
+    // (clássico cenário onde corners aceleram no fim) e minuto avançado.
+    const tied = n(m.score?.home) === n(m.score?.away);
+    if (tied)        confidence += 5;
+    if (min >= 65)   confidence += 5;
+  }
   confidence = clamp(confidence, 0, 95);
 
   return {
@@ -328,14 +400,16 @@ function computeCornersBet(m) {
     confidence,
     oddEstimated: probToOdd(probability),
     justification:
-      `${total} escanteios em ${min}′ (${rate.toFixed(2)}/min) → projeção ${projected.toFixed(1)}. ` +
+      `${total} escanteios em ${min}′ (${rate.toFixed(2)}/min, fonte=${rateSource}) → projeção ${projected.toFixed(1)}. ` +
       `Ataques ${dangH}/${dangA}, pressão ${Math.round(pressure)}.`,
     extras: {
       target: best.target,
       currentCorners: total,
       projected: +projected.toFixed(1),
       ratePerMin: +rate.toFixed(2),
+      rateSource,
       sigma: +sigma.toFixed(2),
+      advanced,
     },
   };
 }
@@ -985,6 +1059,9 @@ function processMatch(m) {
       continue;
     }
     recordFunnel('emitted');
+    if (tickByMarket && tickByMarket[c.market] !== undefined) {
+      tickByMarket[c.market]++;
+    }
     if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] EMIT ${c.market} | ${m.home} x ${m.away} | conf=${c.confidence} | odd=${c.oddEstimated} | ${c.prediction}`);
     emit(buildSignal(m, c));
   }
@@ -998,6 +1075,8 @@ let started = false;
 
 let lastTickAt = null;
 let lastTickSummary = null;
+let tickByMarket = { corners: 0, btts: 0, win: 0 };
+let cornersStats = { withTotal: 0, totalZeroNoAdv: 0, totalZeroWithAdv: 0 };
 
 function tick() {
   if (!ENABLED) {
@@ -1021,7 +1100,17 @@ function tick() {
         minute: [MIN_MINUTE, MAX_MINUTE],
       });
     }
-    for (const m of matches) processMatch(m);
+    // Contadores por mercado dentro do tick (não persistem entre ticks).
+    tickByMarket = { corners: 0, btts: 0, win: 0 };
+    cornersStats = { withTotal: 0, totalZeroNoAdv: 0, totalZeroWithAdv: 0 };
+    for (const m of matches) {
+      const c = n(m.stats?.corners?.total);
+      const adv = hasAdvancedStats(m);
+      if (c > 0) cornersStats.withTotal++;
+      else if (!adv) cornersStats.totalZeroNoAdv++;
+      else cornersStats.totalZeroWithAdv++;
+      processMatch(m);
+    }
   } catch (e) {
     log.error('tick error', { err: e.message });
     console.log('[LIVE DEBUG] pipeline error', e.message);
@@ -1039,6 +1128,12 @@ function tick() {
     console.log('[LIVE DEBUG] dropped low-confidence count', lowConf);
     console.log('[LIVE DEBUG] emitted signals count', emitted);
     console.log(`[ENGINE SNAPSHOT] signalsInMemory=${recent.length} emittedThisTick=${emitted} lastTickAt=${new Date(lastTickAt).toISOString()}`);
+    console.log(
+      `[CORNER REPORT] tick: matchesIn=${tickFunnel.input || 0} ` +
+      `withCornerData=${cornersStats.withTotal} totalZeroNoAdv=${cornersStats.totalZeroNoAdv} ` +
+      `totalZeroWithAdv=${cornersStats.totalZeroWithAdv} → ` +
+      `emitted: corners=${tickByMarket.corners} btts=${tickByMarket.btts} win=${tickByMarket.win}`
+    );
     console.log('[LIVE DEBUG] pipeline end', {
       durationMs: dur,
       minuteOutOfRange: tickFunnel['minute-out-of-range'] || 0,
@@ -1120,6 +1215,8 @@ function snapshot() {
     bestSignalActive: bestStillValid(),
     lastTickAt,
     lastTickSummary,
+    lastTickByMarket: { ...tickByMarket },
+    lastCornersStats: { ...cornersStats },
     funnelTotals: { ...funnelTotals },
   };
 }

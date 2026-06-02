@@ -727,7 +727,29 @@ async function getFixturesByTeam(teamId, { last, next, season, league } = {}, op
   if (league) p.league = league;
   return fetchResponse('fixtures', p, opts);
 }
-async function getFixtureStatistics(id, opts = {})    { return fetchResponse('fixtures/statistics', { fixture: id }, opts); }
+async function getFixtureStatistics(id, opts = {}) {
+  // Contador GLOBAL de chamadas a /fixtures/statistics — independente do caller.
+  // Se este número permanecer em 0, a API NUNCA é chamada (cenário ENRICH_ENABLED=false).
+  if (!getFixtureStatistics._diag) {
+    getFixtureStatistics._diag = { calls: 0, ok: 0, empty: 0, failed: 0, safeMode: 0, lastAt: 0, lastStatus: null };
+  }
+  const d = getFixtureStatistics._diag;
+  d.calls++;
+  d.lastAt = Date.now();
+  try {
+    const resp = await fetchResponse('fixtures/statistics', { fixture: id }, opts);
+    if (Array.isArray(resp) && resp.length) { d.ok++;    d.lastStatus = 200; }
+    else                                    { d.empty++; d.lastStatus = 'empty'; }
+    return resp;
+  } catch (err) {
+    if (err?.code === 'SAFE_MODE') { d.safeMode++; d.lastStatus = 'SAFE_MODE'; }
+    else                            { d.failed++;   d.lastStatus = err?.code || 'ERROR'; }
+    throw err;
+  }
+}
+getFixtureStatistics.diagSnapshot = function () {
+  return { ...(getFixtureStatistics._diag || { calls: 0, ok: 0, empty: 0, failed: 0, safeMode: 0, lastAt: 0, lastStatus: null }) };
+};
 async function getFixtureEvents(id, opts = {})        { return fetchResponse('fixtures/events',     { fixture: id }, opts); }
 async function getFixtureLineups(id, opts = {})       { return fetchResponse('fixtures/lineups',    { fixture: id }, opts); }
 async function getHeadToHead(t1, t2, { last = 10, league, season } = {}, opts = {}) {

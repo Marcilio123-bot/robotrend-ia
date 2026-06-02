@@ -67,7 +67,21 @@ class FixtureEnricher {
     this.getSubscribers = null;      // injetado pelo realtime → ()=>Set<id>
     this.systemQueue = new Set();    // fixtures enfileiradas pelo poller (sem depender de socket subs)
     this._onTick = null;
-    this.stats = { requests: 0, emitted: 0, failed: 0, skipped: 0, lastTickAt: 0, systemQueued: 0 };
+    this.stats = {
+      requests: 0,
+      emitted: 0,
+      failed: 0,
+      skipped: 0,
+      lastTickAt: 0,
+      systemQueued: 0,
+      // Diagnóstico /fixtures/statistics
+      statsCalls: 0,           // total de tentativas (enabled+disabled)
+      statsCalls200: 0,        // respostas com array preenchido
+      statsCallsEmpty: 0,      // 200 mas array vazio (API sem stats p/ esse fixture)
+      statsCallsFailed: 0,     // erros não-safe-mode
+      statsCallsSafeMode: 0,
+      lastStatsCallAt: 0,
+    };
   }
 
   /** Injeta o poller (precisamos do cache de matches para mesclar enrichment). */
@@ -77,10 +91,15 @@ class FixtureEnricher {
   setSubscriberSource(fn) { this.getSubscribers = fn; }
 
   start() {
-    if (!ENABLED) { log.warn('enricher desabilitado (ENRICH_ENABLED=false)'); return; }
+    if (!ENABLED) {
+      log.warn('enricher desabilitado (ENRICH_ENABLED=false)');
+      console.log('[STATS FETCH] DISABLED — ENRICH_ENABLED=false. /fixtures/statistics NÃO será chamado pelo pipeline automático. Sinais de corners dependem do baseline em betSignalEngine.');
+      return;
+    }
     if (this.running) return;
     this.running = true;
     log.info('enricher started', { refreshMs: REFRESH_MS, tickMs: TICK_MS, maxPerTick: MAX_PER_TICK, autoTop: AUTO_TOP });
+    console.log(`[STATS FETCH] ENABLED — enricher started, top=${AUTO_TOP} pollerTop=${POLLER_ENRICH_TOP} refresh=${REFRESH_MS}ms tick=${TICK_MS}ms`);
     this.timer = setInterval(() => this.tick().catch((e) => log.warn('tick error', { err: e.message })), TICK_MS);
     if (typeof this.timer.unref === 'function') this.timer.unref();
 
@@ -338,7 +357,37 @@ class FixtureEnricher {
     try {
       const tasks = [apiFootball.getFixtureStatistics(id)];
       if (INCLUDE_EVENTS) tasks.push(apiFootball.getFixtureEvents(id));
+      this.stats.statsCalls++;
+      this.stats.lastStatsCallAt = Date.now();
       const [statsResp, eventsResp = []] = await Promise.all(tasks);
+      if (Array.isArray(statsResp) && statsResp.length) this.stats.statsCalls200++;
+      else this.stats.statsCallsEmpty++;
+
+      // [STATS FETCH] — resposta da API antes de mesclar no match.
+      // Confirma 1) que /fixtures/statistics foi chamado, 2) que veio 200
+      // com array, 3) os números reais por time. Se vier [], a API não
+      // está fornecendo estatísticas para esse fixture (pode ser jogo de
+      // liga obscura, ou stats ainda não geradas no início do jogo).
+      try {
+        const isArr = Array.isArray(statsResp);
+        const teams = isArr ? statsResp.map((t) => ({
+          teamId: t?.team?.id,
+          teamName: t?.team?.name,
+          corners: (t?.statistics || []).find((s) => s?.type === 'Corner Kicks')?.value ?? null,
+          shots: (t?.statistics || []).find((s) => s?.type === 'Total Shots')?.value ?? null,
+          shotsOnTarget: (t?.statistics || []).find((s) => s?.type === 'Shots on Goal')?.value ?? null,
+          dangerousAttacks: (t?.statistics || []).find((s) => s?.type === 'Dangerous Attacks')?.value ?? null,
+        })) : [];
+        const home = teams[0] || {};
+        const away = teams[1] || {};
+        console.log(
+          `[STATS FETCH] fixtureId=${id} status=${isArr ? 200 : 'non-array'} teams=${teams.length} ` +
+          `homeCorners=${home.corners} awayCorners=${away.corners} ` +
+          `shots=${(home.shots ?? 0) + (away.shots ?? 0)} ` +
+          `shotsOnTarget=${(home.shotsOnTarget ?? 0) + (away.shotsOnTarget ?? 0)} ` +
+          `dur=${Date.now() - t0}ms events=${Array.isArray(eventsResp) ? eventsResp.length : 0}`
+        );
+      } catch (_) { /* log defensivo — nunca quebrar enrichment */ }
 
       // Garante que temos o match no cache do poller para mesclar
       let match = this.poller?.getMatch?.(id);
@@ -356,10 +405,14 @@ class FixtureEnricher {
       const isSafeMode = err?.code === 'SAFE_MODE';
       if (!isSafeMode) {
         this.stats.failed++;
+        this.stats.statsCallsFailed++;
         m_fail.inc(1, { kind: err.code || 'unknown' });
         log.warn('enrichment failed', { id, err: err.message, status: err.status });
+        console.log(`[STATS FETCH] fixtureId=${id} status=ERROR code=${err.code || 'unknown'} message=${err.message}`);
       } else {
         m_skip.inc(1, { reason: 'safe-mode' });
+        this.stats.statsCallsSafeMode++;
+        console.log(`[STATS FETCH] fixtureId=${id} status=SAFE_MODE (quota baixa, fallback minimal)`);
       }
 
       // FALLBACK OBRIGATÓRIO: enrichment mínimo local — nunca deixar UI em 0/42

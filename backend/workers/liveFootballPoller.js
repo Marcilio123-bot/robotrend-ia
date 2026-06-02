@@ -800,6 +800,34 @@ class LiveFootballPoller {
       g_tracked.set(liveInCache.length);
       console.log(`[POLLER] liveMatches=${liveInCache.length} cacheSize=${this.cache.size} apiRaw=${apiRawCount}`);
 
+      // ============================================================
+      // [MATCH STATS] / [CORNERS CHECK] — visibilidade do cache.
+      // Imprime APENAS o primeiro match live a cada tick (evita poluir
+      // log com 10+ matches). Se quiser ver todos, defina
+      // POLLER_STATS_VERBOSE=true.
+      // ============================================================
+      try {
+        const verbose = String(process.env.POLLER_STATS_VERBOSE || 'false').toLowerCase() === 'true';
+        const sample = verbose ? liveInCache : liveInCache.slice(0, 1);
+        for (const m of sample) {
+          console.log(
+            '[MATCH STATS]',
+            m.fixtureId || m.id,
+            m.home, 'vs', m.away,
+            JSON.stringify(m.stats, null, 2)
+          );
+          console.log('[CORNERS CHECK]', m.fixtureId || m.id, {
+            corners:          m.stats?.corners,
+            shots:            m.stats?.shots,
+            shotsOnTarget:    m.stats?.shotsOnTarget,
+            dangerousAttacks: m.stats?.dangerousAttacks,
+            enriched:         !!m.enriched,
+            enrichedPartial:  !!m.enrichedPartial,
+            enrichedAt:       m.enrichedAt ? new Date(m.enrichedAt).toISOString() : null,
+          });
+        }
+      } catch (e) { /* nunca falhar tick por log */ }
+
       this._lastFeedCompare = {
         ts: Date.now(),
         apiRawCount,
