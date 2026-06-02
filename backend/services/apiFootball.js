@@ -740,6 +740,33 @@ async function getFixtureStatistics(id, opts = {}) {
     const resp = await fetchResponse('fixtures/statistics', { fixture: id }, opts);
     if (Array.isArray(resp) && resp.length) { d.ok++;    d.lastStatus = 200; }
     else                                    { d.empty++; d.lastStatus = 'empty'; }
+
+    // [STAT TRACE 1/6] api-raw — extrai o que a API devolveu para o
+    // fixture-alvo (sem normalizar). Não loga nada se o id não bater.
+    try {
+      const statTrace = require('./statTrace');
+      const teams = Array.isArray(resp) ? resp : [];
+      const findVal = (t, type) => {
+        const r = (t?.statistics || []).find((s) => s?.type === type);
+        const v = r?.value;
+        if (v == null) return 0;
+        if (typeof v === 'string' && v.endsWith('%')) return Number(v.slice(0, -1)) || 0;
+        return Number(v) || 0;
+      };
+      const flat = {
+        corners: findVal(teams[0], 'Corner Kicks') + findVal(teams[1], 'Corner Kicks'),
+        shots: findVal(teams[0], 'Total Shots') + findVal(teams[1], 'Total Shots'),
+        shotsOnTarget: findVal(teams[0], 'Shots on Goal') + findVal(teams[1], 'Shots on Goal'),
+        dangerousAttacks: findVal(teams[0], 'Dangerous Attacks') + findVal(teams[1], 'Dangerous Attacks'),
+        attacks: findVal(teams[0], 'Attacks') + findVal(teams[1], 'Attacks'),
+      };
+      statTrace.trace('api-raw', id, {
+        flat,
+        raw: teams.length ? { teamsCount: teams.length, types: (teams[0]?.statistics || []).map((s) => s?.type) } : { teamsCount: 0 },
+        extra: { teamsReceived: teams.length, lastStatus: d.lastStatus },
+      });
+    } catch (_) { /* trace defensivo */ }
+
     return resp;
   } catch (err) {
     if (err?.code === 'SAFE_MODE') { d.safeMode++; d.lastStatus = 'SAFE_MODE'; }

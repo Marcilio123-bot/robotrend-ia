@@ -197,6 +197,22 @@ function applyEnrichment(match, statsResp, eventsResp) {
     }
   } catch (_) { /* nunca quebrar enrichment por log */ }
 
+  // [STAT TRACE 3/6] normalizer — após cálculos do normalizer
+  try {
+    const statTrace = require('./statTrace');
+    statTrace.trace('normalizer', match.fixtureId || match.id, {
+      stats: match.stats,
+      flat: {
+        corners: totalCorners,
+        shots: totalShots,
+        shotsOnTarget: totalSot,
+        dangerousAttacks: totalDang,
+        attacks: totalAttacks,
+      },
+      extra: { mode: 'FULL', homeId, awayId, elapsed, respTeams: respLen },
+    });
+  } catch (_) { /* trace defensivo */ }
+
   match.perMinute = elapsed > 0 ? {
     corners:          +(totalCorners / elapsed).toFixed(3),
     dangerousAttacks: +(totalDang    / elapsed).toFixed(3),
@@ -302,6 +318,16 @@ function applyMinimalEnrichment(match) {
       `dangerousAttacks={h:0,a:0,t:0} possession={h:50,a:50} score=${gh}-${ga} min=${min} ` +
       `(stats reais NÃO foram solicitados — ENRICH_ENABLED=false ou safeMode)`
     );
+  } catch (_) { /* defensivo */ }
+
+  // [STAT TRACE 3/6] normalizer (mode MINIMAL) — confirma que zeramos tudo.
+  try {
+    const statTrace = require('./statTrace');
+    statTrace.trace('normalizer', match.fixtureId || match.id, {
+      stats: match.stats,
+      flat: { corners: 0, shots: 0, shotsOnTarget: 0, dangerousAttacks: 0, attacks: 0 },
+      extra: { mode: 'MINIMAL', score: `${gh}-${ga}`, min, reason: 'no-api-stats' },
+    });
   } catch (_) { /* defensivo */ }
 
   try {

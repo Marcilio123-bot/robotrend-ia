@@ -832,14 +832,32 @@ class LiveFootballPoller {
         ts: Date.now(),
         apiRawCount,
         normalizedCount: beforeFilter.length,
+        afterBlacklist: noBlacklist.length,
+        afterPriority: priorityFiltered.length,
         liveAfterFilter: matches.length,
         cacheSize: this.cache.size,
         restGetMatchesCount: liveInCache.length,
+        purgedByBlacklist: beforeFilter.length - noBlacklist.length,
+        purgedByPriority: PRIORITY_ONLY ? (noBlacklist.length - priorityFiltered.length) : 0,
+        purgedByLiveStatus: priorityFiltered.length - matches.length,
         fromStale: !!fromStale,
         purgedPre: purgedPre.length,
         purgedPost: purgedPost.length,
         fallbackReason: fallbackReason || null,
+        priorityOnly: PRIORITY_ONLY,
+        excludeTokens: EXCLUDE_LEAGUE_TOKENS,
       };
+
+      // [POLLER FUNNEL] — único log unificado mostrando o caminho completo:
+      // API → blacklist → priority → liveStatus → cache → getMatches
+      console.log(
+        `[POLLER FUNNEL] apiRaw=${apiRawCount} normalized=${beforeFilter.length} ` +
+        `→blacklist=${noBlacklist.length} (cut=${beforeFilter.length - noBlacklist.length}) ` +
+        `→priority=${priorityFiltered.length} (cut=${PRIORITY_ONLY ? (noBlacklist.length - priorityFiltered.length) : 0}, ONLY=${PRIORITY_ONLY}) ` +
+        `→liveStatus=${matches.length} (cut=${priorityFiltered.length - matches.length}) ` +
+        `→cache=${this.cache.size} →getMatches=${liveInCache.length} ` +
+        `${fromStale ? '[FROM_STALE]' : ''}${fallbackReason ? '[FB:' + fallbackReason + ']' : ''}`
+      );
       if (LINGER_LOG) {
         console.log('[LIVE FEED]', JSON.stringify(this._lastFeedCompare));
         if (apiRawCount > liveInCache.length + 2) {

@@ -372,6 +372,53 @@
   function renderMatches() {
     const grid = $('#matches-grid');
     if (!grid) return;
+
+    /* ============================================================
+       [STAT TRACE 6/6] front-render — invocado uma única vez por
+       fixture-alvo a cada tick de render. Reporta o valor EXATO que
+       será injetado no DOM (após esc() / fallbacks).
+       O alvo é definido por window.__ROBOT_STAT_TRACE_ID OU pelo
+       primeiro match com fixtureId (auto). Sincronize com o backend
+       via /api/football/bet-signals/diag/trace/:id.
+       ============================================================ */
+    try {
+      if (!window.__ROBOT_STAT_TRACE_RENDERED_AT) window.__ROBOT_STAT_TRACE_RENDERED_AT = 0;
+      const now = Date.now();
+      if (now - window.__ROBOT_STAT_TRACE_RENDERED_AT > 5000) {
+        const targetId = window.__ROBOT_STAT_TRACE_ID
+          || (lastMatches[0] && String(lastMatches[0].id));
+        if (targetId) {
+          const m = lastMatches.find((x) => String(x.id) === String(targetId));
+          if (m) {
+            window.__ROBOT_STAT_TRACE_RENDERED_AT = now;
+            window.__ROBOT_STAT_TRACE_LAST = {
+              ts: new Date().toISOString(),
+              fixtureId: targetId,
+              flat: {
+                corners: Number(m.corners ?? 0),
+                shots: Number(m.shots ?? 0),
+                shotsOnTarget: Number(m.shotsOnTarget ?? 0),
+                dangerousAttacks: Number(m.dangerousAttacks ?? 0),
+                attacks: Number(m.attacks ?? 0),
+              },
+            };
+            console.log(
+              '[STAT TRACE 6/6] fixtureId=' + targetId + ' stage=front-render',
+              window.__ROBOT_STAT_TRACE_LAST.flat
+            );
+            // Envia trace ao backend (best-effort) para o /diag/trace/:id consolidar
+            try {
+              fetch('/api/football/bet-signals/diag/trace-front', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fixtureId: targetId, flat: window.__ROBOT_STAT_TRACE_LAST.flat }),
+              }).catch(() => {});
+            } catch (_) { /* best-effort */ }
+          }
+        }
+      }
+    } catch (_) { /* nunca quebrar render */ }
     const safe = filterValidMatches(lastMatches);
     if (safe.length !== lastMatches.length) lastMatches = safe;
     if (!safe.length) {
@@ -426,11 +473,27 @@
   /* ============================================================
      BET SIGNALS (corners / btts / win) — cards compactos
      ============================================================ */
+  // Mercados ativos exibidos no painel (WIN/1X2 removido)
+  const ALLOWED_BET_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder']);
   function marketLabel(m) {
-    return ({ corners: 'Escanteios', btts: 'Ambas marcam', win: 'Vitória', goals: 'Gols' }[m] || m || 'Sinal');
+    return ({
+      corners: 'Over escanteios',
+      cornersUnder: 'Under escanteios',
+      btts: 'Ambas marcam',
+      goals: 'Gols',
+      over25: 'Over 2.5 gols',
+      under25: 'Under 2.5 gols',
+    }[m] || m || 'Sinal');
   }
   function marketAccent(m) {
-    return ({ corners: '#facc15', btts: '#06b6d4', win: '#14b85e', goals: '#a855f7' }[m] || '#14b85e');
+    return ({
+      corners: '#facc15',
+      cornersUnder: '#eab308',
+      btts: '#06b6d4',
+      goals: '#a855f7',
+      over25: '#a855f7',
+      under25: '#7c3aed',
+    }[m] || '#14b85e');
   }
 
   function betSignalCardHTML(s) {
@@ -502,7 +565,8 @@
   function renderBetSignals() {
     const host = $('#live-signals');
     if (!host) return;
-    const top = lastBetSignals.slice(0, 6);
+    // Exibe apenas os 5 mercados ativos (filtra WIN/1X2 legado).
+    const top = lastBetSignals.filter((s) => ALLOWED_BET_MARKETS.has(s?.market)).slice(0, 6);
     if (top.length) {
       host.innerHTML = top.map(betSignalCardHTML).join('');
       return;
@@ -1210,6 +1274,8 @@
     });
     window.RobotrendHeartbeat?.markSocketActivity('signal:new');
     const isPrem = isPremiumUser();
+    // Ignora mercados fora dos 5 ativos (ex.: WIN/1X2 legado).
+    if (signal?.type === 'bet:opportunity' && !ALLOWED_BET_MARKETS.has(signal?.market)) return;
     if (signal?.type === 'bet:opportunity') {
       lastBetSignals.unshift(signal);
       if (lastBetSignals.length > 20) lastBetSignals.length = 20;

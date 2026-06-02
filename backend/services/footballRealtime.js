@@ -28,6 +28,13 @@ const { getPoller } = require('../workers/liveFootballPoller');
 const { getEnricher } = require('./fixtureEnricher');
 const { logger } = require('../logger');
 
+// Implementação real preenchida no primeiro attachFootballRealtime();
+// fora dele responde com contadores zerados para o /diag não quebrar.
+let _getEmitCountersImpl = () => ({
+  'match:upsert': 0, 'match:update': 0, 'match:remove': 0,
+  lastResetAt: 0, sockets: 0, _attached: false,
+});
+
 const log = logger.child({ module: 'football-realtime' });
 
 const MAX_EMIT_PER_SEC = Number(process.env.FOOTBALL_RT_MAX_EMIT_PER_SEC || 50);
@@ -263,8 +270,37 @@ function attachFootballRealtime(io, opts = {}) {
     emitTo('lobby', 'tick', payload);
   });
 
+  // [STAT TRACE 5/6] socket-emit — chamado uma única vez por evento.
+  // Compartilhado por upsert e update; mostra o EXATO match payload que
+  // o socket está enviando (mesma referência que o frontend recebe).
+  function traceSocketEmit(match, evtName) {
+    try {
+      const statTrace = require('./statTrace');
+      const id = String(match?.fixtureId || match?.id || '');
+      const target = statTrace.getTarget();
+      if (id && target.id === id) {
+        statTrace.trace('socket-emit', id, {
+          stats: match?.stats,
+          extra: {
+            event: evtName,
+            enriched: !!match?.enriched,
+            enrichedPartial: !!match?.enrichedPartial,
+            statsKeys: match?.stats ? Object.keys(match.stats) : [],
+          },
+        });
+      }
+    } catch (_) { /* defensivo */ }
+  }
+
+  // Contadores de eventos emitidos para [POLLER FUNNEL] tracking.
+  // Reset implícito a cada tick (poller emite [POLLER FUNNEL] e este
+  // serviço lê via getEmitCounters()).
+  const emitCounters = { 'match:upsert': 0, 'match:update': 0, 'match:remove': 0, lastResetAt: Date.now() };
+
   events.on('match:upsert', ({ match }) => {
     if (!allow()) { m_emit_dropped.inc(1, { event: 'match:upsert' }); return; }
+    traceSocketEmit(match, 'match:upsert');
+    emitCounters['match:upsert']++;
     emitTo('lobby', 'match:upsert', { match });
     const fr = fixtureRoom(match); if (fr) emitTo(fr, 'match:upsert', { match });
     const lr = leagueRoom(match);  if (lr) emitTo(lr, 'match:upsert', { match });
@@ -272,11 +308,17 @@ function attachFootballRealtime(io, opts = {}) {
 
   events.on('match:update', ({ match, prev, deltas }) => {
     if (!allow()) { m_emit_dropped.inc(1, { event: 'match:update' }); return; }
+    traceSocketEmit(match, 'match:update');
+    emitCounters['match:update']++;
     const payload = { match, prev: lite(prev), deltas };
     emitTo('lobby', 'match:update', payload);
     const fr = fixtureRoom(match); if (fr) emitTo(fr, 'match:update', payload);
     const lr = leagueRoom(match);  if (lr) emitTo(lr, 'match:update', payload);
   });
+
+  // Exposto para o /diag — qtde acumulada e por evento.
+  // Atribuição via referência módulo (closure preservado).
+  _getEmitCountersImpl = () => ({ ...emitCounters, sockets: ns.sockets.size });
 
   events.on('match:remove', ({ matchId, match }) => {
     if (!allow()) return;
@@ -505,4 +547,6 @@ function lite(m) {
   };
 }
 
-module.exports = { attachFootballRealtime };
+function getEmitCounters() { return _getEmitCountersImpl(); }
+
+module.exports = { attachFootballRealtime, getEmitCounters };

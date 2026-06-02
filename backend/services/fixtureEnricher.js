@@ -424,6 +424,18 @@ class FixtureEnricher {
 
       applyEnrichment(match, statsResp, eventsResp);
       match.enrichedPartial = false;
+
+      // [STAT TRACE 2/6] enricher — após o normalizer já ter mesclado em
+      // match.stats. Confirma que o objeto enriquecido em cache reflete os
+      // mesmos números do response cru.
+      try {
+        const statTrace = require('./statTrace');
+        statTrace.trace('enricher', id, {
+          stats: match.stats,
+          extra: { enrichedAt: match.enrichedAt, enrichedPartial: false },
+        });
+      } catch (_) { /* defensivo */ }
+
       this._emitEnriched(match, id, false);
       return { ok: true, fixtureId: id };
     } catch (err) {

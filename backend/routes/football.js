@@ -283,6 +283,27 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     const allLive = await liveMatches();
     const matches = annotateMatches(applyFilters(allLive, req.query));
     ensureAllMinimal(matches);
+
+    // [STAT TRACE 4/6] rest-live — payload final entregue pelo /api/football/live.
+    try {
+      const statTrace = require('../services/statTrace');
+      const target = statTrace.getTarget();
+      if (target.id) {
+        const targetMatch = matches.find((m) => String(m.fixtureId || m.id) === target.id);
+        if (targetMatch) {
+          statTrace.trace('rest-live', target.id, {
+            stats: targetMatch.stats,
+            extra: {
+              enriched: !!targetMatch.enriched,
+              enrichedPartial: !!targetMatch.enrichedPartial,
+              statsKeys: targetMatch.stats ? Object.keys(targetMatch.stats) : [],
+              minute: targetMatch.minute,
+            },
+          });
+        }
+      }
+    } catch (_) { /* defensivo */ }
+
     res.json({
       ok: true,
       count: matches.length,
@@ -882,6 +903,11 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     const sinceMs = req.query.sinceMs ? Number(req.query.sinceMs) : 0;
     let signals = betSignalEngine.listRecent({ limit, market, minConfidence, sinceMs });
 
+    // Painel restrito aos 5 mercados ativos (remove WIN/1X2 legado que possa
+    // ainda estar no ring buffer de sinais anteriores ao corte).
+    const ALLOWED_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder']);
+    signals = signals.filter((s) => ALLOWED_MARKETS.has(s.market));
+
     if (!isPrem) {
       // FREE: filtra para mostrar apenas sinais 'free' (tier='free') e remove detalhes
       signals = signals
@@ -975,6 +1001,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     // apiFootball direto (não do footballProvider, que usa delegate).
     let statsCallDiag = null;
     let enricherSnap = null;
+    let socketEmits = null;
+    let pollerFunnel = null;
     try {
       const apiFootballMod = require('../services/apiFootball');
       statsCallDiag = apiFootballMod.getFixtureStatistics?.diagSnapshot?.() || null;
@@ -983,6 +1011,11 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       const { getEnricher } = require('../services/fixtureEnricher');
       enricherSnap = getEnricher().snapshot();
     } catch (_) { enricherSnap = null; }
+    try {
+      const rt = require('../services/footballRealtime');
+      socketEmits = rt.getEmitCounters?.() || null;
+    } catch (_) { socketEmits = null; }
+    try { pollerFunnel = poller.getLastFeedCompare?.() || null; } catch (_) { pollerFunnel = null; }
 
     // Sample do match cache: corners do top-3 live para validar pipeline
     let sampleMatchStats = [];
@@ -1040,6 +1073,12 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
         systemQueue: enricherSnap.systemQueue,
         stats: enricherSnap.stats,
       } : null,
+
+      // FUNIL DE MATCHES — onde os jogos são reduzidos:
+      //   apiRaw → blacklist → priority → liveStatus → cache → getMatches
+      //   → socket emits
+      pollerFunnel,
+      socketEmits,
       sampleMatchStats,
       lastTickByMarket: engineSnap?.lastTickByMarket || null,
       lastCornersStats: engineSnap?.lastCornersStats || null,
@@ -1087,6 +1126,312 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       },
     });
   });
+
+  /**
+   * GET /api/football/bet-signals/diag/decisions/:id
+   *
+   * Lista as últimas N decisões do bet engine para um fixtureId específico.
+   * Mostra exatamente em qual etapa cada sinal foi descartado e os
+   * números (conf/prob/odd) que levaram ao drop.
+   *
+   * Auth: requireAuth(db) OU ?token=$METRICS_TOKEN
+   * Query: ?limit=30 (max 30 — tamanho do ring buffer por fixture)
+   *
+   * Quando o usuário quer entender "por que esse jogo do Bayern não
+   * gerou nenhum sinal apesar de stats reais", essa rota responde:
+   *   - corners DROP low-confidence conf=58 < 65
+   *   - btts    DROP odd-out-of-range odd=1.43 < 1.80
+   *   - win     DROP odd-out-of-range odd=1.45 < 1.80
+   */
+  router.get('/bet-signals/diag/decisions/:id', diagAuth, (req, res) => {
+    noStore(res);
+    const id = String(req.params.id);
+    const limit = Math.min(30, Math.max(1, Number(req.query.limit) || 30));
+    const decisions = betSignalEngine.getDecisionsFor(id, { limit });
+
+    // Agregação por (market, result/reason) — útil pra ver padrão
+    const byMarket = {};
+    for (const d of decisions) {
+      const k = d.market;
+      if (!byMarket[k]) byMarket[k] = { total: 0, emit: 0, dropByReason: {} };
+      byMarket[k].total++;
+      if (d.result === 'EMIT') byMarket[k].emit++;
+      else {
+        const r = d.reason || 'unknown';
+        byMarket[k].dropByReason[r] = (byMarket[k].dropByReason[r] || 0) + 1;
+      }
+    }
+
+    res.json({
+      ok: true,
+      fixtureId: id,
+      count: decisions.length,
+      summary: byMarket,
+      decisions: decisions.map((d) => ({
+        ts: new Date(d.ts).toISOString(),
+        market: d.market,
+        result: d.result,
+        reason: d.reason || null,
+        confidence: d.confidence ?? null,
+        threshold: d.threshold ?? null,
+        probability: d.probability ?? null,
+        odd: d.odd ?? null,
+        oddRange: d.oddRange ?? null,
+        prediction: d.prediction ?? null,
+        extras: d.extras ?? null,
+        justification: d.justification ?? null,
+        cooldownMs: d.cooldownMs ?? null,
+        match: d.match ?? null,
+        min: d.min ?? null,
+      })),
+    });
+  });
+
+  /**
+   * GET /api/football/bet-signals/diag/decisions
+   *
+   * Lista os fixtures com decisões em buffer (auxiliar pra
+   * descobrir IDs sem precisar do /live).
+   */
+  router.get('/bet-signals/diag/decisions', diagAuth, (req, res) => {
+    noStore(res);
+    res.json({
+      ok: true,
+      fixtures: betSignalEngine.listDecisionFixtures({ limit: 50 }),
+    });
+  });
+
+  /**
+   * GET /api/football/bet-signals/diag/markets
+   *
+   * Funil de sinais separado pelos 5 mercados de produto:
+   *   btts | over25 | under25 | cornersOver | cornersUnder
+   *
+   * Para cada mercado:
+   *   {
+   *     candidates: <compute*Bet() != null>,
+   *     emitted:    <passou todos os gates>,
+   *     drops:      { compute-null, low-confidence, odd-out-of-range,
+   *                   cooldown, market-not-implemented }
+   *   }
+   *
+   * Inclui também:
+   *   - preGate           : not-enriched / no-stats / minute-out-of-range
+   *                         (são DROPS que acontecem ANTES do loop por
+   *                         mercado — afetam os 5 mercados igualmente)
+   *   - lastTick          : snapshot do tick mais recente
+   *   - thresholds        : valores ativos de minConfidence / oddRange / ...
+   *   - notes             : status de implementação por mercado
+   *   - pollerFunnel      : apiRaw → blacklist → liveStatus → cache
+   *                         (responde "por que só 3 jogos")
+   *   - liveMatches       : tamanho atual de poller.getMatches()
+   *
+   * Auth: requireAuth(db) OU ?token=$METRICS_TOKEN.
+   * Não altera nenhum cálculo, threshold ou filtro — apenas relata.
+   */
+  router.get('/bet-signals/diag/markets', diagAuth, (req, res) => {
+    noStore(res);
+
+    let funnel = null;
+    try { funnel = betSignalEngine.getMarketFunnel?.() || null; } catch (_) { funnel = null; }
+
+    let pollerFunnel = null;
+    let liveMatches = null;
+    try {
+      const poller = getPoller();
+      pollerFunnel = poller.getLastFeedCompare?.() || null;
+      liveMatches = (poller.getMatches?.() || []).length;
+    } catch (_) { /* defensivo */ }
+
+    let enricherSnap = null;
+    try {
+      const { getEnricher } = require('../services/fixtureEnricher');
+      enricherSnap = getEnricher().snapshot();
+    } catch (_) { enricherSnap = null; }
+
+    res.json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+
+      // === SHAPE PRINCIPAL pedido pelo produto ===
+      btts:         funnel?.markets?.btts         || { candidates: 0, emitted: 0, drops: {} },
+      over25:       funnel?.markets?.over25       || { candidates: 0, emitted: 0, drops: {} },
+      under25:      funnel?.markets?.under25      || { candidates: 0, emitted: 0, drops: {} },
+      cornersOver:  funnel?.markets?.cornersOver  || { candidates: 0, emitted: 0, drops: {} },
+      cornersUnder: funnel?.markets?.cornersUnder || { candidates: 0, emitted: 0, drops: {} },
+
+      // === metadados de diagnóstico ===
+      lastTick:     funnel?.lastTick     || null,
+      preGate:      funnel?.preGate      || null,
+      thresholds:   funnel?.thresholds   || null,
+      notes:        funnel?.notes        || null,
+      lastTickAt:   funnel?.lastTickAt   || null,
+
+      // === investigação "por que só 3 jogos" ===
+      // pollerFunnel.apiRawCount     -> quantos jogos a API devolveu
+      // pollerFunnel.purgedByBlacklist -> removidos pela blacklist de ligas
+      // pollerFunnel.purgedByLiveStatus -> removidos pelo isLiveMatch()
+      // pollerFunnel.cacheSize       -> permanecem no cache
+      // pollerFunnel.restGetMatchesCount -> entregues a /live e ao engine
+      pollerFunnel,
+      liveMatches,
+      enricher: enricherSnap ? {
+        enabled: enricherSnap.enabled,
+        running: enricherSnap.running,
+        autoTop: enricherSnap.autoTop,
+        pollerEnrichTop: enricherSnap.pollerEnrichTop,
+        tracked: enricherSnap.tracked,
+        inflight: enricherSnap.inflight,
+        stats: enricherSnap.stats,
+      } : null,
+    });
+  });
+
+  /**
+   * POST /api/football/bet-signals/diag/trace-front
+   *
+   * Endpoint best-effort para o frontend reportar [STAT TRACE 6/6] e
+   * fechar o ciclo no /diag/trace/:id consolidado. Sem auth — payload
+   * é só { fixtureId, flat:{ corners, shots, ... } }.
+   */
+  router.post('/bet-signals/diag/trace-front', express.json({ limit: '4kb' }), (req, res) => {
+    try {
+      const statTrace = require('../services/statTrace');
+      const id = String(req.body?.fixtureId || '');
+      const flat = req.body?.flat || {};
+      if (id) statTrace.trace('front-render', id, { flat, extra: { source: 'browser' } });
+    } catch (_) { /* defensivo */ }
+    res.json({ ok: true });
+  });
+
+  /**
+   * GET /api/football/bet-signals/diag/trace/:id
+   *
+   * Devolve um JSON ÚNICO com os 6 estágios do pipeline para o fixtureId
+   * pedido, mostrando os mesmos 5 campos (corners, shots, shotsOnTarget,
+   * dangerousAttacks, attacks) em cada estágio.
+   *
+   * Os estágios 1-3 vêm do buffer de statTrace.js (alimentado em runtime
+   * pelo enricher); 4-5 são preenchidos sob demanda pelo handler;
+   * 6 (front-render) é coletado pelo navegador (ver dashboard.js).
+   *
+   * Auth: requireAuth(db) OU ?token=$METRICS_TOKEN
+   *
+   * Para FORÇAR o tracing de um id específico, defina
+   * STAT_TRACE_FIXTURE_ID=… em runtime, ou bata neste endpoint passando
+   * o id desejado — ele vira o auto-target por 5 minutos.
+   */
+  router.get('/bet-signals/diag/trace/:id', diagAuth, asyncHandler(async (req, res) => {
+    noStore(res);
+    const id = String(req.params.id);
+    const statTrace = require('../services/statTrace');
+    statTrace.setAutoTarget(id); // garante que próximos ticks tracem este id
+
+    const buf = statTrace.snapshot(id) || {};
+
+    // Adiciona estágio 4 (rest-live) sob demanda — chama o mesmo pipeline
+    // do GET /api/football/live para esse fixture específico.
+    const allLive = poller.getMatches?.() || [];
+    const targetMatch = allLive.find((m) => String(m.fixtureId || m.id) === id);
+    if (targetMatch) {
+      buf['rest-live-now'] = {
+        ts: Date.now(),
+        stats: targetMatch.stats || null,
+        flat: {
+          corners: targetMatch.stats?.corners?.total ?? null,
+          shots: targetMatch.stats?.shots?.total ?? null,
+          shotsOnTarget: targetMatch.stats?.shotsOnTarget?.total ?? null,
+          dangerousAttacks: targetMatch.stats?.dangerousAttacks?.total ?? null,
+          attacks: targetMatch.stats?.attacks?.total ?? null,
+        },
+        extra: {
+          enriched: !!targetMatch.enriched,
+          enrichedPartial: !!targetMatch.enrichedPartial,
+          minute: targetMatch.minute,
+          home: targetMatch.home, away: targetMatch.away,
+        },
+      };
+    }
+
+    // Helper para extrair os 5 campos de qualquer stage
+    function flatten(stage) {
+      if (!stage) return null;
+      const f = stage.flat || {};
+      const s = stage.stats || {};
+      return {
+        corners: f.corners ?? s?.corners?.total ?? null,
+        shots: f.shots ?? s?.shots?.total ?? null,
+        shotsOnTarget: f.shotsOnTarget ?? s?.shotsOnTarget?.total ?? null,
+        dangerousAttacks: f.dangerousAttacks ?? s?.dangerousAttacks?.total ?? null,
+        attacks: f.attacks ?? s?.attacks?.total ?? null,
+      };
+    }
+
+    const stages = {
+      stage1_apiRaw:           flatten(buf['api-raw']),
+      stage2_enricher:         flatten(buf['enricher']),
+      stage3_normalizer:       flatten(buf['normalizer']),
+      stage4_restLiveNow:      flatten(buf['rest-live-now']),
+      stage4_restLiveLastEmit: flatten(buf['rest-live']),
+      stage5_socketEmit:       flatten(buf['socket-emit']),
+      stage6_frontRender:      flatten(buf['front-render']) || '⚠ veja [STAT TRACE 6/6] no console DevTools do navegador',
+    };
+
+    // Detecta em qual stage os campos zeram/desaparecem
+    const stageOrder = ['stage1_apiRaw', 'stage2_enricher', 'stage3_normalizer', 'stage4_restLiveNow', 'stage5_socketEmit'];
+    let dropDetectedAt = null;
+    let prev = null;
+    for (const k of stageOrder) {
+      const s = stages[k];
+      if (!s) continue;
+      if (prev) {
+        const fields = ['corners', 'shots', 'shotsOnTarget', 'dangerousAttacks', 'attacks'];
+        const lostFields = fields.filter((f) => (prev[f] || 0) > 0 && !(s[f] > 0));
+        if (lostFields.length) {
+          dropDetectedAt = { from: prev._stage, to: k, fieldsLost: lostFields, prev, current: s };
+          break;
+        }
+      }
+      if (s) prev = { ...s, _stage: k };
+    }
+
+    // Hint humano
+    let hint = null;
+    if (!buf['api-raw'] && !buf['normalizer']) {
+      hint = 'Nenhum trace gravado. Aguarde 1 ciclo do enricher (~30s) ou ENRICH_ENABLED=false bloqueia api-raw.';
+    } else if (buf['normalizer']?.extra?.mode === 'MINIMAL') {
+      hint = 'Stage 3 está em modo MINIMAL — applyMinimalEnrichment está zerando tudo (cenário ENRICH_ENABLED=false / safeMode).';
+    } else if (dropDetectedAt) {
+      hint = `Stats foram perdidos entre ${dropDetectedAt.from} e ${dropDetectedAt.to} nos campos ${dropDetectedAt.fieldsLost.join(', ')}.`;
+    } else {
+      const lastBackend = stages.stage5_socketEmit || stages.stage4_restLiveNow;
+      if (lastBackend && Object.values(lastBackend).every((v) => !v)) {
+        hint = 'Backend está zerado em todos os stages backend. Causa: enricher não rodou (verifique ENRICH_ENABLED) ou API devolveu vazio (veja /diag/stats/:id).';
+      }
+    }
+
+    res.json({
+      ok: true,
+      fixtureId: id,
+      target: statTrace.getTarget(),
+      stages,
+      timestamps: {
+        apiRaw:      buf['api-raw']?.ts ? new Date(buf['api-raw'].ts).toISOString() : null,
+        enricher:    buf['enricher']?.ts ? new Date(buf['enricher'].ts).toISOString() : null,
+        normalizer:  buf['normalizer']?.ts ? new Date(buf['normalizer'].ts).toISOString() : null,
+        restLive:    buf['rest-live']?.ts ? new Date(buf['rest-live'].ts).toISOString() : null,
+        socketEmit:  buf['socket-emit']?.ts ? new Date(buf['socket-emit'].ts).toISOString() : null,
+        frontRender: buf['front-render']?.ts ? new Date(buf['front-render'].ts).toISOString() : null,
+      },
+      dropDetectedAt,
+      hint,
+      raw: {
+        normalizerExtra: buf['normalizer']?.extra || null,
+        apiRawTypes:     buf['api-raw']?.raw?.types || null,
+        apiTeamsCount:   buf['api-raw']?.raw?.teamsCount ?? null,
+      },
+    });
+  }));
 
   /**
    * GET /api/football/bet-signals/diag/stats/:id

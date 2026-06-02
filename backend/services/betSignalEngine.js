@@ -1,11 +1,16 @@
 /**
  * Robotrend IA — Bet Signal Engine v1
  *
- * Motor de sinais focado em VALOR (value betting) para 3 mercados:
+ * Motor de sinais focado em VALOR (value betting) para 5 mercados:
  *
- *   1. CORNERS   — Over X.5 escanteios (projeção via ritmo + ataques)
- *   2. BTTS      — Ambas marcam: Sim / Não (probabilidade Poisson)
- *   3. WIN (1X2) — Vitória home / Empate / Vitória away (1X2 baseado em xG)
+ *   1. CORNERS OVER  — Over X.5 escanteios (projeção via ritmo + ataques)
+ *   2. CORNERS UNDER — Under X.5 escanteios (mesma projeção, lado oposto)
+ *   3. BTTS          — Ambas marcam: Sim / Não (probabilidade Poisson)
+ *   4. OVER 2.5      — Total de gols >= 3 (Poisson sobre λ_total restante)
+ *   5. UNDER 2.5     — Total de gols <= 2 (1 - P(Over 2.5))
+ *
+ * WIN (1X2) foi REMOVIDO da geração de sinais (computeWinBet permanece
+ * definido mas não entra mais em processMatch).
  *
  * REGRAS GERAIS:
  *   - ZERO chamadas externas de API. Lê apenas `poller.getMatches()` e os
@@ -13,15 +18,15 @@
  *   - Tick periódico (default 90s = 1.5min, entre 1–2min como pedido).
  *   - Emite signal:new no event bus → footballRealtime broadcasta no socket.
  *   - Filtros obrigatórios antes de emitir:
- *       confidence  >= 70%
- *       oddEstimada in [1.80, 2.20]    (zona de valor / payoff "honesto")
+ *       confidence  >= 60% (FREE) / 70% (PREMIUM)
+ *       oddEstimada in [1.50, 3.00]    (zona de valor ampliada)
  *       minuto      in [20, 85]         (descarta começo/recta-final ruidoso)
  *   - Cooldown por (matchId × market) — não repete o mesmo sinal por 10min.
  *
  * SAÍDA POR SINAL:
  *   {
  *     type: 'bet:opportunity',
- *     market: 'corners' | 'btts' | 'win',
+ *     market: 'corners' | 'cornersUnder' | 'btts' | 'over25' | 'under25',
  *     prediction: 'Over 9.5 escanteios' | 'Ambas marcam: Sim' | 'Vitória Flamengo',
  *     probability: 0..100,           // P(outcome) estimada pelo modelo
  *     confidence:  0..100,           // qualidade do sinal (corroboração, sample)
@@ -74,17 +79,17 @@ const TEST_MODE      = String(process.env.BET_SIGNAL_TEST_MODE || 'false').toLow
 const TEST_MIN_CONF  = Number(process.env.BET_SIGNAL_TEST_MIN_CONFIDENCE || 70);
 
 // Tier FREE (entrada baixa, sinais mais amplos)
-const FREE_MIN_CONFIDENCE    = Number(process.env.BET_SIGNAL_FREE_MIN_CONFIDENCE    || 65);
+const FREE_MIN_CONFIDENCE    = Number(process.env.BET_SIGNAL_FREE_MIN_CONFIDENCE    || 60);
 // Tier PREMIUM (qualidade — só sinais fortes)
-const PREMIUM_MIN_CONFIDENCE = Number(process.env.BET_SIGNAL_PREMIUM_MIN_CONFIDENCE || 75);
+const PREMIUM_MIN_CONFIDENCE = Number(process.env.BET_SIGNAL_PREMIUM_MIN_CONFIDENCE || 70);
 // Compat: MIN_CONFIDENCE = piso geral para emitir (= FREE).
 // Em TEST_MODE força o piso para TEST_MIN_CONF (default 70).
 const MIN_CONFIDENCE = TEST_MODE
   ? TEST_MIN_CONF
   : Math.min(FREE_MIN_CONFIDENCE, Number(process.env.BET_SIGNAL_MIN_CONFIDENCE || FREE_MIN_CONFIDENCE));
 
-const MIN_ODD        = TEST_MODE ? 1.20 : Number(process.env.BET_SIGNAL_MIN_ODD || 1.80);
-const MAX_ODD        = TEST_MODE ? 10.0 : Number(process.env.BET_SIGNAL_MAX_ODD || 2.20);
+const MIN_ODD        = TEST_MODE ? 1.20 : Number(process.env.BET_SIGNAL_MIN_ODD || 1.50);
+const MAX_ODD        = TEST_MODE ? 10.0 : Number(process.env.BET_SIGNAL_MAX_ODD || 3.00);
 const COOLDOWN_MS    = TEST_MODE ? 0    : Number(process.env.BET_SIGNAL_COOLDOWN_MS || 10 * 60_000);
 const MIN_MINUTE     = TEST_MODE ? 1    : Number(process.env.BET_SIGNAL_MIN_MINUTE  || 20);
 const MAX_MINUTE     = TEST_MODE ? 120  : Number(process.env.BET_SIGNAL_MAX_MINUTE  || 85);
@@ -415,6 +420,125 @@ function computeCornersBet(m) {
 }
 
 /* ============================================================
+   1b) CORNERS UNDER — Under X.5 escanteios
+   ------------------------------------------------------------
+   Mercado espelho do Over: usa EXATAMENTE a mesma projeção
+   (rate, projected, sigma, sigmoide tanh) de computeCornersBet.
+   Não altera nenhuma fórmula existente — apenas seleciona a linha
+   onde P(under) está na zona de valor (30–70%) e inverte os bônus
+   de corroboração ofensiva (mais pressão ⇒ menor prob de Under).
+   ============================================================ */
+function computeCornersUnderBet(m) {
+  const min = Math.max(1, n(m.minute));
+  const remaining = Math.max(0, 95 - min);
+  const cornH = n(m.stats?.corners?.home);
+  const cornA = n(m.stats?.corners?.away);
+  const total = cornH + cornA;
+  const advanced = hasAdvancedStats(m);
+  const dangH = n(m.stats?.dangerousAttacks?.home);
+  const dangA = n(m.stats?.dangerousAttacks?.away);
+  const dangBal = Math.min(dangH, dangA);
+  const pressure = n(m.perMinute?.pressureIndex);
+  const sotH = n(m.stats?.shotsOnTarget?.home);
+  const sotA = n(m.stats?.shotsOnTarget?.away);
+  const sotBal = Math.min(sotH, sotA);
+
+  if (remaining < 5) return null;
+
+  // RATE — idêntico ao Over (mesma fonte/baseline)
+  let rate;
+  let rateSource;
+  if (total > 0) {
+    rate = total / min;
+    rateSource = 'observed';
+  } else if (n(m.perMinute?.corners) > 0) {
+    rate = n(m.perMinute.corners);
+    rateSource = 'perMinute';
+  } else if (!advanced) {
+    rate = BASELINE_CORNERS_PER_MIN;
+    rateSource = 'baseline';
+  } else {
+    return null;
+  }
+
+  const expectedAdd = rate * remaining;
+  const projected = total + expectedAdd;
+  const sigma = Math.max(0.9, Math.sqrt(Math.max(1, expectedAdd)));
+
+  // Varre targets buscando P(under) ≈ 50% (zona de valor).
+  // P(under X.5) = 100 - P(over X.5); usa a MESMA sigmoide do Over.
+  let best = null;
+  const minTarget = Math.max(Math.floor(total), 4);
+  const maxTarget = Math.max(minTarget + 1, Math.ceil(projected) + 4);
+  const probsByTarget = [];
+  for (let target = minTarget; target <= maxTarget; target++) {
+    const z = (projected - (target + 0.5)) / sigma;
+    const probOver = clamp(Math.round(50 + 50 * Math.tanh(z * 0.85)), 5, 95);
+    const probUnder = 100 - probOver;
+    probsByTarget.push({ target, prob: probUnder });
+    if (probUnder < 30 || probUnder > 70) continue;
+    if (!best || Math.abs(probUnder - 50) < Math.abs(best.prob - 50)) {
+      best = { target, prob: probUnder };
+    }
+  }
+  if (!best) {
+    if (PIPELINE_LOG) {
+      console.log(
+        `[CORNERS UNDER] DROP no-target-in-band | fixtureId=${m.fixtureId || m.id} | ` +
+        `total=${total} rate=${rate.toFixed(2)} (${rateSource}) projected=${projected.toFixed(1)}`
+      );
+    }
+    return null;
+  }
+
+  // Corroboração ofensiva — INVERSA do Over: mais pressão diminui Under.
+  let probability = best.prob;
+  if (dangBal >= 40) probability -= 3;
+  if (pressure >= 60) probability -= 2;
+  if (sotBal >= 3)   probability -= 2;
+  probability = clamp(probability, 25, 75);
+
+  // Confiança — mesma escala do Over.
+  let confidence = advanced ? 45 : 40;
+  if (min >= 30)    confidence += 10;
+  if (min >= 55)    confidence += 8;
+  if (rate >= 0.18) confidence += 10;
+  if (rate >= 0.28) confidence += 5;
+  if (advanced) {
+    if (dangBal >= 25)  confidence += 5;
+    if (dangBal >= 50)  confidence += 5;
+    if (sotBal >= 2)    confidence += 5;
+    if (pressure >= 55) confidence += 5;
+  } else {
+    const tied = n(m.score?.home) === n(m.score?.away);
+    if (tied)        confidence += 5;
+    if (min >= 65)   confidence += 5;
+  }
+  confidence = clamp(confidence, 0, 95);
+
+  return {
+    market: 'cornersUnder',
+    prediction: `Under ${best.target}.5 escanteios`,
+    probability,
+    confidence,
+    oddEstimated: probToOdd(probability),
+    justification:
+      `${total} escanteios em ${min}′ (${rate.toFixed(2)}/min, fonte=${rateSource}) → projeção ${projected.toFixed(1)}. ` +
+      `Ataques ${dangH}/${dangA}, pressão ${Math.round(pressure)}.`,
+    extras: {
+      target: best.target,
+      currentCorners: total,
+      projected: +projected.toFixed(1),
+      ratePerMin: +rate.toFixed(2),
+      rateSource,
+      sigma: +sigma.toFixed(2),
+      advanced,
+      direction: 'under',
+    },
+  };
+}
+
+/* ============================================================
    2) BTTS — Ambas Marcam (Sim/Não)
    Lógica: P(time marca no tempo restante) via Poisson com λ derivado
    de finalizações no alvo + ataques perigosos + escanteios.
@@ -517,6 +641,169 @@ function computeBttsBet(m) {
       lambdaHomeRemaining: +lamH.toFixed(2),
       lambdaAwayRemaining: +lamA.toFixed(2),
       baseline: !advanced,
+    },
+  };
+}
+
+/* ============================================================
+   2b) GOALS — Over/Under 2.5 gols
+   ------------------------------------------------------------
+   Modelo: Poisson(λ_total) sobre gols REMANESCENTES.
+     λ_total = λ_home + λ_away  (Poissons independentes somam)
+   Inputs IDÊNTICOS ao computeBttsBet:
+     - minute, score
+     - shotsOnTarget, dangerousAttacks, corners (já lidos no fixtureNormalizer)
+     - possession + pressure (via baselineXG quando sem stats avançadas)
+   Conversão xG → λ usa os MESMOS coeficientes de BTTS:
+     SoT × 0.22  Dang × 0.005  Corner × 0.04
+   Sem stats avançadas, cai no baselineXG (mesmo fallback de BTTS).
+
+   Probabilidade:
+     N_remaining ~ Poisson(λ_total)
+     goalsNeeded = 3 - goalsAlready  (>=1 enquanto goalsAlready<3)
+     P(Over 2.5)  = P(N_remaining >= goalsNeeded)
+     P(Under 2.5) = 1 - P(Over 2.5)
+
+   Já resolvido (3+ gols marcados) → null em ambos os mercados, sem valor.
+
+   Confiança: mesma escala usada em BTTS (45 base + bônus de minuto +
+   ritmo de finalização + ataques perigosos balanceados). Não altera
+   nem MIN_CONFIDENCE, nem oddRange, nem cooldown — esses gates seguem
+   sendo aplicados em processMatch.
+   ============================================================ */
+
+/**
+ * Helper compartilhado entre Over 2.5 e Under 2.5. Centraliza o cálculo
+ * de λ por time + λ_total e a confiança base, garantindo que os dois
+ * mercados usem EXATAMENTE os mesmos números.
+ */
+function _goalsRemainingModel(m) {
+  const min = Math.max(1, n(m.minute));
+  const remaining = Math.max(0, 95 - min);
+  const sh = n(m.score?.home);
+  const sa = n(m.score?.away);
+  const goalsAlready = sh + sa;
+
+  const sotH = n(m.stats?.shotsOnTarget?.home);
+  const sotA = n(m.stats?.shotsOnTarget?.away);
+  const dangH = n(m.stats?.dangerousAttacks?.home);
+  const dangA = n(m.stats?.dangerousAttacks?.away);
+  const cornH = n(m.stats?.corners?.home);
+  const cornA = n(m.stats?.corners?.away);
+  const advanced = hasAdvancedStats(m);
+
+  // Mesma fórmula de λ usada em computeBttsBet
+  function lambdaRestante(sot, dang, corn) {
+    const xgAcum = sot * 0.22 + dang * 0.005 + corn * 0.04;
+    const xgPorMin = xgAcum / Math.max(1, min);
+    return Math.max(0, xgPorMin * remaining);
+  }
+
+  let lamH, lamA;
+  if (advanced) {
+    lamH = lambdaRestante(sotH, dangH, cornH);
+    lamA = lambdaRestante(sotA, dangA, cornA);
+  } else {
+    const base = baselineXG(m);
+    lamH = base.lamHRest;
+    lamA = base.lamARest;
+  }
+  const lamTotal = lamH + lamA;
+
+  // P(N_remaining >= goalsNeeded) com Poisson(lamTotal)
+  // = 1 - sum_{k=0}^{goalsNeeded-1} P(N=k)
+  const goalsNeeded = Math.max(1, 3 - goalsAlready);
+  let cdfBelow = 0; // P(N < goalsNeeded) = P(N <= goalsNeeded-1)
+  for (let k = 0; k < goalsNeeded; k++) cdfBelow += poisson(lamTotal, k);
+  const pOverRaw = clamp(1 - cdfBelow, 0, 1);
+
+  // Confiança — espelha computeBttsBet (45 base + mesmos bônus)
+  const sotRate = (sotH + sotA) / Math.max(1, min);
+  let confidence = 45;
+  if (min >= 35) confidence += 8;
+  if (min >= 55) confidence += 8;
+  if (min >= 70) confidence += 6;
+  if (advanced) {
+    if (sotRate >= 0.06)              confidence += 8;
+    if (sotRate >= 0.10)              confidence += 4;
+    if (Math.min(sotH, sotA) >= 2)    confidence += 8;
+    if (Math.min(dangH, dangA) >= 20) confidence += 5;
+  } else {
+    confidence += 4;                          // base extra (substituí parte do bônus de stats)
+    if (min >= 30)            confidence += 4;
+    if (min >= 60)            confidence += 4;
+    if (goalsAlready >= 1)    confidence += 6; // jogo com gol = mais sinal
+  }
+  if (goalsAlready >= 1)      confidence += 4;
+  confidence = clamp(confidence, 0, 95);
+
+  return {
+    min, remaining, sh, sa, goalsAlready, goalsNeeded,
+    sotH, sotA, dangH, dangA, cornH, cornA, sotRate,
+    advanced,
+    lamH, lamA, lamTotal,
+    pOverRaw,
+    confidence,
+  };
+}
+
+function computeOver25Bet(m) {
+  const r = _goalsRemainingModel(m);
+  // Já resolvido: 3+ gols marcados → mercado pago, sem valor sinalizar
+  if (r.goalsAlready >= 3) return null;
+
+  const probability = clamp(Math.round(r.pOverRaw * 100), 5, 95);
+
+  return {
+    market: 'over25',
+    prediction: 'Over 2.5 gols',
+    probability,
+    confidence: r.confidence,
+    oddEstimated: probToOdd(probability),
+    justification: r.advanced
+      ? (`${r.sh}×${r.sa} em ${r.min}′. SoT H:${r.sotH}/A:${r.sotA}, ataques perigosos ${r.dangH}/${r.dangA}. ` +
+         `λ restante=${r.lamTotal.toFixed(2)} (precisa de +${r.goalsNeeded}) → P(Over 2.5)=${probability}%.`)
+      : (`${r.sh}×${r.sa} em ${r.min}′ (modelo baseline). λ restante=${r.lamTotal.toFixed(2)} ` +
+         `(precisa de +${r.goalsNeeded}) → P(Over 2.5)=${probability}%.`),
+    extras: {
+      direction: 'over',
+      goalsCurrent: r.goalsAlready,
+      goalsNeeded: r.goalsNeeded,
+      lambdaTotalRemaining: +r.lamTotal.toFixed(2),
+      lambdaHomeRemaining: +r.lamH.toFixed(2),
+      lambdaAwayRemaining: +r.lamA.toFixed(2),
+      baseline: !r.advanced,
+    },
+  };
+}
+
+function computeUnder25Bet(m) {
+  const r = _goalsRemainingModel(m);
+  // Já resolvido: 3+ gols marcados → Under já perdeu
+  if (r.goalsAlready >= 3) return null;
+
+  const pUnder = clamp(1 - r.pOverRaw, 0, 1);
+  const probability = clamp(Math.round(pUnder * 100), 5, 95);
+
+  return {
+    market: 'under25',
+    prediction: 'Under 2.5 gols',
+    probability,
+    confidence: r.confidence,
+    oddEstimated: probToOdd(probability),
+    justification: r.advanced
+      ? (`${r.sh}×${r.sa} em ${r.min}′. SoT H:${r.sotH}/A:${r.sotA}, ataques perigosos ${r.dangH}/${r.dangA}. ` +
+         `λ restante=${r.lamTotal.toFixed(2)} (Over precisaria +${r.goalsNeeded}) → P(Under 2.5)=${probability}%.`)
+      : (`${r.sh}×${r.sa} em ${r.min}′ (modelo baseline). λ restante=${r.lamTotal.toFixed(2)} ` +
+         `(Over precisaria +${r.goalsNeeded}) → P(Under 2.5)=${probability}%.`),
+    extras: {
+      direction: 'under',
+      goalsCurrent: r.goalsAlready,
+      goalsNeeded: r.goalsNeeded,
+      lambdaTotalRemaining: +r.lamTotal.toFixed(2),
+      lambdaHomeRemaining: +r.lamH.toFixed(2),
+      lambdaAwayRemaining: +r.lamA.toFixed(2),
+      baseline: !r.advanced,
     },
   };
 }
@@ -760,14 +1047,20 @@ function premiumInsight(c, m, scoreInfo) {
 
   const parts = [];
 
-  if (c.market === 'corners') {
+  if (c.market === 'corners' || c.market === 'cornersUnder') {
     const totalCorners = cornH + cornA;
     const totalDang = dangH + dangA;
-    parts.push(`📊 ${totalCorners} escanteios em ${min}′ (ritmo ${(totalCorners / Math.max(min, 1) * 90).toFixed(1)}/90′)`);
-    if (totalDang >= 60) parts.push(`⚡ Pressão ofensiva alta: ${totalDang} ataques perigosos`);
-    if (sotH + sotA >= 8) parts.push(`🎯 ${sotH + sotA} chutes no alvo — ataques produtivos`);
-    const sidePush = cornH > cornA + 2 ? home : cornA > cornH + 2 ? away : null;
-    if (sidePush) parts.push(`📈 ${sidePush} dominando a pressão lateral`);
+    const dir = c.market === 'cornersUnder' ? 'Under' : 'Over';
+    parts.push(`📊 ${totalCorners} escanteios em ${min}′ (ritmo ${(totalCorners / Math.max(min, 1) * 90).toFixed(1)}/90′) — alvo ${dir}`);
+    if (c.market === 'corners') {
+      if (totalDang >= 60) parts.push(`⚡ Pressão ofensiva alta: ${totalDang} ataques perigosos`);
+      if (sotH + sotA >= 8) parts.push(`🎯 ${sotH + sotA} chutes no alvo — ataques produtivos`);
+      const sidePush = cornH > cornA + 2 ? home : cornA > cornH + 2 ? away : null;
+      if (sidePush) parts.push(`📈 ${sidePush} dominando a pressão lateral`);
+    } else {
+      if (totalDang < 40) parts.push(`🛡️ Pressão ofensiva contida: só ${totalDang} ataques perigosos`);
+      if (min >= 65) parts.push(`⏱️ ${90 - min}′ restantes — ritmo de escanteios tende a se manter baixo`);
+    }
   } else if (c.market === 'btts') {
     const side = c.extras?.side;
     if (side === 'yes') {
@@ -790,6 +1083,21 @@ function premiumInsight(c, m, scoreInfo) {
     }
     if (probs) parts.push(`📈 Modelo: H ${probs.home}% / E ${probs.draw}% / F ${probs.away}%`);
     if (min >= 75) parts.push(`⏱️ Jogo "travado" em ${min}′ — placar tende a se manter`);
+  } else if (c.market === 'over25' || c.market === 'under25') {
+    const totalSot = sotH + sotA;
+    const totalDang = dangH + dangA;
+    const goalsCurrent = c.extras?.goalsCurrent ?? 0;
+    const goalsNeeded = c.extras?.goalsNeeded ?? null;
+    const lamTotal = c.extras?.lambdaTotalRemaining ?? null;
+    parts.push(`📊 ${goalsCurrent} gol(s) em ${min}′. SoT total ${totalSot}, ataques perigosos ${totalDang}.`);
+    if (lamTotal != null) parts.push(`λ restante=${lamTotal} (precisaria de +${goalsNeeded} para virar Over)`);
+    if (c.market === 'over25') {
+      if (totalSot >= 8 && min <= 60) parts.push(`🎯 Ritmo ofensivo alto cedo — janela favorável a Over`);
+      if (goalsCurrent >= 1)         parts.push(`⚽ Jogo já aberto — precisa de só +${goalsNeeded} gol(s)`);
+    } else {
+      if (totalSot <= 4 && min >= 60) parts.push(`🛡️ Defesas sólidas (${totalSot} chutes no alvo até ${min}′) — janela curta`);
+      if (min >= 75 && goalsCurrent <= 1) parts.push(`⏱️ ${90 - min}′ restantes para Over precisar de +${goalsNeeded}`);
+    }
   }
 
   if (scoreInfo) {
@@ -832,7 +1140,15 @@ function buildSignal(m, c) {
     suggestion: c.prediction,
     reasoning: c.justification,
     risk,
-    classification: { label: c.market.toUpperCase(), emoji: c.market === 'corners' ? '🚩' : c.market === 'btts' ? '🎯' : '🏆' },
+    classification: {
+      label: c.market.toUpperCase(),
+      emoji: c.market === 'corners'      ? '🚩'
+           : c.market === 'cornersUnder' ? '🚩'
+           : c.market === 'btts'         ? '🎯'
+           : c.market === 'over25'       ? '⚽'
+           : c.market === 'under25'      ? '🛡️'
+           : '🏆',
+    },
     createdAt: new Date().toISOString(),
   };
   // Score composto + insight premium
@@ -985,6 +1301,46 @@ function processMatch(m) {
     });
   }
 
+  // ============================================================
+  // [SIGNAL TRACE] — 1 linha estruturada por match no input do engine.
+  // Mostra exatamente O QUE o engine vai usar nas decisões de mercado.
+  // Formato grep-friendly:
+  //   [SIGNAL TRACE] fixtureId=X min=Y enriched=t mode=FULL|PARTIAL|MINIMAL
+  //   advanced=t corners=8 shots=14 sot=7 dang=78 pressure=2.30
+  // ============================================================
+  const sigStats = {
+    fixtureId: String(m.fixtureId || m.id || ''),
+    home: m.home, away: m.away,
+    score: `${n(m.score?.home)}-${n(m.score?.away)}`,
+    min: n(m.minute),
+    enriched: !!m.enriched,
+    enrichedPartial: !!m.enrichedPartial,
+    advanced,
+    corners: n(m.stats?.corners?.home) + n(m.stats?.corners?.away),
+    cornersHome: n(m.stats?.corners?.home),
+    cornersAway: n(m.stats?.corners?.away),
+    shots: n(m.stats?.shots?.home) + n(m.stats?.shots?.away),
+    sot: n(m.stats?.shotsOnTarget?.home) + n(m.stats?.shotsOnTarget?.away),
+    sotHome: n(m.stats?.shotsOnTarget?.home),
+    sotAway: n(m.stats?.shotsOnTarget?.away),
+    dang: n(m.stats?.dangerousAttacks?.home) + n(m.stats?.dangerousAttacks?.away),
+    dangHome: n(m.stats?.dangerousAttacks?.home),
+    dangAway: n(m.stats?.dangerousAttacks?.away),
+    pressure: +(n(m.perMinute?.pressureIndex)).toFixed(2),
+    possessionHome: n(m.stats?.possession?.home) || 50,
+  };
+  if (PIPELINE_LOG) {
+    console.log(
+      `[SIGNAL TRACE] fixtureId=${sigStats.fixtureId} ${sigStats.home} x ${sigStats.away} ` +
+      `score=${sigStats.score} min=${sigStats.min} enriched=${sigStats.enriched} ` +
+      `mode=${sigStats.enrichedPartial ? 'PARTIAL' : (sigStats.enriched ? 'FULL' : 'NONE')} advanced=${sigStats.advanced} ` +
+      `corners=${sigStats.corners}(${sigStats.cornersHome}/${sigStats.cornersAway}) ` +
+      `shots=${sigStats.shots} sot=${sigStats.sot}(${sigStats.sotHome}/${sigStats.sotAway}) ` +
+      `dang=${sigStats.dang}(${sigStats.dangHome}/${sigStats.dangAway}) ` +
+      `pressure=${sigStats.pressure} poss=${sigStats.possessionHome}%`
+    );
+  }
+
   // === Gate de dados ============================================
   // Em TEST_MODE processamos qualquer fixture (mesmo sem enriquecimento)
   // para o usuário ver SE alguma coisa estaria sendo gerada.
@@ -1005,27 +1361,41 @@ function processMatch(m) {
   recordFunnel('computed');
   m_processed.inc();
 
+  // === 5 mercados ativos (WIN/1X2 removido por decisão de produto) ===
   const rawCandidates = [
-    { market: 'corners', fn: () => computeCornersBet(m) },
-    { market: 'btts',    fn: () => computeBttsBet(m)    },
-    { market: 'win',     fn: () => computeWinBet(m)     },
+    { market: 'corners',      fn: () => computeCornersBet(m)      }, // cornersOver
+    { market: 'cornersUnder', fn: () => computeCornersUnderBet(m) },
+    { market: 'btts',         fn: () => computeBttsBet(m)         },
+    { market: 'over25',       fn: () => computeOver25Bet(m)       },
+    { market: 'under25',      fn: () => computeUnder25Bet(m)      },
   ];
 
   for (const { market, fn } of rawCandidates) {
     const c = safe(fn);
+    let decision = { market, fixtureId: sigStats.fixtureId, match: `${m.home} x ${m.away}`, min: sigStats.min };
+
     if (!c) {
       recordFunnel('compute-null');
+      recordMarketFunnel(market, 'compute-null');
       recordDrop({ stage: 'compute-null', market, match: matchSummary(m), reason: 'compute returned null (sem dados ou mercado resolvido)' });
+      console.log(`${marketTag(market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=compute-null`);
       if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP compute-null | ${m.home} x ${m.away} | market=${market} | motivo=sem dados ou mercado resolvido`);
+      decision = { ...decision, result: 'DROP', reason: 'compute-null', detail: 'sem dados ou mercado resolvido' };
+      logDecision(decision);
+      tickDecisions.push(decision);
       continue;
     }
+    recordMarketFunnel(market, 'candidate');
+    console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=CANDIDATE conf=${c.confidence} prob=${c.probability} odd=${c.oddEstimated} pred="${c.prediction}"`);
 
     if (PIPELINE_LOG) {
       console.log(`[LIVE PIPELINE] candidate ${market} | conf=${c.confidence} | prob=${c.probability} | odd=${c.oddEstimated} | ${c.prediction}`);
     }
 
     if (c.confidence < MIN_CONFIDENCE) {
+      console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=low-confidence conf=${c.confidence} min=${MIN_CONFIDENCE}`);
       if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP low-confidence | ${m.home} x ${m.away} | market=${c.market} | conf=${c.confidence} < min=${MIN_CONFIDENCE} | pred=${c.prediction}`);
+      recordMarketFunnel(c.market, 'low-confidence');
       dropAndLog('low-confidence', m, {
         market: c.market,
         confidence: c.confidence,
@@ -1033,10 +1403,20 @@ function processMatch(m) {
         probability: c.probability,
         prediction: c.prediction,
       });
+      decision = {
+        ...decision, result: 'DROP', reason: 'low-confidence',
+        confidence: c.confidence, threshold: MIN_CONFIDENCE,
+        probability: c.probability, odd: c.oddEstimated, prediction: c.prediction,
+        extras: c.extras || null, justification: c.justification || null,
+      };
+      logDecision(decision);
+      tickDecisions.push(decision);
       continue;
     }
     if (c.oddEstimated < MIN_ODD || c.oddEstimated > MAX_ODD) {
+      console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=odd-out-of-range odd=${c.oddEstimated} band=[${MIN_ODD},${MAX_ODD}]`);
       if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP odd-out-of-range | ${m.home} x ${m.away} | market=${c.market} | odd=${c.oddEstimated} fora=[${MIN_ODD},${MAX_ODD}] | conf=${c.confidence} | pred=${c.prediction}`);
+      recordMarketFunnel(c.market, 'odd-out-of-range');
       dropAndLog('odd-out-of-range', m, {
         market: c.market,
         oddEstimated: c.oddEstimated,
@@ -1045,26 +1425,92 @@ function processMatch(m) {
         probability: c.probability,
         prediction: c.prediction,
       });
+      decision = {
+        ...decision, result: 'DROP', reason: 'odd-out-of-range',
+        odd: c.oddEstimated, oddRange: [MIN_ODD, MAX_ODD],
+        confidence: c.confidence, probability: c.probability, prediction: c.prediction,
+        extras: c.extras || null, justification: c.justification || null,
+      };
+      logDecision(decision);
+      tickDecisions.push(decision);
       continue;
     }
     const key = `${m.fixtureId}:${c.market}`;
     if (!canFire(key)) {
+      console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=cooldown cooldownMs=${COOLDOWN_MS}`);
       if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP cooldown | ${m.home} x ${m.away} | market=${c.market} | cooldownMs=${COOLDOWN_MS} | conf=${c.confidence} | pred=${c.prediction}`);
+      recordMarketFunnel(c.market, 'cooldown');
       dropAndLog('cooldown', m, {
         market: c.market,
         cooldownMs: COOLDOWN_MS,
         confidence: c.confidence,
         prediction: c.prediction,
       });
+      decision = {
+        ...decision, result: 'DROP', reason: 'cooldown',
+        cooldownMs: COOLDOWN_MS, confidence: c.confidence,
+        odd: c.oddEstimated, prediction: c.prediction,
+      };
+      logDecision(decision);
+      tickDecisions.push(decision);
       continue;
     }
     recordFunnel('emitted');
+    recordMarketFunnel(c.market, 'emitted');
     if (tickByMarket && tickByMarket[c.market] !== undefined) {
       tickByMarket[c.market]++;
     }
+    console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=EMIT conf=${c.confidence} prob=${c.probability} odd=${c.oddEstimated} pred="${c.prediction}"`);
     if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] EMIT ${c.market} | ${m.home} x ${m.away} | conf=${c.confidence} | odd=${c.oddEstimated} | ${c.prediction}`);
+    decision = {
+      ...decision, result: 'EMIT',
+      confidence: c.confidence, probability: c.probability, odd: c.oddEstimated,
+      prediction: c.prediction, extras: c.extras || null, justification: c.justification || null,
+    };
+    logDecision(decision);
+    tickDecisions.push(decision);
     emit(buildSignal(m, c));
   }
+}
+
+/**
+ * Log estruturado de UMA decisão de mercado.
+ * Formato grep-friendly: chave=valor, único line per decisão.
+ */
+function logDecision(d) {
+  pushDecisionToBuffer(d);
+  if (!PIPELINE_LOG) return;
+  const fields = [
+    `fixtureId=${d.fixtureId}`,
+    `market=${d.market}`,
+    `result=${d.result}`,
+    d.reason         ? `reason=${d.reason}`           : null,
+    d.confidence != null ? `conf=${d.confidence}`     : null,
+    d.threshold  != null ? `threshold=${d.threshold}` : null,
+    d.probability != null ? `prob=${d.probability}`   : null,
+    d.odd != null    ? `odd=${d.odd}`                 : null,
+    d.oddRange       ? `oddBand=${d.oddRange[0]}-${d.oddRange[1]}` : null,
+    d.cooldownMs != null ? `cooldownMs=${d.cooldownMs}` : null,
+    d.prediction     ? `pred="${d.prediction}"`       : null,
+  ].filter(Boolean).join(' ');
+  console.log(`[SIGNAL DECISION] ${fields}`);
+}
+
+/**
+ * Buffer ring por fixture para o endpoint /diag/decisions/:fixtureId.
+ * Mantém últimas N decisões para inspeção pós-tick.
+ */
+const DECISIONS_PER_FIXTURE = Number(process.env.BET_SIGNAL_DECISIONS_PER_FIXTURE || 30);
+const decisionBuffer = new Map(); // fixtureId(string) -> Array<{ts, ...decision}>
+let tickDecisions = []; // populado por iter, lido no [SIGNAL DROP REPORT]
+
+function pushDecisionToBuffer(d) {
+  const id = String(d.fixtureId || '');
+  if (!id) return;
+  let arr = decisionBuffer.get(id);
+  if (!arr) { arr = []; decisionBuffer.set(id, arr); }
+  arr.unshift({ ts: Date.now(), ...d });
+  if (arr.length > DECISIONS_PER_FIXTURE) arr.length = DECISIONS_PER_FIXTURE;
 }
 
 /* ============================================================
@@ -1075,8 +1521,84 @@ let started = false;
 
 let lastTickAt = null;
 let lastTickSummary = null;
-let tickByMarket = { corners: 0, btts: 0, win: 0 };
+let tickByMarket = { corners: 0, cornersUnder: 0, btts: 0, over25: 0, under25: 0 };
 let cornersStats = { withTotal: 0, totalZeroNoAdv: 0, totalZeroWithAdv: 0 };
+
+/* ============================================================
+   FUNIL POR MERCADO (instrumentação apenas — não altera lógica)
+   ------------------------------------------------------------
+   Espelha as 5 categorias pedidas pelo produto:
+     btts, over25, under25, cornersOver, cornersUnder
+   Para cada categoria contabiliza:
+     - candidates: chamadas a compute*Bet() que retornaram um candidato
+     - emitted:    candidatos que passaram TODOS os gates e foram emitidos
+     - drops:      contagem por motivo (compute-null, low-confidence,
+                   odd-out-of-range, cooldown).
+
+   Mercados que o engine ainda NÃO calcula (over25, under25, cornersUnder)
+   permanecem zerados em candidates/emitted e recebem o motivo sintético
+   `market-not-implemented` igual ao número de matches que entraram no
+   estágio per-market (`computed`) — assim fica explícito no relatório
+   que o mercado é estrutural, não um descarte por filtro.
+   ============================================================ */
+const MARKET_KEYS = ['btts', 'over25', 'under25', 'cornersOver', 'cornersUnder'];
+function makeMarketFunnel() {
+  const out = {};
+  for (const k of MARKET_KEYS) out[k] = { candidates: 0, emitted: 0, drops: {} };
+  return out;
+}
+let tickByMarketFunnel = makeMarketFunnel();
+const totalsByMarketFunnel = makeMarketFunnel();
+
+/**
+ * Mapeia (market interno, candidato) -> chave do funil por mercado.
+ *  - 'corners' interno só calcula Over X.5  -> sempre cornersOver
+ *  - 'btts'    interno cobre Sim e Não      -> sempre btts
+ *  - 'over25'  -> over25
+ *  - 'under25' -> under25
+ *  - 'win'     NÃO está nos 5 mercados pedidos -> ignorado
+ */
+function deriveMarketKey(internalMarket /*, candidate */) {
+  if (internalMarket === 'btts') return 'btts';
+  if (internalMarket === 'corners') return 'cornersOver';
+  if (internalMarket === 'cornersUnder') return 'cornersUnder';
+  if (internalMarket === 'over25') return 'over25';
+  if (internalMarket === 'under25') return 'under25';
+  return null;
+}
+
+/**
+ * Tag de log por mercado, exigida pelo produto:
+ *   [BTTS] [GOALS OVER25] [GOALS UNDER25] [CORNERS OVER] [CORNERS UNDER]
+ * 'win' não é mais gerado; mapeado defensivamente.
+ */
+const MARKET_LOG_TAG = {
+  btts:         '[BTTS]',
+  over25:       '[GOALS OVER25]',
+  under25:      '[GOALS UNDER25]',
+  corners:      '[CORNERS OVER]',
+  cornersUnder: '[CORNERS UNDER]',
+  win:          '[WIN]',
+};
+function marketTag(market) {
+  return MARKET_LOG_TAG[market] || `[${String(market || '?').toUpperCase()}]`;
+}
+
+function recordMarketFunnel(internalMarket, stage) {
+  const key = deriveMarketKey(internalMarket);
+  if (!key) return;
+  const tickB = tickByMarketFunnel[key];
+  const totB  = totalsByMarketFunnel[key];
+  if (!tickB || !totB) return;
+  if (stage === 'candidate') {
+    tickB.candidates++; totB.candidates++;
+  } else if (stage === 'emitted') {
+    tickB.emitted++; totB.emitted++;
+  } else {
+    tickB.drops[stage] = (tickB.drops[stage] || 0) + 1;
+    totB.drops[stage]  = (totB.drops[stage]  || 0) + 1;
+  }
+}
 
 function tick() {
   if (!ENABLED) {
@@ -1101,8 +1623,10 @@ function tick() {
       });
     }
     // Contadores por mercado dentro do tick (não persistem entre ticks).
-    tickByMarket = { corners: 0, btts: 0, win: 0 };
+    tickByMarket = { corners: 0, cornersUnder: 0, btts: 0, over25: 0, under25: 0 };
+    tickByMarketFunnel = makeMarketFunnel();
     cornersStats = { withTotal: 0, totalZeroNoAdv: 0, totalZeroWithAdv: 0 };
+    tickDecisions = []; // populado dentro de processMatch via logDecision
     for (const m of matches) {
       const c = n(m.stats?.corners?.total);
       const adv = hasAdvancedStats(m);
@@ -1132,8 +1656,47 @@ function tick() {
       `[CORNER REPORT] tick: matchesIn=${tickFunnel.input || 0} ` +
       `withCornerData=${cornersStats.withTotal} totalZeroNoAdv=${cornersStats.totalZeroNoAdv} ` +
       `totalZeroWithAdv=${cornersStats.totalZeroWithAdv} → ` +
-      `emitted: corners=${tickByMarket.corners} btts=${tickByMarket.btts} win=${tickByMarket.win}`
+      `emitted: cornersOver=${tickByMarket.corners} cornersUnder=${tickByMarket.cornersUnder} ` +
+      `btts=${tickByMarket.btts} over25=${tickByMarket.over25} under25=${tickByMarket.under25}`
     );
+
+    // [SIGNAL DROP REPORT] — agregado por (market, reason) deste tick.
+    // Mostra exatamente onde a maioria dos sinais está sendo cortada.
+    // Útil pra responder "ENRICH=true gerou poucos sinais — qual filtro
+    // pegou?": tipicamente low-confidence ou odd-out-of-range.
+    try {
+      const agg = {};
+      for (const d of tickDecisions) {
+        const key = `${d.market}/${d.result === 'EMIT' ? 'EMIT' : ('DROP:' + (d.reason || '?'))}`;
+        if (!agg[key]) agg[key] = { count: 0, samples: [] };
+        agg[key].count++;
+        if (agg[key].samples.length < 3) {
+          agg[key].samples.push({
+            fixtureId: d.fixtureId,
+            conf: d.confidence ?? null,
+            prob: d.probability ?? null,
+            odd: d.odd ?? null,
+            pred: d.prediction || null,
+          });
+        }
+      }
+      const breakdown = Object.entries(agg)
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([k, v]) => `${k}=${v.count}`)
+        .join(' ');
+      console.log(`[SIGNAL DROP REPORT] tick: decisions=${tickDecisions.length} | ${breakdown || '(no decisions)'}`);
+      // Detalhe por linha das top-3 razões (com amostras p/ debug rápido)
+      const top = Object.entries(agg)
+        .filter(([k]) => k.includes('DROP:'))
+        .sort((a, b) => b[1].count - a[1].count)
+        .slice(0, 3);
+      for (const [k, v] of top) {
+        const s = v.samples.map((x) =>
+          `[fx=${x.fixtureId} conf=${x.conf} prob=${x.prob} odd=${x.odd} pred="${(x.pred || '').slice(0, 40)}"]`
+        ).join(' ');
+        console.log(`[SIGNAL DROP REPORT] ${k} ×${v.count} samples=${s}`);
+      }
+    } catch (_) { /* nunca quebrar tick por log */ }
     console.log('[LIVE DEBUG] pipeline end', {
       durationMs: dur,
       minuteOutOfRange: tickFunnel['minute-out-of-range'] || 0,
@@ -1282,7 +1845,9 @@ function buildHints(breakdown) {
     hints.push(`Muitos candidatos rejeitados por confidence < ${MIN_CONFIDENCE}. Considere baixar BET_SIGNAL_MIN_CONFIDENCE temporariamente.`);
   }
   if ((breakdown['odd-out-of-range']?.count || 0) > (breakdown.emitted?.count || 0) * 3) {
-    hints.push(`Faixa de odd [${MIN_ODD}, ${MAX_ODD}] é restritiva. Sinais com prob > 55% (odd < 1.80) ou < 45% (odd > 2.20) estão sendo descartados.`);
+    const pHi = Math.round(100 / MIN_ODD);
+    const pLo = Math.round(100 / MAX_ODD);
+    hints.push(`Faixa de odd [${MIN_ODD}, ${MAX_ODD}] está cortando candidatos. Sinais com prob > ${pHi}% (odd < ${MIN_ODD}) ou < ${pLo}% (odd > ${MAX_ODD}) são descartados.`);
   }
   if ((breakdown.cooldown?.count || 0) > inP * 0.3) {
     hints.push('Muitos sinais bloqueados por cooldown (10min). Em ambiente de teste, BET_SIGNAL_TEST_MODE=true desliga o cooldown.');
@@ -1291,6 +1856,76 @@ function buildHints(breakdown) {
     hints.push('Pipeline saudável — nenhum gargalo óbvio. Se sinais ainda não aparecem, rode `node scripts/diagnose-signals.js` para detalhes.');
   }
   return hints;
+}
+
+/**
+ * Funil completo por mercado, no formato pedido pelo endpoint
+ * GET /api/football/bet-signals/diag/markets.
+ *
+ * Retorna 5 chaves (btts, over25, under25, cornersOver, cornersUnder)
+ * com:
+ *   - candidates : compute*Bet() != null neste tick / acumulado
+ *   - emitted    : sinais que passaram TODOS os gates
+ *   - drops      : { reason: count }
+ *
+ * Inclui também `preGate` (estágios anteriores ao loop de mercados)
+ * e `markets.lastTick` para diagnóstico do último ciclo.
+ */
+// Motivos de drop sempre presentes na resposta por mercado (default 0).
+const MARKET_DROP_KEYS = ['compute-null', 'low-confidence', 'odd-out-of-range', 'cooldown'];
+function normalizeMarketEntry(src) {
+  const drops = {};
+  for (const r of MARKET_DROP_KEYS) drops[r] = (src?.drops?.[r]) || 0;
+  // preserva quaisquer outros motivos que apareçam, sem perder os defaults
+  for (const [r, v] of Object.entries(src?.drops || {})) {
+    if (!(r in drops)) drops[r] = v;
+  }
+  return {
+    candidates: src?.candidates || 0,
+    emitted: src?.emitted || 0,
+    drops,
+  };
+}
+
+function getMarketFunnel() {
+  const totals = {};
+  for (const k of MARKET_KEYS) {
+    totals[k] = normalizeMarketEntry(totalsByMarketFunnel[k]);
+  }
+
+  // Espelho do último tick (snapshot transitório). Útil para confirmar
+  // que o funil está sendo populado em tempo real.
+  const lastTick = {};
+  for (const k of MARKET_KEYS) {
+    lastTick[k] = normalizeMarketEntry(tickByMarketFunnel[k]);
+  }
+
+  return {
+    markets: totals,
+    lastTick,
+    preGate: {
+      input:                 funnelTotals.input || 0,
+      'not-enriched':        funnelTotals['not-enriched'] || 0,
+      'no-stats':            funnelTotals['no-stats'] || 0,
+      'minute-out-of-range': funnelTotals['minute-out-of-range'] || 0,
+      computed:              funnelTotals.computed || 0,
+    },
+    thresholds: {
+      minConfidence: MIN_CONFIDENCE,
+      oddRange: { min: MIN_ODD, max: MAX_ODD },
+      minuteRange: { min: MIN_MINUTE, max: MAX_MINUTE },
+      cooldownMs: COOLDOWN_MS,
+    },
+    notes: {
+      btts:          'Implementado em computeBttsBet. Cobre direções Sim e Não (extras.direction).',
+      over25:        'Implementado em computeOver25Bet (Poisson sobre λ_total restante).',
+      under25:       'Implementado em computeUnder25Bet (1 - P(Over 2.5) sobre o mesmo λ).',
+      cornersOver:   'Implementado em computeCornersBet (Over X.5 dinâmico).',
+      cornersUnder:  'Implementado em computeCornersUnderBet (Under X.5, mesma projeção do Over).',
+    },
+    lastTickAt,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 function listRecent({ limit = 50, market = null, minConfidence = 0, sinceMs = 0 } = {}) {
@@ -1304,9 +1939,34 @@ function listRecent({ limit = 50, market = null, minConfidence = 0, sinceMs = 0 
   return out.slice(0, limit);
 }
 
+/**
+ * Devolve as últimas N decisões para um fixtureId específico.
+ * Usado pelo endpoint /api/football/bet-signals/diag/decisions/:id.
+ */
+function getDecisionsFor(fixtureId, { limit = 30 } = {}) {
+  const arr = decisionBuffer.get(String(fixtureId)) || [];
+  return arr.slice(0, Math.max(1, Math.min(limit, DECISIONS_PER_FIXTURE)));
+}
+
+/** Lista todos os fixtureIds com decisões em buffer (mais recentes primeiro). */
+function listDecisionFixtures({ limit = 50 } = {}) {
+  return [...decisionBuffer.entries()]
+    .map(([id, arr]) => ({
+      fixtureId: id,
+      decisions: arr.length,
+      lastDecisionAt: arr[0]?.ts || null,
+      lastResult: arr[0]?.result || null,
+      lastMarket: arr[0]?.market || null,
+    }))
+    .sort((a, b) => (b.lastDecisionAt || 0) - (a.lastDecisionAt || 0))
+    .slice(0, limit);
+}
+
 module.exports = {
   start, stop, snapshot, listRecent,
   debugReport,
+  getMarketFunnel,
+  getDecisionsFor, listDecisionFixtures,
   getBestSignal,
   computeBetScore,
   // Configs expostas (usadas pelo footballRealtime para filtro tier)
@@ -1324,5 +1984,10 @@ module.exports = {
     MAX_MINUTE,
     COOLDOWN_MS,
   },
-  _internals: { computeCornersBet, computeBttsBet, computeWinBet, probToOdd, poisson, premiumInsight },
+  _internals: {
+    computeCornersBet, computeCornersUnderBet, computeBttsBet,
+    computeOver25Bet, computeUnder25Bet,
+    computeWinBet,
+    probToOdd, poisson, premiumInsight,
+  },
 };
