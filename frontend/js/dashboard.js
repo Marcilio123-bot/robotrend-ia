@@ -860,10 +860,13 @@
 
   function setPrelive(list, opts = {}) {
     if (!Array.isArray(list)) return;
+    // [PRELIVE FRONT DEBUG] temporário — remover após diagnóstico
+    console.log('[PRELIVE FRONT] recebidos:', list);
+    console.log('[PRELIVE FRONT] render count:', list?.length, 'source:', opts.source || '?');
     lastPrelive = list;
     preliveLastUpdateAt = Date.now();
-    try { renderPreliveFixtures(); } catch (_) {}
-    try { renderPreliveSignals(); } catch (_) {}
+    try { renderPreliveFixtures(); } catch (e) { console.error('[PRELIVE FRONT] render fixtures error:', e); }
+    try { renderPreliveSignals(); }  catch (e) { console.error('[PRELIVE FRONT] render signals error:', e); }
     if (opts.source) {
       try { window.RobotrendBus?.emit('robotrend:prelive-render', { count: list.length, source: opts.source }); } catch (_) {}
     }
@@ -877,11 +880,21 @@
       const r = await fetch('/api/prelive', { headers, credentials: 'include' });
       window.RobotrendHeartbeat?.markRestActivity?.('/api/prelive', r.status);
       // 401/402: usuário sem feature ou sem token — silencia (socket cobre quando autorizado).
-      if (r.status === 401 || r.status === 402) return;
-      if (!r.ok) return;
+      if (r.status === 401 || r.status === 402) {
+        console.log('[PRELIVE REST] sem permissão (status=' + r.status + ') — aguardando socket.');
+        return;
+      }
+      if (!r.ok) {
+        console.warn('[PRELIVE REST] HTTP', r.status);
+        return;
+      }
       const data = await r.json();
+      // [PRELIVE FRONT DEBUG] temporário — remover após diagnóstico
+      console.log('[PRELIVE REST]', data);
       setPrelive(Array.isArray(data?.fixtures) ? data.fixtures : [], { source: 'rest' });
-    } catch (_) { /* offline */ }
+    } catch (err) {
+      console.error('[PRELIVE REST ERROR]', err);
+    }
   }
 
   /* ============================================================
@@ -1067,6 +1080,8 @@
   // prelive:update — broadcast do bot.runPrelive() (scheduler ou REST).
   // Lista completa da janela 24h, com `shouldSignal` marcando entradas operáveis.
   socket.on('prelive:update', (fixtures) => {
+    // [PRELIVE FRONT DEBUG] temporário — remover após diagnóstico
+    console.log('[PRELIVE SOCKET]', fixtures);
     window.RobotrendHeartbeat?.markSocketActivity('prelive:update');
     setPrelive(Array.isArray(fixtures) ? fixtures : [], { source: 'socket' });
   });
@@ -1150,6 +1165,12 @@
   loadBetSignals();
   loadBestSignal();
   loadPrelive();                                     // boot: carrega snapshot inicial via REST (se autorizado)
+  // Garantia extra: se o script carregar antes do DOM estar pronto,
+  // dispara um segundo loadPrelive() no `load`. Idempotente — apenas
+  // refaz a chamada REST, useful em cold-start lento.
+  window.addEventListener('load', () => {
+    try { loadPrelive(); } catch (e) { console.error('[PRELIVE FRONT] load handler error:', e); }
+  });
   setInterval(loadLiveFromApi, 30_000);              // backup REST do poller football
   setInterval(loadBetSignals,  60_000);              // backup polling caso socket caia
   setInterval(loadBestSignal,  90_000);              // refresh do best-bet a cada 90s
