@@ -44,9 +44,12 @@ function buildMasterRoutes(app, db, requireAuth, requireAdmin) {
       const body = req.body || {};
       const patch = {};
       if (VALID_PLANS.includes(String(body.plan || '').toUpperCase())) {
-        patch.plan = String(body.plan).toUpperCase();
-        if (patch.plan !== 'FREE') patch.role = 'premium';
-        else patch.role = 'user';
+        const newPlan = String(body.plan).toUpperCase();
+        patch.plan = newPlan;
+        const target = await db.findUserById(req.params.id);
+        if (target && !subscription.isAdminUser(target)) {
+          patch.role = subscription.resolveSubscriptionRole(target.role, newPlan);
+        }
       }
       if (body.name) patch.name = String(body.name).trim().slice(0, 60);
 

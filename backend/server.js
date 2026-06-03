@@ -1160,6 +1160,14 @@ async function main() {
   } catch (e) {
     log.error('[AUTH] bootstrap master falhou', { err: e.message });
   }
+  try {
+    const repaired = await subscription.repairDegradedPrivilegedUsers(db);
+    if (repaired.repaired > 0) {
+      log.warn('contas admin reparadas após bootstrap', repaired);
+    }
+  } catch (e) {
+    log.warn('repairDegradedPrivilegedUsers falhou', { err: e.message });
+  }
   // Legacy bootstrapAdmin (mantido p/ compat — sem-op se já existe)
   await bootstrapAdmin();
 

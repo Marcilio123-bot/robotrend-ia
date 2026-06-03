@@ -911,9 +911,6 @@ function buildPaymentRoutes(app, db, requireAuth) {
       // Usuário existe → UPGRADE PERSISTENTE (preserva admin)
       // Sempre faz updateUser, mesmo se já estiver PREMIUM, para garantir
       // que o registro reflita o último pagamento aprovado.
-      const newRole = (user.role === 'admin' || user.role === 'owner')
-        ? user.role
-        : 'premium';
       let updatedUser;
       try {
         updatedUser = await subSvc.activateSubscription(db, user.id, {
@@ -921,9 +918,6 @@ function buildPaymentRoutes(app, db, requireAuth) {
           provider: 'mercadopago',
           externalId: String(paymentInfo.id),
         });
-        if (user.role === 'admin' || user.role === 'owner') {
-          updatedUser = await db.updateUser(user.id, { role: user.role });
-        }
         log.info('user upgraded via webhook MP', {
           userId: user.id, email: user.email,
           plan, expiresAt: updatedUser?.expiresAt, paymentId,

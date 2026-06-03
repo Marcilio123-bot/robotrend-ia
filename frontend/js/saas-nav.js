@@ -173,7 +173,7 @@
     const shortcut = {
       section: 'Painel administrativo',
       items: [
-        { id: 'go-master', label: 'Painel Master',    icon: '◉', href: '/admin' },
+        { id: 'go-master', label: 'Gestão Master',    icon: '◉', href: '/master' },
         { id: 'go-ops',    label: 'Operacional IA',   icon: '▤', href: '/ops/live' },
       ],
     };

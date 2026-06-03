@@ -437,6 +437,7 @@ function buildAuthRoutes(app, db) {
       authenticated: true,
       role: safe.role,
       plan: safe.plan,
+      isAdmin: !!safe.isAdmin,
       email: safe.email,
       name: safe.name,
     });

@@ -267,6 +267,7 @@ async function init() {
     try {
       const sub = require('./subscription');
       await sub.migrateExistingUsers(module.exports);
+      await sub.repairDegradedPrivilegedUsers(module.exports);
     } catch (migrateErr) {
       console.warn('[db] migração assinaturas (mem):', migrateErr.message);
     }
@@ -303,6 +304,7 @@ async function init() {
     try {
       const sub = require('./subscription');
       await sub.migrateExistingUsers(module.exports);
+      await sub.repairDegradedPrivilegedUsers(module.exports);
     } catch (migrateErr) {
       console.warn('[db] migração assinaturas:', migrateErr.message);
     }

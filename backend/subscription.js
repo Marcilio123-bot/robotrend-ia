@@ -33,9 +33,34 @@ function normalizePlan(plan) {
   return String(plan || 'FREE').toUpperCase();
 }
 
+const PRIVILEGED_ROLES = new Set(['admin', 'owner', 'master', 'super_admin']);
+
 function isAdminUser(user) {
   const role = String(user?.role || '').toLowerCase();
-  return ['admin', 'owner', 'master', 'super_admin'].includes(role);
+  return PRIVILEGED_ROLES.has(role);
+}
+
+/**
+ * Define role após mudança de plano SEM rebaixar administradores.
+ * Plano (FREE/VIP/PREMIUM) é independente do privilégio de painel master.
+ */
+function resolveSubscriptionRole(currentRole, plan) {
+  if (isAdminUser({ role: currentRole })) return String(currentRole || 'admin').toLowerCase();
+  const p = normalizePlan(plan);
+  return p === 'FREE' ? 'user' : 'premium';
+}
+
+/** E-mails que devem manter role master/admin (bootstrap + lista extra). */
+function privilegedAdminEmails() {
+  const emails = new Set();
+  const boot = String(process.env.BOOTSTRAP_ADMIN_EMAIL || '').trim().toLowerCase();
+  if (boot) emails.add(boot);
+  const extra = String(process.env.ADMIN_EMAILS || '').split(',');
+  for (const e of extra) {
+    const x = e.trim().toLowerCase();
+    if (x) emails.add(x);
+  }
+  return emails;
 }
 
 function isPaidPlan(plan) {
@@ -159,10 +184,11 @@ async function syncSubscriptionStatus(db, user) {
  * Ativa assinatura após pagamento ou renovação admin.
  */
 async function activateSubscription(db, userId, { plan, provider, externalId, fromDate } = {}) {
+  const existing = await db.findUserById(userId);
   const p = normalizePlan(plan);
   const days = durationDaysForPlan(p);
   const expiresAt = days > 0 ? addDays(fromDate || new Date(), days) : null;
-  const role = p === 'FREE' ? 'user' : 'premium';
+  const role = resolveSubscriptionRole(existing?.role, p);
 
   await db.updateUser(userId, {
     plan: p,
@@ -252,7 +278,7 @@ async function renewSubscription(db, userId, { adminId, adminEmail, plan: planOv
 
   await db.updateUser(userId, {
     plan,
-    role: 'premium',
+    role: resolveSubscriptionRole(user.role, plan),
     expiresAt: expiresAt.toISOString(),
     subscriptionStatus: STATUS.ACTIVE,
     blocked: false,
@@ -297,6 +323,7 @@ async function logAdminAction(db, entry) {
 /** Enriquece user sanitizado com campos de assinatura para API/UI. */
 function enrichUserForClient(user) {
   const state = resolveSubscriptionState(user);
+  const admin = isAdminUser(user);
   return {
     ...user,
     subscriptionStatus: state.subscriptionStatus,
@@ -304,6 +331,7 @@ function enrichUserForClient(user) {
     blockedReason: state.blockedReason,
     expiresAt: state.expiresAt,
     daysRemaining: state.daysRemaining,
+    isAdmin: admin,
     isPremium: state.isPremium,
     isVip: state.isVip,
     hasPaidAccess: state.hasPaidAccess,
@@ -389,6 +417,25 @@ function requirePaidPlan(minPlan) {
 /**
  * Migração automática de usuários existentes (idempotente).
  */
+/**
+ * Repara contas admin degradadas para role=premium pela migração antiga.
+ */
+async function repairDegradedPrivilegedUsers(db) {
+  const adminEmails = privilegedAdminEmails();
+  if (!adminEmails.size) return { repaired: 0 };
+  const users = await db.listUsers(10_000);
+  let repaired = 0;
+  for (const u of users) {
+    const email = String(u.email || '').toLowerCase();
+    if (!adminEmails.has(email)) continue;
+    if (isAdminUser(u)) continue;
+    await db.updateUser(u.id, { role: 'master', active: true, blocked: false });
+    log.warn('conta admin reparada (role restaurada para master)', { email, previousRole: u.role });
+    repaired++;
+  }
+  return { repaired };
+}
+
 async function migrateExistingUsers(db) {
   const users = await db.listUsers(10_000);
   let updated = 0;
@@ -407,7 +454,10 @@ async function migrateExistingUsers(db) {
       const days = durationDaysForPlan(plan);
       patch.expiresAt = addDays(u.createdAt || new Date(), days).toISOString();
       patch.subscriptionStatus = STATUS.ACTIVE;
-      patch.role = u.role === 'admin' ? u.role : 'premium';
+      // NUNCA alterar role de contas privilegiadas; clientes pagos → premium.
+      if (!isAdminUser(u) && String(u.role || 'user').toLowerCase() === 'user') {
+        patch.role = 'premium';
+      }
     }
     if (isPaidPlan(plan) && u.expiresAt) {
       const exp = new Date(u.expiresAt).getTime();
@@ -420,8 +470,11 @@ async function migrateExistingUsers(db) {
       updated++;
     }
   }
-  if (updated) log.info('migração de assinaturas aplicada', { updated, total: users.length });
-  return { updated, total: users.length };
+  const { repaired } = await repairDegradedPrivilegedUsers(db);
+  if (updated || repaired) {
+    log.info('migração de assinaturas aplicada', { updated, repaired, total: users.length });
+  }
+  return { updated, repaired, total: users.length };
 }
 
 module.exports = {
@@ -446,4 +499,8 @@ module.exports = {
   requireActiveSubscription,
   requirePaidPlan,
   migrateExistingUsers,
+  repairDegradedPrivilegedUsers,
+  resolveSubscriptionRole,
+  privilegedAdminEmails,
+  PRIVILEGED_ROLES,
 };
