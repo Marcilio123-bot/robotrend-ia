@@ -139,8 +139,20 @@ async function syncSubscriptionStatus(db, user) {
   }
   if (resolved.blocked !== !!user.blocked) patch.blocked = resolved.blocked;
   if (Object.keys(patch).length === 0) return { ...user, ...resolved };
-  const updated = await db.updateUser(user.id, patch);
-  return { ...(updated || user), ...resolveSubscriptionState(updated || user) };
+  try {
+    const updated = await db.updateUser(user.id, patch);
+    return { ...(updated || user), ...resolveSubscriptionState(updated || user) };
+  } catch (err) {
+    // Migração 004 ainda não aplicada (colunas expires_at/blocked/subscription_status)
+    const missingCol = err?.code === '42703' || /column.*does not exist/i.test(String(err?.message || ''));
+    if (missingCol) {
+      log.warn('syncSubscriptionStatus: colunas de assinatura ausentes — rode a migração 004', {
+        userId: user.id, err: err.message,
+      });
+      return { ...user, ...resolved };
+    }
+    throw err;
+  }
 }
 
 /**

@@ -376,7 +376,7 @@ function buildAuthRoutes(app, db) {
         }
       }
 
-      const user = await db.findUserByEmail(email);
+      let user = await db.findUserByEmail(email);
       if (!user) {
         if (bruteforceEnabled) bruteforce.recordFail(bfKey);
         console.log(`[AUTH LOGIN] FALHOU email="${email}" ip=${ip} motivo=USER_NOT_FOUND`);
