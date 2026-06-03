@@ -78,7 +78,32 @@
     return true;
   }
 
+  /**
+   * REDIRECT MASTER → /master quando um admin cai no dashboard de cliente.
+   * A navegação é path-based: em "/" (ou /index.html) renderiza o clientNav,
+   * carregando o dashboard Premium. Admins não devem ver isso por padrão.
+   * Exceção: ?asClient=1 (preview "Ver como cliente").
+   *
+   * Usa apenas cache local (anti-flash); o auth-guard valida no server depois.
+   */
+  function redirectMasterFromClientDashboard() {
+    const path = location.pathname.replace(/\/+$/, '') || '/';
+    const isClientDashboard = path === '/' || /^\/index(\.html)?$/i.test(path);
+    if (!isClientDashboard) return false;
+    if (location.search.includes('asClient=1')) return false;
+    const u = getCachedUser();
+    if (!u || !isMasterRole(u)) return false;
+    try {
+      const style = document.createElement('style');
+      style.textContent = 'body{visibility:hidden!important;background:#07100a;}';
+      document.head.appendChild(style);
+    } catch (_) {}
+    location.replace('/master');
+    return true;
+  }
+
   // Roda guard ANTES de qualquer DOM ready, sincronamente.
+  if (redirectMasterFromClientDashboard()) return;
   if (!runGuard()) return;
 
   /**

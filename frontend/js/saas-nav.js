@@ -216,11 +216,32 @@
     `;
   }
 
-  function masterBadge() {
+  /** Rótulo APENAS do plano de assinatura (independente do role). */
+  function planOnlyLabel(u) {
+    const p = String(u?.plan || 'FREE').toUpperCase();
+    if (p === 'VIP') return 'VIP';
+    if (p === 'PRO' || p === 'PREMIUM') return 'Premium';
+    if (p === 'TRIAL') return 'Trial';
+    return 'Free';
+  }
+
+  /** Rótulo APENAS do role administrativo. */
+  function roleLabel(u) {
+    const r = String(u?.role || '').toLowerCase();
+    if (r === 'master' || r === 'super_admin') return 'Master Admin';
+    if (r === 'owner') return 'Owner';
+    if (r === 'admin') return 'Admin';
+    return r.toUpperCase() || 'ADMIN';
+  }
+
+  function masterBadge(user) {
     return `
       <div class="saas-master-pill" role="status" aria-label="Modo master admin ativo">
         <span class="saas-master-pill-dot" aria-hidden="true"></span>
-        <span class="saas-master-pill-text">MASTER ADMIN</span>
+        <span class="saas-master-pill-text">ROLE: ${escapeHtml(roleLabel(user)).toUpperCase()}</span>
+      </div>
+      <div class="saas-master-plan" style="font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--muted);margin:4px 0 2px;padding:0 4px;">
+        PLANO: ${escapeHtml(planOnlyLabel(user)).toUpperCase()}
       </div>
     `;
   }
@@ -245,7 +266,7 @@
           </div>
         </div>
 
-        ${isMaster ? masterBadge() : ''}
+        ${isMaster ? masterBadge(user) : ''}
 
         <nav class="saas-nav" aria-label="${isMaster ? 'Navegação master' : 'Navegação cliente'}">
           ${sectionsHtml}
