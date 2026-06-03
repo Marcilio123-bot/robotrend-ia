@@ -41,9 +41,9 @@ Admin pré-criado: `admin@robotrend.local` / `admin123` (troque em produção!)
 
 ### 💳 SaaS multi-tier
 - **FREE** — 3 sinais/dia, live + BTTS básico
-- **VIP** (R$ 49,90/mês) — 30 sinais/dia, pré-live, Over 2.5, alertas Telegram
+- **VIP** (R$ 49,90/mês) — 30 sinais/dia, Over 2.5, alertas Telegram
 - **PREMIUM** (R$ 199,99/mês — promo de R$ 499,99) — sinais ilimitados, API REST, histórico 1 ano
-- Middleware `requireFeature('prelive')` e `dailySignalLimiter` automáticos
+- Middleware `requireFeature('over25')` e `dailySignalLimiter` automáticos
 
 ### 💰 Pagamentos
 - **Stripe** (assinatura recorrente)
@@ -102,12 +102,11 @@ Robotrend/
 │   ├── ml.js              ← weights/liga, anti-fake, autotune
 │   ├── security.js        ← helmet + rate-limit + validação
 │   ├── database.js        ← users, subs, payments, signals (PG + memória)
-│   ├── bot.js             ← orquestrador (live + prelive + ML)
+│   ├── bot.js             ← orquestrador (live + ML)
 │   ├── analyzer.js        ← motor IA (score + risco + odd)
 │   ├── corners.js         ← escanteios + momentum + HOT/WARM/COLD/DANGER
 │   ├── btts.js            ← BTTS + Over 2.5 + histórico visual
 │   ├── live.js            ← scanner ao vivo (providers reais)
-│   ├── prelive.js         ← scanner pré-live (BTTS)
 │   └── telegram.js        ← mensagens ultra premium
 ├── frontend/
 │   ├── index.html         ← painel principal (auth-protected)
@@ -168,7 +167,6 @@ Robotrend/
 | POST | `/api/auth/change-password` | qualquer |
 | GET  | `/api/signals?limit=N` | qualquer |
 | GET  | `/api/stats` | qualquer |
-| GET  | `/api/prelive` | VIP |
 | POST | `/api/signals/test` | qualquer |
 | POST | `/api/payments/checkout` | qualquer (escolhe plan) |
 

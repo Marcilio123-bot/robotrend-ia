@@ -28,7 +28,7 @@
 
 'use strict';
 
-const { analyzeLiveMatch, analyzePrelive } = require('./analyzer');
+const { analyzeLiveMatch } = require('./analyzer');
 const ml = require('./ml');
 
 const DEFAULT_ODD = 1.85;
@@ -105,41 +105,6 @@ function runBacktest(matches, opts = {}) {
           suggestion: reinforced.suggestion, confidence: reinforced.confidence,
           result, odd, pnl, date: m.date,
         });
-      }
-    }
-
-    // 2) BTTS / Over 2.5 (pre-live) — skipFreshness para histórico
-    if (m.homeLast6 && m.awayLast6) {
-      const pre = analyzePrelive(m, { skipFreshness: true });
-      if (pre.shouldSignal) {
-        const parsedB = parseSuggestionLine(pre.suggestion);
-        if (parsedB) {
-          const result = resolveBet(parsedB, m.final);
-          if (result) {
-            const odd = pickOdd(parsedB, m.odds);
-            const pnl = result === 'win' ? stake * (odd - 1) : (result === 'push' ? 0 : -stake);
-            bets.push({
-              matchId: m.id, league: m.league, market: 'BTTS',
-              suggestion: pre.suggestion, confidence: pre.confidence,
-              result, odd, pnl, date: m.date,
-            });
-          }
-        }
-        if (pre.over25?.suggestion) {
-          const parsedO = parseSuggestionLine(pre.over25.suggestion);
-          if (parsedO) {
-            const result = resolveBet(parsedO, m.final);
-            if (result) {
-              const odd = pickOdd(parsedO, m.odds);
-              const pnl = result === 'win' ? stake * (odd - 1) : (result === 'push' ? 0 : -stake);
-              bets.push({
-                matchId: m.id, league: m.league, market: 'Over 2.5',
-                suggestion: pre.over25.suggestion, confidence: pre.confidence,
-                result, odd, pnl, date: m.date,
-              });
-            }
-          }
-        }
       }
     }
   }

@@ -216,7 +216,6 @@
 
       const FEAT_LABEL = {
         live: 'Análise ao vivo',
-        prelive: 'Pré-Live BTTS',
         over25: 'Over 2.5 automático',
         telegramAlerts: 'Alertas no Telegram',
         api: 'Acesso à API REST',
@@ -307,7 +306,6 @@
         const limit = d.dailySignalsLimit;
         const rows = [];
         rows.push(featRow('live', '📡', !!f.live));
-        rows.push(featRow('prelive', '🎯', !!f.prelive));
         rows.push(featRow('over25', '⚽', !!f.over25));
         rows.push(featRow('telegramAlerts', '🔔', !!f.telegramAlerts));
         rows.push(featRow('api', '🔌', !!f.api));

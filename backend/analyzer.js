@@ -15,7 +15,6 @@
 'use strict';
 
 const { analyzeCorners } = require('./corners');
-const { analyzeBtts } = require('./btts');
 const freshness = require('./freshness');
 
 const DEFAULT_MIN_SCORE = Number(process.env.SIGNAL_MIN_SCORE || 80);
@@ -170,62 +169,8 @@ function analyzeLiveMatch(match, options = {}) {
   };
 }
 
-function analyzePrelive(fixture, options = {}) {
-  // Pré-live só aceita jogos futuros (próximas 24h) — backtest pula
-  if (!options.skipFreshness && fixture && fixture.startsAt && !freshness.isUpcomingMatch(fixture)) {
-    return {
-      matchId: fixture.id,
-      home: fixture.home,
-      away: fixture.away,
-      league: fixture.league,
-      startsAt: fixture.startsAt,
-      market: 'BTTS',
-      verdict: '⛔ Fixture fora da janela',
-      suggestion: null,
-      confidence: 0,
-      shouldSignal: false,
-      stale: true,
-      createdAt: new Date().toISOString(),
-    };
-  }
-
-  const btts = analyzeBtts({
-    home: fixture.home,
-    away: fixture.away,
-    homeLast6: fixture.homeLast6 || [],
-    awayLast6: fixture.awayLast6 || [],
-  });
-
-  const shouldSignal =
-    btts.confidence >= 75 && btts.suggestion && btts.suggestion.includes('SIM');
-  const risk = classifyRisk(btts.confidence);
-  const odd = estimateOdd(btts.confidence);
-
-  return {
-    matchId: fixture.id,
-    home: fixture.home,
-    away: fixture.away,
-    league: fixture.league,
-    startsAt: fixture.startsAt,
-    market: 'BTTS',
-    verdict: btts.verdict,
-    suggestion: btts.suggestion,
-    confidence: btts.confidence,
-    tags: btts.tags,
-    homeStats: btts.home,
-    awayStats: btts.away,
-    over25: btts.over25,
-    offensiveCombined: btts.offensiveCombined,
-    risk,
-    odd,
-    shouldSignal,
-    createdAt: new Date().toISOString(),
-  };
-}
-
 module.exports = {
   analyzeLiveMatch,
-  analyzePrelive,
   cornerScore,
   classifyRisk,
   estimateOdd,

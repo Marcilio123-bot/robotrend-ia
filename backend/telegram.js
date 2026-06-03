@@ -101,68 +101,12 @@ function formatLiveSignal(s) {
   ].filter(Boolean).join('\n');
 }
 
-function formatBttsSignal(s) {
-  const risk = s.risk || { emoji: '🟡', label: 'MÉDIO' };
-  const odd = s.odd ? `~${s.odd}` : '—';
-
-  const homeHistory = (s.homeStats?.history || [])
-    .map((h) => (h.btts ? '🟢' : h.over25 ? '🟡' : '⚪'))
-    .join(' ');
-  const awayHistory = (s.awayStats?.history || [])
-    .map((h) => (h.btts ? '🟢' : h.over25 ? '🟡' : '⚪'))
-    .join(' ');
-
-  return [
-    `${TOP}`,
-    `   ✅ *ROBOTREND IA — BTTS PRÉ-LIVE*`,
-    `${BOTTOM}`,
-    '',
-    `🏆 *${s.home}*  vs  *${s.away}*`,
-    s.league ? `🏟️ _${s.league}_` : null,
-    s.startsAt ? `📅 ${new Date(s.startsAt).toLocaleString('pt-BR')}` : null,
-    '',
-    SPLIT,
-    `📊 *ÚLTIMOS 6 JOGOS*`,
-    SPLIT,
-    `*${s.home}*`,
-    `   Marcou:  ${s.homeStats.scoredCount}/6  ·  BTTS: ${s.homeStats.bttsPct}%  ·  Over 2.5: ${s.homeStats.over25Pct}%`,
-    `   ${homeHistory}`,
-    '',
-    `*${s.away}*`,
-    `   Marcou:  ${s.awayStats.scoredCount}/6  ·  BTTS: ${s.awayStats.bttsPct}%  ·  Over 2.5: ${s.awayStats.over25Pct}%`,
-    `   ${awayHistory}`,
-    '',
-    SPLIT,
-    `🧠 *ANÁLISE IA*`,
-    SPLIT,
-    `💪 Índice ofensivo: ${bar(s.offensiveCombined || 0, 100)} ${s.offensiveCombined || 0}/100`,
-    s.over25?.combinedAvgGoals ? `⚽ Média combinada gols: *${s.over25.combinedAvgGoals}*` : null,
-    s.over25?.verdict ? `🎯 ${s.over25.verdict} — _${s.over25.suggestion}_` : null,
-    '',
-    SPLIT,
-    `💎 *ENTRADA SUGERIDA*`,
-    SPLIT,
-    `🎯 *${s.suggestion}*`,
-    `💰 Odd estimada: *${odd}*`,
-    `⚖️ Risco: ${risk.emoji} *${risk.label}*`,
-    `📊 Confiança IA: *${s.confidence}%*`,
-    '',
-    `_🤖 Robotrend IA · ${new Date().toLocaleTimeString('pt-BR')}_`,
-  ].filter(Boolean).join('\n');
-}
-
 /**
  * Decide se um sinal está em janela válida para envio.
- * Reusa o módulo de freshness para LIVE; para BTTS olha startsAt.
+ * Reusa o módulo de freshness para LIVE.
  */
 function isFreshSignal(signal) {
   if (!signal) return { ok: false, reason: 'signal vazio' };
-  // Pré-live (BTTS): startsAt precisa ser hoje/futuro próximo
-  if (signal.market === 'BTTS' && signal.startsAt) {
-    return freshness.isUpcomingMatch({ startsAt: signal.startsAt })
-      ? { ok: true }
-      : { ok: false, reason: 'BTTS fora da janela pré-live' };
-  }
   // Live: reconstrói um pseudo-match com pistas do sinal
   const pseudo = {
     minute: signal.minute,
@@ -186,8 +130,7 @@ async function sendSignal(signal) {
     return { ok: false, blocked: 'stale', reason: signal.staleReason };
   }
 
-  const text =
-    signal.market === 'BTTS' ? formatBttsSignal(signal) : formatLiveSignal(signal);
+  const text = formatLiveSignal(signal);
 
   if (!bot || !CHAT_ID) {
     console.log('\n[telegram MOCK]\n' + text + '\n');
@@ -210,6 +153,5 @@ module.exports = {
   sendSignal,
   isFreshSignal,
   formatLiveSignal,
-  formatBttsSignal,
   isEnabled: () => Boolean(bot),
 };

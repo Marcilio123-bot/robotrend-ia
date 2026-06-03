@@ -4,12 +4,10 @@
  *   Garante que NUNCA processamos partidas antigas:
  *     ✅ Live em status válido (1H/2H/HT/ET/LIVE)
  *     ✅ Partidas iniciadas há ≤ 3h
- *     ✅ Próximas 24h (pré-live)
  *   ❌ Partidas com status finalizado (FT/AET/PEN/CANC/PST/ABD…)
  *   ❌ Partidas iniciadas há > 3h
- *   ❌ Partidas futuras > 24h
  *
- *   Defesa em camadas: scanners (live/prelive) usam isRecentMatch().
+ *   Defesa em camadas: o scanner live usa isRecentMatch().
  *   analyzer.js também valida.
  *   telegram.js valida no last-mile antes do sendMessage.
  */
@@ -124,22 +122,6 @@ function isRecentMatch(match) {
 }
 
 /**
- * Pre-live: aceita SOMENTE hoje + próximas FUTURE_HOURS horas.
- * Rejeita qualquer fixture do passado.
- */
-function isUpcomingMatch(fixture) {
-  if (!fixture) return false;
-  const status = getStatus(fixture);
-  if (isFinishedStatus(status)) return false;
-  if (isLiveStatus(status))     return true; // já começou — ainda válido p/ análise pré-jogo tardia
-  const t = getMatchTimestamp(fixture);
-  if (t == null) return false; // pré-live SEM data não vale
-  const hoursFromNow = (t - Date.now()) / 3_600_000;
-  // Aceita: começou há ≤ 30min até começar em FUTURE_HOURS horas
-  return hoursFromNow >= -0.5 && hoursFromNow <= FUTURE_HOURS_LIMIT;
-}
-
-/**
  * Filter helper para arrays. Recebe array de matches e callback de log opcional.
  */
 function filterRecent(matches, onReject) {
@@ -148,15 +130,6 @@ function filterRecent(matches, onReject) {
     const r = checkMatch(m);
     if (r.ok) out.push(m);
     else if (typeof onReject === 'function') onReject(m, r.reason);
-  }
-  return out;
-}
-
-function filterUpcoming(fixtures, onReject) {
-  const out = [];
-  for (const f of fixtures || []) {
-    if (isUpcomingMatch(f)) out.push(f);
-    else if (typeof onReject === 'function') onReject(f, 'não está em janela pré-live válida');
   }
   return out;
 }
@@ -228,35 +201,12 @@ function checkMatchStrict(match) {
   return { ok: false, reason: `status não-live: ${status}` };
 }
 
-function isUpcomingMatchStrict(fixture) {
-  if (!fixture) return { ok: false, reason: 'fixture vazio' };
-  if (isSyntheticId(fixture.id)) return { ok: false, reason: `ID sintético: ${fixture.id}` };
-  const status = getStatus(fixture);
-  if (status && isFinishedStatus(status)) return { ok: false, reason: `status finalizado: ${status}` };
-  const t = getMatchTimestamp(fixture);
-  if (t == null) return { ok: false, reason: 'sem startsAt/date real' };
-  const hoursFromNow = (t - Date.now()) / 3_600_000;
-  if (hoursFromNow < -0.5) return { ok: false, reason: `já começou há ${Math.abs(hoursFromNow).toFixed(1)}h` };
-  if (hoursFromNow > FUTURE_HOURS_LIMIT) return { ok: false, reason: `começa em ${hoursFromNow.toFixed(1)}h (>${FUTURE_HOURS_LIMIT}h)` };
-  return { ok: true, reason: 'janela pré-live ok' };
-}
-
 function filterRecentStrict(matches, onReject) {
   const out = [];
   for (const m of matches || []) {
     const r = checkMatchStrict(m);
     if (r.ok) out.push(m);
     else if (typeof onReject === 'function') onReject(m, r.reason);
-  }
-  return out;
-}
-
-function filterUpcomingStrict(fixtures, onReject) {
-  const out = [];
-  for (const f of fixtures || []) {
-    const r = isUpcomingMatchStrict(f);
-    if (r.ok) out.push(f);
-    else if (typeof onReject === 'function') onReject(f, r.reason);
   }
   return out;
 }
@@ -291,10 +241,8 @@ function checkSignalSource(match) {
 
 module.exports = {
   isRecentMatch,
-  isUpcomingMatch,
   checkMatch,
   filterRecent,
-  filterUpcoming,
   isLiveStatus,
   isFinishedStatus,
   getMatchTimestamp,
@@ -306,9 +254,7 @@ module.exports = {
   // strict / real-only
   isSyntheticId,
   checkMatchStrict,
-  isUpcomingMatchStrict,
   filterRecentStrict,
-  filterUpcomingStrict,
   // signal source guard
   checkSignalSource,
   SIGNAL_API_FRESH_MS,

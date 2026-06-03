@@ -13,7 +13,6 @@
 const db = require('./database');
 const ml = require('./ml');
 const { createLiveScanner } = require('./live');
-const { createPreliveScanner } = require('./prelive');
 const { sendSignal } = require('./telegram');
 const { logger } = require('./logger');
 const metrics = require('./metrics');
@@ -22,12 +21,6 @@ const freshness = require('./freshness');
 const SCAN_INTERVAL = Number(process.env.LIVE_SCAN_INTERVAL_MS || 15000);
 const BASE_MIN_SCORE = Number(process.env.SIGNAL_MIN_SCORE || 80);
 const SENT_TTL_MS = 30 * 60 * 1000; // limpa entradas com >30 min
-
-// Intervalo do scheduler pré-live. Cada ciclo custa até 1 + 2×PRELIVE_MAX_FIXTURES
-// chamadas à API-Football (default: 1 + 10 = 11). 10min => ~1584 calls/dia,
-// que cabem no plano Pro (7500/dia) com folga sobre o poller (~2880/dia).
-// Defina PRELIVE_REFRESH_MS=0 para desligar o scheduler (REST/socket sob demanda).
-const PRELIVE_INTERVAL_MS = Number(process.env.PRELIVE_REFRESH_MS ?? 10 * 60 * 1000);
 
 const ENV = process.env.NODE_ENV || 'development';
 const STRICT_REAL_ONLY = (() => {
@@ -46,7 +39,6 @@ class RobotrendBot {
   constructor(io) {
     this.io = io;
     this.live = createLiveScanner();
-    this.prelive = createPreliveScanner();
     this.sentRecently = new Map(); // matchId -> timestamp
     this.lastMatches = [];
     this.lastAnalyses = [];
@@ -57,12 +49,11 @@ class RobotrendBot {
 
     // Toggles globais (sobrescrevíveis via .env)
     this.liveEnabled    = String(process.env.LIVE_ENABLED    || 'true').toLowerCase() !== 'false';
-    this.preliveEnabled = String(process.env.PRELIVE_ENABLED || 'true').toLowerCase() !== 'false';
   }
 
   start() {
     this.log.info('scanner started', { interval: SCAN_INTERVAL, minScore: this.minScore,
-      liveEnabled: this.liveEnabled, preliveEnabled: this.preliveEnabled });
+      liveEnabled: this.liveEnabled });
     if (this.liveEnabled) {
       console.log('[LIVE DEBUG] bot live scanner started (runOnce interval)', { intervalMs: SCAN_INTERVAL });
       this.runOnce().catch((e) => this.log.error('tick error', { err: e.message }));
@@ -75,29 +66,11 @@ class RobotrendBot {
       SCAN_INTERVAL
     );
     this.cleanupTimer = setInterval(() => this.cleanup(), 5 * 60 * 1000);
-
-    // Scheduler pré-live: alimenta o socket `prelive:update` sem precisar de
-    // clique do usuário. Respeita preliveEnabled + safe-mode + cooldown
-    // interno do runPrelive (30min por matchId p/ envio Telegram).
-    if (PRELIVE_INTERVAL_MS > 0) {
-      this.log.info('[prelive] scheduler ativo', { intervalMs: PRELIVE_INTERVAL_MS });
-      // boot delay: deixa o poller live popular antes de bater nos endpoints prelive
-      setTimeout(() => {
-        this.runPrelive().catch((e) => this.log.warn('prelive boot tick error', { err: e.message }));
-      }, 8_000);
-      this.preliveTimer = setInterval(
-        () => this.runPrelive().catch((e) => this.log.warn('prelive tick error', { err: e.message })),
-        PRELIVE_INTERVAL_MS
-      );
-    } else {
-      this.log.warn('[prelive] scheduler desligado (PRELIVE_REFRESH_MS=0) — só atualiza via REST sob demanda');
-    }
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
-    if (this.preliveTimer) clearInterval(this.preliveTimer);
   }
 
   /* ============================================================
@@ -123,25 +96,9 @@ class RobotrendBot {
     return { changed: true, liveEnabled: next };
   }
 
-  setPreliveEnabled(value) {
-    const next = !!value;
-    if (this.preliveEnabled === next) return { changed: false, preliveEnabled: next };
-    this.preliveEnabled = next;
-    if (next) {
-      this.log.info('[prelive] scanner retomado');
-    } else {
-      this.log.warn('[prelive] scanner pausado');
-      // Congela análises pré-live no front
-      this.io.emit('prelive:update', []);
-    }
-    this.io.emit('system:status', this.systemStatus());
-    return { changed: true, preliveEnabled: next };
-  }
-
   systemStatus() {
     return {
       liveEnabled: this.liveEnabled,
-      preliveEnabled: this.preliveEnabled,
       minScore: this.minScore,
       monitored: this.lastMatches.length,
     };
@@ -365,42 +322,6 @@ class RobotrendBot {
     this.io.emit('stats:update', { ...newStats, currentMinScore: this.minScore });
   }
 
-  async runPrelive() {
-    if (!this.preliveEnabled) {
-      this.log.debug('[prelive] requisição ignorada (scanner pausado)');
-      return [];
-    }
-    const fixtures = await this.prelive.list();
-    for (const fx of fixtures) {
-      if (!fx.shouldSignal || fx.stale) continue;
-
-      // STRICT: pré-live NÃO emite signal live — pré-live só pode emitir
-      // signal pré-live (já segregado). Bloqueia qualquer escape.
-      if (STRICT_REAL_ONLY) {
-        // pré-live tem source=api-football-prelive (não é live), então
-        // checkSignalSource intencionalmente passa? Não: exige isFromLiveAPI=true.
-        // Aqui o pré-live é signal de mercado BTTS futuro — permitimos apenas
-        // se vier da API real (source começa com "api-").
-        const src = String(fx.source || '');
-        if (!/^api-/i.test(src)) {
-          console.log(`[SIGNAL BLOCK PRELIVE] ${fx.home} x ${fx.away} bloqueado: source="${src}"`);
-          continue;
-        }
-      }
-
-      const lastSent = this.sentRecently.get(`pre-${fx.matchId}`) || 0;
-      if (Date.now() - lastSent < 30 * 60 * 1000) continue;
-      this.sentRecently.set(`pre-${fx.matchId}`, Date.now());
-
-      const saved = await db.saveSignal(fx, null);
-      const tg = await sendSignal(fx);
-      this.io.emit('signal:new', { ...saved, telegram: tg });
-      metrics.recordSignal();
-    }
-    this.io.emit('prelive:update', fixtures);
-    return fixtures;
-  }
-
   snapshot() {
     return {
       matches: this.lastMatches,
@@ -408,7 +329,6 @@ class RobotrendBot {
       minScore: this.minScore,
       sentRecentlySize: this.sentRecently.size,
       liveEnabled: this.liveEnabled,
-      preliveEnabled: this.preliveEnabled,
     };
   }
 

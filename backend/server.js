@@ -47,7 +47,6 @@ const { RobotrendBot } = require('./bot');
 const { sendSignal } = require('./telegram');
 const auth = require('./auth');
 const { applySecurity } = require('./security');
-const { requireFeature } = require('./plans');
 const { buildAuthRoutes } = require('./auth');
 const bruteforce = require('./bruteforce');
 const { buildPaymentRoutes } = require('./payments');
@@ -278,7 +277,7 @@ app.get('/api/matches', async (req, res) => {
 });
 
 /* ============================================================
-   SYSTEM TOGGLES (LIVE / PRELIVE)
+   SYSTEM TOGGLES (LIVE)
    ============================================================ */
 app.get('/api/system/status', (req, res) => {
   res.json(bot.systemStatus());
@@ -369,12 +368,6 @@ app.post('/api/live/toggle', auth.requireSystemToggle(db), (req, res) => {
   res.json({ ok: true, ...r, status: bot.systemStatus() });
 });
 
-app.post('/api/prelive/toggle', auth.requireSystemToggle(db), (req, res) => {
-  const desired = req.body && typeof req.body.enabled === 'boolean' ? req.body.enabled : !bot.preliveEnabled;
-  const r = bot.setPreliveEnabled(desired);
-  res.json({ ok: true, ...r, status: bot.systemStatus() });
-});
-
 /* ============================================================
    AUTH
    ============================================================ */
@@ -435,16 +428,6 @@ buildPaymentRoutes(app, db, auth.requireAuth);
 /* ============================================================
    PROTECTED (planos)
    ============================================================ */
-app.get('/api/prelive',
-  auth.requireAuth(db),
-  requireFeature('prelive'),
-  async (req, res) => {
-    try {
-      const list = await bot.runPrelive();
-      res.json({ fixtures: list });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-  }
-);
 
 /**
  * /api/signals — histórico de sinais
@@ -598,7 +581,6 @@ app.get('/api/me/subscription',
         fullSignalAnalysis: isPremium,    // premiumInsight + betScore visíveis
         signalFilters:      isPremium,    // confidence >= 75
         // Backend features (gating real, requireFeature)
-        prelive:        !!planDef.features.prelive,
         over25:         !!planDef.features.over25,
         telegramAlerts: !!planDef.features.telegramAlerts,
         api:            !!planDef.features.api,
@@ -826,7 +808,6 @@ app.get('/api/admin/ops', async (req, res) => {
       },
       bot: {
         liveEnabled: bsnap.liveEnabled,
-        preliveEnabled: bsnap.preliveEnabled,
         monitored: (bsnap.matches || []).length,
         minScore: bsnap.minScore,
       },

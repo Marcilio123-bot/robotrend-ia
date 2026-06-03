@@ -14,7 +14,6 @@ const PLANS = {
     dailySignals: Number(process.env.PLAN_FREE_DAILY_SIGNALS || 3),
     features: {
       live: true,
-      prelive: false,
       btts: true,
       over25: false,
       telegramAlerts: false,
@@ -29,7 +28,6 @@ const PLANS = {
     dailySignals: Number(process.env.PLAN_VIP_DAILY_SIGNALS || 30),
     features: {
       live: true,
-      prelive: true,
       btts: true,
       over25: true,
       telegramAlerts: true,
@@ -46,7 +44,6 @@ const PLANS = {
     dailySignals: Number(process.env.PLAN_PREMIUM_DAILY_SIGNALS || 999),
     features: {
       live: true,
-      prelive: true,
       btts: true,
       over25: true,
       telegramAlerts: true,
@@ -66,7 +63,7 @@ function listPlans() {
 
 /**
  * Middleware: garante que o usuário tem o feature solicitado.
- * Uso:  app.get('/api/prelive', requireFeature('prelive'), handler)
+ * Uso:  app.get('/api/rota', requireFeature('over25'), handler)
  */
 function requireFeature(featureKey) {
   return (req, res, next) => {

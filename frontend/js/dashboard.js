@@ -13,8 +13,6 @@
   let lastAnalyses = [];
   let lastSignals  = [];
   let lastBetSignals = []; // bet:opportunity (corners/btts/win)
-  let lastPrelive  = []; // payload do socket prelive:update / GET /api/prelive
-  let preliveLastUpdateAt = 0;
 
   /* ============================================================
      MATCH GUARD — filtro defensivo client-side
@@ -814,242 +812,6 @@
   }
 
   /* ============================================================
-     PRELIVE — tabela de jogos + cards de palpites BTTS
-     ------------------------------------------------------------
-     Fonte primária: socket `prelive:update` (broadcast pelo bot
-     scheduler em backend/bot.js). Fallback: GET /api/prelive
-     (apenas para users com feature `prelive` no plano — VIP/PREMIUM).
-     ============================================================ */
-  function preliveRiskLabel(s) {
-    if (s?.risk?.label) return s.risk.label;
-    if (s?.risk?.level) return s.risk.level;
-    if (s?.confidence == null) return '—';
-    if (s.confidence >= 80) return 'Baixo';
-    if (s.confidence >= 65) return 'Médio';
-    return 'Alto';
-  }
-  function preliveRiskColor(label) {
-    const k = String(label || '').toLowerCase();
-    if (k.includes('baix')) return '#22c55e';
-    if (k.includes('méd') || k.includes('med')) return '#facc15';
-    if (k.includes('alt')) return '#ef4444';
-    return '#6b7280';
-  }
-  function preliveStartLabel(iso) {
-    if (!iso) return '—';
-    const t = new Date(iso);
-    if (!Number.isFinite(t.getTime())) return '—';
-    const today = new Date();
-    const sameDay = t.toDateString() === today.toDateString();
-    if (sameDay) return t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    return t.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-  }
-
-  /* ------------------------------------------------------------
-     normalizePreliveItem
-     ------------------------------------------------------------
-     Garante consistência de tipos no payload do backend (ou de
-     caches antigos): odd como Number com ponto decimal, confidence
-     numérica, booleans saneados. NUNCA descarta um item por valor
-     de shouldSignal/confidence/risk — apenas saneia campos.
-     ------------------------------------------------------------ */
-  function normalizePreliveItem(fx) {
-    if (!fx || typeof fx !== 'object') return null;
-    const out = { ...fx };
-    // odd: aceita Number ou string ("1,17" PT, "1.17" US) → Number ou null
-    if (out.odd != null) {
-      const n = Number(String(out.odd).replace(',', '.'));
-      out.odd = Number.isFinite(n) ? n : null;
-    }
-    // confidence: força Number 0–100 (defensivo — analyzePrelive já devolve número)
-    const c = Number(out.confidence);
-    out.confidence = Number.isFinite(c) ? Math.max(0, Math.min(100, c)) : 0;
-    // booleans saneados — qualquer string "true"/"false" vira boolean real
-    out.shouldSignal = out.shouldSignal === true || out.shouldSignal === 'true';
-    out.stale        = out.stale        === true || out.stale        === 'true';
-    return out;
-  }
-
-  function renderPreliveFixtures() {
-    /* ----------------------------------------------------------
-       REGRA DA SEÇÃO "JOGOS PRÉ-LIVE"
-       ----------------------------------------------------------
-       Esta tabela exibe TODOS os fixtures recebidos do backend,
-       independentemente de shouldSignal / confidence / risk.
-       Esses campos servem APENAS de informação visual (badges).
-       O único filtro defensivo aqui descarta objetos sem nome
-       de mandante NEM visitante (lixo de cache antigo). Tudo o
-       mais — incluindo confidence=0, risk=ALTO e shouldSignal=
-       false — DEVE aparecer.
-       ---------------------------------------------------------- */
-    const body = $('#prelive-fixtures-body');
-    const countEl = $('#prelive-fixtures-count');
-    if (!body) return;
-
-    const list = (lastPrelive || []).filter((fx) => fx && (fx.home || fx.away));
-    if (countEl) countEl.textContent = list.length ? `${list.length} jogos` : '—';
-    if (!list.length) {
-      body.innerHTML = `<tr><td colspan="8" class="py-6 text-center" style="color:var(--muted);">Sem jogos pré-live na janela das próximas 24h.</td></tr>`;
-      return;
-    }
-
-    body.innerHTML = list.map((fx) => {
-      const time = preliveStartLabel(fx.startsAt);
-      const conf = Number(fx.confidence ?? 0);
-      const market = fx.shouldSignal && fx.suggestion
-        ? fx.suggestion
-        : (fx.over25?.suggestion || fx.market || 'Sem entrada');
-      const odd = fx.odd != null ? `~${fx.odd}` : '—';
-      const riskLabel = preliveRiskLabel(fx);
-      const riskColor = preliveRiskColor(riskLabel);
-      const confColor = conf >= 75 ? '#22c55e' : conf >= 60 ? '#facc15' : 'var(--muted)';
-      const stale = fx.stale ? ` <span class="badge" style="background:#6b728022;color:#9ca3af;border:1px solid #6b728044;">stale</span>` : '';
-      return `
-        <tr>
-          <td class="py-3 px-4 font-mono text-xs">${escapeHtml(time)}</td>
-          <td class="py-3 px-4 text-xs" style="color:var(--text-2);">${escapeHtml(fx.league || '—')}</td>
-          <td class="py-3 px-4 font-semibold">${escapeHtml(fx.home || '—')}${stale}</td>
-          <td class="py-3 px-4 font-semibold">${escapeHtml(fx.away || '—')}</td>
-          <td class="py-3 px-4 font-mono" style="color:${confColor}; font-weight:700;">${conf}%</td>
-          <td class="py-3 px-4"><span class="badge live" style="background:rgba(6,182,212,.18); color:#06b6d4; border:1px solid rgba(6,182,212,.30);">${escapeHtml(market || '—')}</span></td>
-          <td class="py-3 px-4 font-mono">${escapeHtml(odd)}</td>
-          <td class="py-3 px-4">
-            <span class="badge" style="background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;">${escapeHtml(riskLabel)}</span>
-          </td>
-        </tr>`;
-    }).join('');
-  }
-
-  function preliveSignalCardHTML(s) {
-    const time = preliveStartLabel(s.startsAt);
-    const conf = Number(s.confidence ?? 0);
-    const odd  = s.odd != null ? `~${s.odd}` : '—';
-    const riskLabel = preliveRiskLabel(s);
-    const riskColor = preliveRiskColor(riskLabel);
-    const tags = Array.isArray(s.tags) ? s.tags.slice(0, 3) : [];
-    const home6 = (s.homeStats?.history || []).map((h) => h?.btts ? '🟢' : (h?.over25 ? '🟡' : '⚪')).join(' ');
-    const away6 = (s.awayStats?.history || []).map((h) => h?.btts ? '🟢' : (h?.over25 ? '🟡' : '⚪')).join(' ');
-    const accent = '#06b6d4';
-    return `
-      <article class="saas-card" style="border-left:3px solid ${accent};">
-        <div class="flex items-center justify-between mb-2">
-          <div class="flex items-center gap-2">
-            <span class="badge live" style="background:${accent}22; color:${accent}; border:1px solid ${accent}44;">BTTS Pré-Live</span>
-            <span class="badge" style="background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;">${escapeHtml(riskLabel)}</span>
-          </div>
-          <span class="text-[11px]" style="color: var(--muted); font-family: 'JetBrains Mono', monospace;">${escapeHtml(time)}</span>
-        </div>
-        <div class="text-sm font-bold mb-1">${escapeHtml(s.home || '—')} <span style="color:var(--muted);">×</span> ${escapeHtml(s.away || '—')}</div>
-        <div class="text-[11px] mb-3" style="color: var(--muted);">${escapeHtml(s.league || 'Pré-jogo')}</div>
-        <div class="text-lg font-extrabold mb-2" style="color: ${accent};">🎯 ${escapeHtml(s.suggestion || '—')}</div>
-        ${(home6 || away6) ? `
-          <div class="text-[11px] mb-2" style="color: var(--text-2); font-family: 'JetBrains Mono', monospace;">
-            <div>${escapeHtml(s.home || 'Casa')}: ${home6 || '—'}</div>
-            <div>${escapeHtml(s.away || 'Fora')}: ${away6 || '—'}</div>
-          </div>` : ''}
-        <div class="grid grid-cols-3 gap-2 text-center mt-3">
-          <div>
-            <div class="text-[10px] uppercase tracking-wider" style="color: var(--muted);">IA</div>
-            <div class="font-mono font-bold">${conf}%</div>
-          </div>
-          <div>
-            <div class="text-[10px] uppercase tracking-wider" style="color: var(--muted);">Odd</div>
-            <div class="font-mono font-bold">${escapeHtml(odd)}</div>
-          </div>
-          <div>
-            <div class="text-[10px] uppercase tracking-wider" style="color: var(--muted);">Ofensivo</div>
-            <div class="font-mono font-bold">${Number(s.offensiveCombined ?? 0)}</div>
-          </div>
-        </div>
-        ${tags.length ? `<div class="mt-3 text-[11px]" style="color: var(--text-2); line-height:1.5;">🧠 ${tags.map(escapeHtml).join(' · ')}</div>` : ''}
-      </article>
-    `;
-  }
-
-  function renderPreliveSignals() {
-    /* ----------------------------------------------------------
-       REGRA DA SEÇÃO "PALPITES PRÉ-LIVE"
-       ----------------------------------------------------------
-       SOMENTE aqui filtramos por shouldSignal && !stale. Estes
-       cards são opcionais — se nenhum jogo atender ao critério,
-       mostramos um fallback informativo, mas a tabela de
-       fixtures continua íntegra acima.
-       ---------------------------------------------------------- */
-    const host = $('#prelive-signals');
-    const status = $('#prelive-signals-status');
-    if (!host) return;
-
-    const tradable = (lastPrelive || []).filter((s) => s && s.shouldSignal && !s.stale);
-    if (status) {
-      if (preliveLastUpdateAt) {
-        const ageS = Math.max(0, Math.round((Date.now() - preliveLastUpdateAt) / 1000));
-        status.textContent = tradable.length
-          ? `${tradable.length} palpite${tradable.length === 1 ? '' : 's'} · ${ageS}s`
-          : `sem palpite · ${ageS}s`;
-        status.classList.remove('err'); status.classList.toggle('ok', tradable.length > 0);
-      } else {
-        status.textContent = 'aguardando';
-      }
-    }
-
-    if (!tradable.length) {
-      // Conta APENAS fixtures válidos (mesma regra de renderPreliveFixtures)
-      const total = (lastPrelive || []).filter((fx) => fx && (fx.home || fx.away)).length;
-      host.innerHTML = `<div class="col-span-full saas-card saas-empty">${
-        total
-          ? `Nenhum sinal no momento — ${total} jogo${total === 1 ? '' : 's'} pré-live disponível${total === 1 ? '' : 'is'} na tabela abaixo.`
-          : 'Aguardando análise pré-live…'
-      }</div>`;
-      return;
-    }
-    host.innerHTML = tradable.slice(0, 6).map(preliveSignalCardHTML).join('');
-  }
-
-  function setPrelive(list, opts = {}) {
-    if (!Array.isArray(list)) return;
-    // Normalização defensiva: sanitiza odd/confidence/booleans antes de armazenar
-    // — NUNCA descarta itens por shouldSignal/confidence/risk (regra do produto:
-    // fixtures sempre aparecem; signals são opcionais).
-    const normalized = list.map(normalizePreliveItem).filter(Boolean);
-    // [PRELIVE FRONT DEBUG] temporário — remover após diagnóstico
-    console.log('[PRELIVE FRONT] recebidos:', normalized.length, 'itens — source:', opts.source || '?');
-    if (normalized.length) console.log('[PRELIVE FRONT] sample[0]:', normalized[0]);
-    console.log('[PRELIVE FRONT] render count:', normalized.length);
-    lastPrelive = normalized;
-    preliveLastUpdateAt = Date.now();
-    try { renderPreliveFixtures(); } catch (e) { console.error('[PRELIVE FRONT] render fixtures error:', e); }
-    try { renderPreliveSignals(); }  catch (e) { console.error('[PRELIVE FRONT] render signals error:', e); }
-    if (opts.source) {
-      try { window.RobotrendBus?.emit('robotrend:prelive-render', { count: normalized.length, source: opts.source }); } catch (_) {}
-    }
-  }
-
-  async function loadPrelive() {
-    try {
-      const headers = { Accept: 'application/json' };
-      const tok = window.RobotrendAuth?.getToken?.();
-      if (tok) headers.Authorization = 'Bearer ' + tok;
-      const r = await fetch('/api/prelive', { headers, credentials: 'include' });
-      window.RobotrendHeartbeat?.markRestActivity?.('/api/prelive', r.status);
-      // 401/402: usuário sem feature ou sem token — silencia (socket cobre quando autorizado).
-      if (r.status === 401 || r.status === 402) {
-        console.log('[PRELIVE REST] sem permissão (status=' + r.status + ') — aguardando socket.');
-        return;
-      }
-      if (!r.ok) {
-        console.warn('[PRELIVE REST] HTTP', r.status);
-        return;
-      }
-      const data = await r.json();
-      // [PRELIVE FRONT DEBUG] temporário — remover após diagnóstico
-      console.log('[PRELIVE REST]', data);
-      setPrelive(Array.isArray(data?.fixtures) ? data.fixtures : [], { source: 'rest' });
-    } catch (err) {
-      console.error('[PRELIVE REST ERROR]', err);
-    }
-  }
-
-  /* ============================================================
      LOAD HISTORIES (REST)
      ============================================================ */
   async function loadSignals() {
@@ -1250,15 +1012,6 @@
     renderBetSignals();
   });
 
-  // prelive:update — broadcast do bot.runPrelive() (scheduler ou REST).
-  // Lista completa da janela 24h, com `shouldSignal` marcando entradas operáveis.
-  socket.on('prelive:update', (fixtures) => {
-    // [PRELIVE FRONT DEBUG] temporário — remover após diagnóstico
-    console.log('[PRELIVE SOCKET]', fixtures);
-    window.RobotrendHeartbeat?.markSocketActivity('prelive:update');
-    setPrelive(Array.isArray(fixtures) ? fixtures : [], { source: 'socket' });
-  });
-
   // signal:new = bet:opportunity vindo do betSignalEngine (corners/btts/win)
   // Backend já filtra/atrasa por tier — aqui só ajustamos a UX:
   //   - FREE recebe payload sem premiumInsight (locked=true)
@@ -1348,18 +1101,14 @@
   loadSignals();
   loadBetSignals();                                  // boot: REST fallback do painel #live-signals
   loadBestSignal();
-  loadPrelive();                                     // boot: carrega snapshot inicial via REST (se autorizado)
   // Garantia extra: se o script carregar antes do DOM estar pronto,
-  // dispara um segundo loadPrelive() no `load`. Idempotente — apenas
-  // refaz a chamada REST, useful em cold-start lento.
+  // dispara um segundo loadBetSignals() no `load`. Idempotente.
   window.addEventListener('load', () => {
-    try { loadPrelive(); } catch (e) { console.error('[PRELIVE FRONT] load handler error:', e); }
     try { loadBetSignals(); } catch (e) { console.error('[LIVE SIGNAL FRONT] load handler error:', e); }
   });
   setInterval(loadLiveFromApi, 30_000);              // backup REST do poller football
   setInterval(loadBetSignals,  60_000);              // backup polling caso socket caia
   setInterval(loadBestSignal,  90_000);              // refresh do best-bet a cada 90s
-  setInterval(loadPrelive,    300_000);              // backup REST do prelive (scheduler emite a cada ~10min)
   setInterval(detectFootballAvailability, 120_000);  // reavalia disponibilidade periodicamente
 
   // Reage a mudanças do user-state (plano, role) — re-renderiza cards

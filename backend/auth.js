@@ -206,7 +206,7 @@ function requirePremium(req, res, next) {
 }
 
 /**
- * Ambiente local/dev onde toggles LIVE/PRE-LIVE não exigem login.
+ * Ambiente local/dev onde o toggle LIVE não exige login.
  * NODE_ENV=development OU ALLOW_DEV_TOGGLE=true
  */
 function isDevToggleBypass() {
@@ -216,7 +216,7 @@ function isDevToggleBypass() {
 }
 
 /**
- * Auth para POST /api/live/toggle e /api/prelive/toggle.
+ * Auth para POST /api/live/toggle.
  * - development: sempre permite (injeta usuário admin sintético se não logado)
  * - production: exige JWT válido + role admin
  */
@@ -254,7 +254,7 @@ function requireSystemToggle(db) {
     req.user = sanitizeUser(user);
     if (!isMasterRole(req.user.role)) {
       return res.status(403).json({
-        error: 'Apenas administradores podem alternar LIVE/PRE-LIVE',
+        error: 'Apenas administradores podem alternar o sistema LIVE',
         code: 'ADMIN_REQUIRED',
       });
     }

@@ -120,7 +120,7 @@ function warnNotConfiguredOnce(reason) {
   });
 }
 
-/** Array vazio padrão para callers (live/prelive/poller). Sem I/O. */
+/** Array vazio padrão para callers (live/poller). Sem I/O. */
 function emptyFixturesArray(reason = 'not_configured') {
   const arr = [];
   Object.defineProperty(arr, '__skipped', { value: true, enumerable: false });
@@ -144,7 +144,7 @@ const STALE_TTL_MS     = Number(process.env.API_FOOTBALL_STALE_TTL_MS || 24 * 3_
 
 // Quota thresholds (fração RESTANTE)
 //   QUOTA_LOW_PCT     → emite alerta `quota:low` no event bus (default 20%)
-//   QUOTA_SAFE_PCT    → entra em SAFE-MODE: corta enrichment, prelive, consensus,
+//   QUOTA_SAFE_PCT    → entra em SAFE-MODE: corta enrichment, consensus,
 //                       responde do cache/stale sempre que possível (default 20%)
 const QUOTA_LOW_PCT    = Number(process.env.API_FOOTBALL_QUOTA_LOW_PCT  || 0.20);
 const QUOTA_SAFE_PCT   = Number(process.env.API_FOOTBALL_QUOTA_SAFE_PCT || 0.20);
@@ -246,7 +246,6 @@ function maybeEmitQuotaLow() {
    SAFE-MODE — quando a quota está acabando OU o circuito está OPEN,
    o sistema deve evitar QUALQUER chamada não-essencial à API:
      - enricher para de enfileirar
-     - prelive devolve []
      - consensus engine desativa
      - apenas o poller central continua, com TTL aumentado
    ============================================================ */
@@ -639,7 +638,7 @@ async function get(endpoint, params = {}, opts = {}) {
 
   // 2) SAFE-MODE: bloqueia qualquer chamada não essencial. O caller pode
   //    pedir `opts.essential=true` (poller central) para furar o gate, mas
-  //    a maioria dos endpoints (enricher, prelive, consensus, trends) devem
+  //    a maioria dos endpoints (enricher, consensus, trends) devem
   //    devolver stale-cache ou nada nesse modo.
   if (_safeMode && !opts.essential) {
     const stale = await store.get(KP_STALE + key);
