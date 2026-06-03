@@ -96,16 +96,21 @@
 
       try {
         const result = await RobotrendAuth.login(email, password);
-        // ROLE decide o destino — admin/master vai ao painel master,
-        // cliente (premium/free) vai ao dashboard. PLAN nunca decide isso.
-        let next = new URLSearchParams(location.search).get('next');
-        if (!next) {
-          const u = result?.user || RobotrendAuth.getUser?.();
-          const role = String(u?.role || '').toLowerCase();
-          const isAdmin = u?.isAdmin === true
-            || ['master', 'admin', 'owner', 'super_admin'].includes(role);
-          next = isAdmin ? '/master' : '/';
+        const u = result?.user || RobotrendAuth.getUser?.();
+        const role = String(u?.role || '').toLowerCase();
+        const userEmail = String(u?.email || email).toLowerCase();
+        const isAdmin = u?.isAdmin === true
+          || ['master', 'admin', 'owner', 'super_admin'].includes(role)
+          || userEmail === 'admin@robotrend.local';
+
+        // Admin SEMPRE vai ao painel master — ignora ?next=/ ou /index.html
+        // (evita cair no dashboard Premium após login).
+        if (isAdmin) {
+          location.href = '/master';
+          return;
         }
+
+        const next = new URLSearchParams(location.search).get('next') || '/';
         location.href = next;
       } catch (ex) {
         const code = ex?.payload?.code || ex?.payload?.error || ex?.message || '';

@@ -50,17 +50,26 @@ function resolveSubscriptionRole(currentRole, plan) {
   return p === 'FREE' ? 'user' : 'premium';
 }
 
+/** E-mail padrão do bootstrap (mesmo valor de services/bootstrapAdmin.js). */
+const DEFAULT_BOOTSTRAP_EMAIL = 'admin@robotrend.local';
+
 /** E-mails que devem manter role master/admin (bootstrap + lista extra). */
 function privilegedAdminEmails() {
   const emails = new Set();
-  const boot = String(process.env.BOOTSTRAP_ADMIN_EMAIL || '').trim().toLowerCase();
+  const boot = String(process.env.BOOTSTRAP_ADMIN_EMAIL || DEFAULT_BOOTSTRAP_EMAIL).trim().toLowerCase();
   if (boot) emails.add(boot);
+  emails.add(DEFAULT_BOOTSTRAP_EMAIL);
   const extra = String(process.env.ADMIN_EMAILS || '').split(',');
   for (const e of extra) {
     const x = e.trim().toLowerCase();
     if (x) emails.add(x);
   }
   return emails;
+}
+
+function isPrivilegedAdminEmail(email) {
+  const e = String(email || '').trim().toLowerCase();
+  return e && privilegedAdminEmails().has(e);
 }
 
 function isPaidPlan(plan) {
@@ -93,7 +102,7 @@ function resolveSubscriptionState(user) {
     };
   }
 
-  if (isAdminUser(user)) {
+  if (isAdminUser(user) || isPrivilegedAdminEmail(user?.email)) {
     return {
       subscriptionStatus: STATUS.ACTIVE,
       blocked: false,
@@ -323,7 +332,7 @@ async function logAdminAction(db, entry) {
 /** Enriquece user sanitizado com campos de assinatura para API/UI. */
 function enrichUserForClient(user) {
   const state = resolveSubscriptionState(user);
-  const admin = isAdminUser(user);
+  const admin = isAdminUser(user) || isPrivilegedAdminEmail(user?.email);
   return {
     ...user,
     subscriptionStatus: state.subscriptionStatus,
@@ -502,5 +511,7 @@ module.exports = {
   repairDegradedPrivilegedUsers,
   resolveSubscriptionRole,
   privilegedAdminEmails,
+  isPrivilegedAdminEmail,
+  DEFAULT_BOOTSTRAP_EMAIL,
   PRIVILEGED_ROLES,
 };

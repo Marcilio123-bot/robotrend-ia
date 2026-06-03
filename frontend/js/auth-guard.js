@@ -57,6 +57,7 @@
   function isAdmin(user) {
     if (!user) return false;
     if (user.isAdmin === true) return true;
+    if (String(user.email || '').toLowerCase() === 'admin@robotrend.local') return true;
     const r = String(user.role || '').toLowerCase();
     // Alinhado com backend/auth.js isMasterRole + saas-nav MASTER_ROLES
     return r === 'admin' || r === 'owner' || r === 'master' || r === 'super_admin';

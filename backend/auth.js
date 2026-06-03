@@ -390,6 +390,19 @@ function buildAuthRoutes(app, db) {
         return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
       }
       user = await subscription.syncSubscriptionStatus(db, user);
+      // Reparo automático: conta bootstrap degradada para role=premium (migração antiga).
+      if (subscription.isPrivilegedAdminEmail(user.email) && !subscription.isAdminUser(user)) {
+        logger.warn('login: restaurando role master para e-mail privilegiado', {
+          email: user.email, previousRole: user.role,
+        });
+        user = await db.updateUser(user.id, {
+          role: 'master',
+          active: true,
+          blocked: false,
+          subscriptionStatus: subscription.STATUS.ACTIVE,
+        });
+        user = await db.findUserById(user.id);
+      }
       const subState = subscription.resolveSubscriptionState(user);
       if (subState.blocked || subState.subscriptionStatus === subscription.STATUS.BLOCKED) {
         console.log(`[AUTH LOGIN] BLOQUEADO email="${email}" ip=${ip} motivo=ACCOUNT_BLOCKED`);
