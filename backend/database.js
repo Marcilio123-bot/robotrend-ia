@@ -228,6 +228,31 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_users_active ON users(active);
     `,
   },
+  {
+    name: '004_subscription_fields',
+    sql: `
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_reason TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT NOT NULL DEFAULT 'active';
+      CREATE INDEX IF NOT EXISTS idx_users_subscription_status ON users(subscription_status);
+      CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_users_blocked ON users(blocked);
+
+      CREATE TABLE IF NOT EXISTS admin_logs (
+        id            SERIAL PRIMARY KEY,
+        admin_id      TEXT,
+        admin_email   TEXT,
+        action        TEXT NOT NULL,
+        target_user_id TEXT,
+        target_email  TEXT,
+        details       JSONB DEFAULT '{}',
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_admin_logs_created ON admin_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_admin_logs_target ON admin_logs(target_user_id);
+    `,
+  },
 ];
 
 async function init() {
@@ -239,6 +264,12 @@ async function init() {
       );
     }
     console.log('[db] Modo in-memory ativo (apenas desenvolvimento).');
+    try {
+      const sub = require('./subscription');
+      await sub.migrateExistingUsers(module.exports);
+    } catch (migrateErr) {
+      console.warn('[db] migração assinaturas (mem):', migrateErr.message);
+    }
     return;
   }
 
@@ -269,6 +300,12 @@ async function init() {
       console.log(`[db] migration aplicada: ${m.name}`);
     }
     console.log(`[db] PostgreSQL conectado (${cfg.mode} → ${cfg.host})`);
+    try {
+      const sub = require('./subscription');
+      await sub.migrateExistingUsers(module.exports);
+    } catch (migrateErr) {
+      console.warn('[db] migração assinaturas:', migrateErr.message);
+    }
   } catch (e) {
     if (e.code === 'ENOTFOUND' || /getaddrinfo/i.test(e.message || '')) {
       throw new Error(formatDbConnectError(e, cfg));
@@ -310,6 +347,10 @@ async function createUser({ email, name, passwordHash, plan = 'FREE', role = 'us
     const user = {
       id, email, name, passwordHash, plan, role,
       active: true,
+      blocked: false,
+      blockedReason: null,
+      subscriptionStatus: 'active',
+      expiresAt: null,
       createdAt: new Date().toISOString(),
     };
     mem.users.set(id, user);
@@ -369,6 +410,15 @@ async function updateUser(userId, patch) {
   if (!useDatabase) {
     const u = mem.users.get(userId);
     if (!u) return null;
+    if (typeof patch.active === 'boolean') {
+      patch.blocked = !patch.active;
+      if (!patch.active) patch.subscriptionStatus = 'blocked';
+      else if (!patch.subscriptionStatus) patch.subscriptionStatus = 'active';
+    }
+    if (typeof patch.blocked === 'boolean' && patch.active === undefined) {
+      patch.active = !patch.blocked;
+      if (patch.blocked) patch.subscriptionStatus = 'blocked';
+    }
     Object.assign(u, patch);
     return u;
   }
@@ -381,10 +431,23 @@ async function updateUser(userId, patch) {
     name: 'name',
     active: 'active',
     email: 'email',
+    expiresAt: 'expires_at',
+    blocked: 'blocked',
+    blockedReason: 'blocked_reason',
+    subscriptionStatus: 'subscription_status',
   };
   const sets = [];
   const vals = [];
   let i = 1;
+  if (typeof patch.active === 'boolean') {
+    patch.blocked = !patch.active;
+    if (!patch.active) patch.subscriptionStatus = 'blocked';
+    else if (!patch.subscriptionStatus) patch.subscriptionStatus = 'active';
+  }
+  if (typeof patch.blocked === 'boolean' && patch.active === undefined) {
+    patch.active = !patch.blocked;
+    if (patch.blocked) patch.subscriptionStatus = 'blocked';
+  }
   for (const [k, v] of Object.entries(patch)) {
     if (map[k]) { sets.push(`${map[k]}=$${i++}`); vals.push(v); }
   }
@@ -394,11 +457,48 @@ async function updateUser(userId, patch) {
   return findUserById(userId);
 }
 
-async function listUsers(limit = 100) {
+async function listUsers(limit = 100, filters = {}) {
+  const q = String(filters.q || '').trim().toLowerCase();
+  const planF = filters.plan ? String(filters.plan).toUpperCase() : '';
+  const statusF = filters.status ? String(filters.status).toLowerCase() : '';
+
   if (!useDatabase) {
-    return Array.from(mem.users.values()).slice(0, limit);
+    let list = Array.from(mem.users.values());
+    if (q) {
+      list = list.filter((u) =>
+        String(u.email || '').toLowerCase().includes(q) ||
+        String(u.name || '').toLowerCase().includes(q)
+      );
+    }
+    if (planF) list = list.filter((u) => String(u.plan || '').toUpperCase() === planF);
+    if (statusF) list = list.filter((u) => String(u.subscriptionStatus || 'active').toLowerCase() === statusF);
+    return list.slice(0, limit);
   }
-  const { rows } = await pool.query(`SELECT * FROM users ORDER BY created_at DESC LIMIT $1`, [limit]);
+
+  const clauses = [];
+  const vals = [];
+  let i = 1;
+  if (q) {
+    clauses.push(`(LOWER(email) LIKE $${i} OR LOWER(COALESCE(name,'')) LIKE $${i})`);
+    vals.push(`%${q}%`);
+    i++;
+  }
+  if (planF) {
+    clauses.push(`UPPER(plan) = $${i}`);
+    vals.push(planF);
+    i++;
+  }
+  if (statusF) {
+    clauses.push(`LOWER(subscription_status) = $${i}`);
+    vals.push(statusF);
+    i++;
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  vals.push(limit);
+  const { rows } = await pool.query(
+    `SELECT * FROM users ${where} ORDER BY created_at DESC LIMIT $${i}`,
+    vals
+  );
   return rows.map(mapUserRow);
 }
 
@@ -421,15 +521,69 @@ async function deleteUser(userId) {
 }
 
 function mapUserRow(r) {
+  const blocked = r.blocked != null ? !!r.blocked : r.active === false;
   return {
     id: r.id, email: r.email, name: r.name,
     passwordHash: r.password_hash,
     plan: r.plan, role: r.role,
-    // active default true para users criados antes da migration 003.
-    active: r.active == null ? true : !!r.active,
+    active: r.active == null ? !blocked : !!r.active,
+    blocked,
+    blockedReason: r.blocked_reason || null,
+    subscriptionStatus: r.subscription_status || 'active',
+    expiresAt: r.expires_at || null,
     resetToken: r.reset_token, resetTokenExpires: Number(r.reset_expires),
     createdAt: r.created_at,
+    updatedAt: r.updated_at,
   };
+}
+
+async function getSubscription(userId) {
+  if (!useDatabase) return mem.subscriptions.get(userId) || null;
+  const { rows } = await pool.query(`SELECT * FROM subscriptions WHERE user_id=$1`, [userId]);
+  if (!rows[0]) return null;
+  const r = rows[0];
+  return {
+    userId: r.user_id,
+    plan: r.plan,
+    provider: r.provider,
+    externalId: r.external_id,
+    status: r.status,
+    startedAt: r.started_at,
+    expiresAt: r.expires_at,
+  };
+}
+
+async function saveAdminLog(entry) {
+  const row = {
+    adminId: entry.adminId || null,
+    adminEmail: entry.adminEmail || null,
+    action: entry.action,
+    targetUserId: entry.targetUserId || null,
+    targetEmail: entry.targetEmail || null,
+    details: entry.details || {},
+    createdAt: new Date().toISOString(),
+  };
+  if (!useDatabase) {
+    if (!mem.adminLogs) mem.adminLogs = [];
+    mem.adminLogs.unshift({ id: mem.adminLogs.length + 1, ...row });
+    if (mem.adminLogs.length > 500) mem.adminLogs.length = 500;
+    return row;
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO admin_logs (admin_id, admin_email, action, target_user_id, target_email, details)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [row.adminId, row.adminEmail, row.action, row.targetUserId, row.targetEmail, row.details]
+  );
+  return rows[0];
+}
+
+async function listAdminLogs(limit = 50) {
+  if (!useDatabase) return (mem.adminLogs || []).slice(0, limit);
+  const { rows } = await pool.query(
+    `SELECT * FROM admin_logs ORDER BY created_at DESC LIMIT $1`,
+    [limit]
+  );
+  return rows;
 }
 
 /* ============================================================
@@ -654,6 +808,7 @@ module.exports = {
   // users
   createUser, findUserById, findUserByEmail, findUserByResetToken,
   setResetToken, updateUser, listUsers, deleteUser,
+  getSubscription, saveAdminLog, listAdminLogs,
   // signals
   saveSignal, listSignals, countTodaySignalsForUser, recordResult,
   // stats / admin

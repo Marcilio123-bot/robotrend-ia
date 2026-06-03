@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <meta name="robotrend-layout" content="master" />
+  <title>Gestão Master · Robotrend IA</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .master-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 16px; }
+    .master-toolbar .field { flex: 1; min-width: 140px; }
+    .master-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .master-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 13px; }
+    .master-table th { text-align: left; padding: 10px 12px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); border-bottom: 1px solid var(--line); }
+    .master-table td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    .master-table tr:hover td { background: rgba(20,184,94,.04); }
+    .master-table tr.row-blocked { opacity: .6; }
+    .st-badge { display: inline-flex; padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+    .st-active { background: rgba(20,184,94,.15); color: #14b85e; border: 1px solid rgba(20,184,94,.35); }
+    .st-expired { background: rgba(255,85,102,.12); color: #ff6677; border: 1px solid rgba(255,85,102,.35); }
+    .st-blocked { background: rgba(255,181,71,.12); color: #ffb547; border: 1px solid rgba(255,181,71,.35); }
+    .act-group { display: flex; flex-wrap: wrap; gap: 4px; }
+    .btn-xs { padding: 5px 10px; font-size: 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); cursor: pointer; font-weight: 700; }
+    .btn-xs:hover { border-color: rgba(20,184,94,.4); color: #14b85e; }
+    .btn-xs.danger { color: #ff6677; border-color: rgba(255,85,102,.3); }
+    .btn-xs.warn { color: #ffb547; }
+    .btn-xs.ok { color: #14b85e; }
+    @media (max-width: 640px) {
+      .master-toolbar .field { min-width: 100%; }
+    }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="master"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">◉ Painel Master</h1>
+          <p class="saas-page-sub">Gestão de clientes, assinaturas, bloqueios e renovações</p>
+        </div>
+        <div class="saas-page-actions">
+          <span class="saas-status-pill ok">MASTER</span>
+          <button type="button" id="btn-refresh" class="btn-ghost text-sm">↻ Atualizar</button>
+        </div>
+      </header>
+
+      <section class="saas-kpis" id="master-kpis">
+        <div class="saas-kpi"><div class="saas-kpi-label">Total</div><div class="saas-kpi-value" id="kpi-total">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Ativos</div><div class="saas-kpi-value" id="kpi-active" style="color:#14b85e;">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Expirados</div><div class="saas-kpi-value" id="kpi-expired" style="color:#ff6677;">—</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Bloqueados</div><div class="saas-kpi-value" id="kpi-blocked" style="color:#ffb547;">—</div></div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-card" style="padding: 18px 22px;">
+          <div class="master-toolbar">
+            <div class="field" style="flex:2; min-width:200px;">
+              <label class="text-xs font-bold uppercase tracking-wider" style="color:var(--muted);">Pesquisar</label>
+              <input id="filter-q" type="search" class="input-field w-full mt-1" placeholder="E-mail ou nome…" />
+            </div>
+            <div class="field">
+              <label class="text-xs font-bold uppercase tracking-wider" style="color:var(--muted);">Plano</label>
+              <select id="filter-plan" class="input-field w-full mt-1">
+                <option value="">Todos</option>
+                <option value="FREE">FREE</option>
+                <option value="PREMIUM">PREMIUM</option>
+                <option value="VIP">VIP</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="text-xs font-bold uppercase tracking-wider" style="color:var(--muted);">Status</label>
+              <select id="filter-status" class="input-field w-full mt-1">
+                <option value="">Todos</option>
+                <option value="active">Ativo</option>
+                <option value="expired">Expirado</option>
+                <option value="blocked">Bloqueado</option>
+              </select>
+            </div>
+            <button type="button" id="btn-filter" class="btn-primary" style="padding:10px 20px;">Filtrar</button>
+          </div>
+          <p id="master-status" class="text-xs mt-2" style="color:var(--muted);">Carregando usuários…</p>
+        </div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-card master-table-wrap" style="padding: 0;">
+          <table class="master-table">
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Plano</th>
+                <th>Status</th>
+                <th>Expira em</th>
+                <th>Cadastro</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="master-users-body">
+              <tr><td colspan="6" class="py-8 text-center" style="color:var(--muted);">Carregando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <h3 class="text-lg font-extrabold">Log administrativo</h3>
+          <p class="text-xs" style="color:var(--muted);">Bloqueios, desbloqueios e renovações</p>
+        </div>
+        <div class="saas-card" style="padding: 16px 20px; max-height: 280px; overflow-y: auto;" id="master-logs">
+          <div style="color:var(--muted); font-size:13px;">Carregando…</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/layouts/master-layout.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/master.js"></script>
+</body>
+</html>

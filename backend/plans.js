@@ -6,6 +6,8 @@
 
 'use strict';
 
+const subscription = require('./subscription');
+
 const PLANS = {
   FREE: {
     id: 'FREE',
@@ -71,8 +73,31 @@ function requireFeature(featureKey) {
     if (!user) {
       return res.status(401).json({ error: 'Não autenticado' });
     }
+    if (!subscription.isAdminUser(user)) {
+      const sub = req.subscription || subscription.resolveSubscriptionState(user);
+      if (sub.blocked || sub.subscriptionStatus === subscription.STATUS.BLOCKED) {
+        return res.status(403).json({
+          error: 'Sua conta foi bloqueada. Entre em contato com o suporte.',
+          code: 'ACCOUNT_BLOCKED',
+        });
+      }
+      if (sub.subscriptionStatus === subscription.STATUS.EXPIRED || !sub.hasPaidAccess) {
+        const planDef = getPlan(user.plan);
+        if (planDef.features[featureKey] && subscription.isPaidPlan(user.plan)) {
+          return res.status(403).json({
+            error: 'Sua assinatura expirou. Renove para continuar.',
+            code: 'SUBSCRIPTION_EXPIRED',
+            upgrade: true,
+          });
+        }
+      }
+    }
     const plan = getPlan(user.plan);
-    if (!plan.features[featureKey]) {
+    const sub = req.subscription || subscription.resolveSubscriptionState(user);
+    const effectivePlan = (subscription.isAdminUser(user) || sub.hasPaidAccess)
+      ? plan
+      : getPlan('FREE');
+    if (!effectivePlan.features[featureKey]) {
       return res.status(402).json({
         error: 'Funcionalidade exclusiva de plano superior',
         feature: featureKey,

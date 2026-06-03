@@ -101,7 +101,7 @@
       } catch (ex) {
         const code = ex?.payload?.code || ex?.payload?.error || ex?.message || '';
         let msg = 'Erro ao entrar.';
-        if (code === 'USER_BLOCKED')                       msg = 'Sua conta foi bloqueada pelo administrador. Entre em contato com o suporte.';
+        if (code === 'USER_BLOCKED' || code === 'ACCOUNT_BLOCKED') msg = 'Sua conta foi bloqueada. Entre em contato com o suporte.';
         else if (/INVALID_CREDENTIALS|credenciais/i.test(code)) msg = 'Email ou senha incorretos.';
         else if (/EMAIL_PASSWORD_REQUIRED/i.test(code))    msg = 'Informe email e senha.';
         else if (ex?.status === 429)                         msg = 'Muitas tentativas. Aguarde um momento.';

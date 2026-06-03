@@ -20,6 +20,7 @@ let jwt;
 try { jwt = require('jsonwebtoken'); } catch (e) { jwt = null; }
 
 const { getJwtSecret, isProductionLike } = require('./startup-check');
+const subscription = require('./subscription');
 const JWT_SECRET = getJwtSecret();
 if (!isProductionLike() && JWT_SECRET === 'robotrend_default_secret_change_me') {
   console.warn('[auth] JWT_SECRET ausente/fraco — usando default apenas em desenvolvimento');
@@ -120,14 +121,18 @@ function requireAuth(db) {
       if (!token) return res.status(401).json({ error: 'Não autenticado' });
       const payload = verifyToken(token);
       if (!payload || !payload.sub) return res.status(401).json({ error: 'Token inválido' });
-      const user = await db.findUserById(payload.sub);
+      let user = await db.findUserById(payload.sub);
       if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
-      // Usuários bloqueados pelo admin não podem usar nenhuma rota autenticada.
-      // O frontend deve interpretar 'USER_BLOCKED' como logout forçado.
-      if (user.active === false) {
-        return res.status(403).json({ error: 'Conta bloqueada pelo administrador', code: 'USER_BLOCKED' });
+      user = await subscription.syncSubscriptionStatus(db, user);
+      const sub = subscription.resolveSubscriptionState(user);
+      if (sub.blocked || sub.subscriptionStatus === subscription.STATUS.BLOCKED) {
+        return res.status(403).json({
+          error: 'Sua conta foi bloqueada. Entre em contato com o suporte.',
+          code: 'ACCOUNT_BLOCKED',
+        });
       }
       req.user = sanitizeUser(user);
+      req.subscription = subscription.resolveSubscriptionState(req.user);
       next();
     } catch (err) {
       // Falha em DB/rede/pool → encaminha ao errorHandler global (devolve
@@ -192,17 +197,12 @@ function requireMaster(req, res, next) {
  */
 function requirePremium(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
-  const role = String(req.user.role || '').toLowerCase();
-  const plan = String(req.user.plan || '').toUpperCase();
-  const ok = isMasterRole(role) || role === 'premium'
-          || plan === 'PREMIUM' || plan === 'PRO' || plan === 'VIP';
-  if (!ok) {
-    return res.status(403).json({
-      error: 'Recurso disponível apenas para assinantes Premium',
-      code: 'PREMIUM_REQUIRED',
+  if (isMasterRole(req.user.role)) return next();
+  subscription.requireNotBlocked(req, res, () => {
+    subscription.requireActiveSubscription(req, res, () => {
+      subscription.requirePaidPlan()(req, res, next);
     });
-  }
-  next();
+  });
 }
 
 /**
@@ -265,13 +265,11 @@ function requireSystemToggle(db) {
 function sanitizeUser(u) {
   if (!u) return null;
   const { passwordHash, resetToken, resetTokenExpires, ...rest } = u;
-  // Garante role + plan sempre presentes (defaults seguros).
-  // Roles: 'user' (padrão), 'premium' (cliente pago), 'admin' (acesso total).
   const safe = Object.assign({}, rest, {
     role: rest.role || 'user',
     plan: rest.plan || 'FREE',
   });
-  return safe;
+  return subscription.enrichUserForClient(safe);
 }
 
 /* ============================================================
@@ -391,11 +389,15 @@ function buildAuthRoutes(app, db) {
         logger.warn('login fail', { email, ip, fails: e.fails });
         return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
       }
-      // Conta bloqueada pelo admin — credenciais corretas, mas acesso negado.
-      if (user.active === false) {
-        console.log(`[AUTH LOGIN] BLOQUEADO email="${email}" ip=${ip} motivo=USER_BLOCKED`);
+      user = await subscription.syncSubscriptionStatus(db, user);
+      const subState = subscription.resolveSubscriptionState(user);
+      if (subState.blocked || subState.subscriptionStatus === subscription.STATUS.BLOCKED) {
+        console.log(`[AUTH LOGIN] BLOQUEADO email="${email}" ip=${ip} motivo=ACCOUNT_BLOCKED`);
         logger.warn('login blocked', { email, userId: user.id });
-        return res.status(403).json({ error: 'Conta bloqueada pelo administrador', code: 'USER_BLOCKED' });
+        return res.status(403).json({
+          error: 'Sua conta foi bloqueada. Entre em contato com o suporte.',
+          code: 'ACCOUNT_BLOCKED',
+        });
       }
       if (bruteforceEnabled) bruteforce.recordSuccess(bfKey);
 

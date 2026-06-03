@@ -51,7 +51,7 @@
     if (guardMeta?.content?.toLowerCase() === 'admin') return true;
     const layoutMeta = document.querySelector('meta[name="robotrend-layout"]');
     if (layoutMeta?.content?.toLowerCase() === 'master') return true;
-    return /^\/(admin|ops)(\/|$|\.html?$)/i.test(location.pathname);
+    return /^\/(master|admin|ops)(\/|$|\.html?$)/i.test(location.pathname);
   }
 
   /* ============================================================

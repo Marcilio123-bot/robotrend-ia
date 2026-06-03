@@ -7,7 +7,7 @@
      masterNav  → administrador da plataforma (sidebar operacional)
 
    REGRA DE ESCOLHA — PATH-BASED (anti-duplicação):
-     1) path ∈ /admin|/ops              → masterNav  (kind=master)
+     1) path ∈ /master|/admin|/ops      → masterNav  (kind=master)
         (o auth-guard já bloqueou acesso pra não-master antes deste ponto)
      2) ?asClient=1                     → clientNav  (kind=client)
         (preview opcional, sobrescreve o cliente padrão)
@@ -65,7 +65,8 @@
     {
       section: 'Master Admin',
       items: [
-        { id: 'admin',          label: 'Painel Master',  icon: '◉', href: '/admin' },
+        { id: 'master',         label: 'Gestão Master',  icon: '◉', href: '/master' },
+        { id: 'admin',          label: 'Dashboard',      icon: '▣', href: '/admin' },
         { id: 'admin-users',    label: 'Usuários',       icon: '◇', href: '/admin/users' },
         { id: 'admin-finance',  label: 'Financeiro',     icon: '◈', href: '/admin/finance' },
         { id: 'admin-system',   label: 'Sistema',        icon: '⚙', href: '/admin/system' },
@@ -149,7 +150,7 @@
    * Retorna { nav, kind: 'client' | 'master' }.
    */
   function pickNav(user) {
-    const isMasterPath = /^\/(admin|ops)(\/|$|\.html?$)/i.test(location.pathname);
+    const isMasterPath = /^\/(master|admin|ops)(\/|$|\.html?$)/i.test(location.pathname);
     if (isMasterPath && !location.search.includes('asClient=1')) {
       return { nav: masterNav, kind: 'master' };
     }

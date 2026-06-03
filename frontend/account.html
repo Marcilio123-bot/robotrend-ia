@@ -102,6 +102,22 @@
     .status.pending { background: rgba(255,181,71,.18); color: #ffb547; }
     .status.failed  { background: rgba(255,85,102,.18); color: #ff5566; }
     .status.trialing{ background: rgba(124,148,254,.18); color: #7c94fe; }
+    .sub-alert {
+      margin-top: 16px; padding: 14px 18px; border-radius: 12px; font-size: 14px;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: space-between;
+    }
+    .sub-alert.warn { background: rgba(255,181,71,.12); border: 1px solid rgba(255,181,71,.4); color: #ffd599; }
+    .sub-alert.danger { background: rgba(255,85,102,.12); border: 1px solid rgba(255,85,102,.4); color: #ffadb5; }
+    .sub-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px; margin-top: 16px;
+    }
+    .sub-stat {
+      background: rgba(0,0,0,.2); border: 1px solid var(--line); border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .sub-stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 800; }
+    .sub-stat-value { font-size: 18px; font-weight: 800; margin-top: 4px; }
   </style>
 </head>
 <body class="font-display antialiased">
@@ -132,6 +148,8 @@
               <div id="plan-meta" class="mt-4 flex gap-6 text-sm" style="color: var(--text-2);">
                 <div><b style="color: var(--text)">—</b> <span style="opacity:.7">renovação</span></div>
               </div>
+              <div id="subscription-stats" class="sub-grid" style="display:none;"></div>
+              <div id="subscription-alert" style="display:none;"></div>
             </div>
             <div class="flex md:justify-end">
               <div id="plan-cta-zone" class="flex flex-col gap-2">
@@ -256,9 +274,50 @@
         $('#plan-title').textContent = (d.planLabel || plan);
         $('#plan-desc').textContent = PLAN_DESC[plan] || '';
 
+        const statusLabel = d.subscriptionStatusLabel || 'Ativo';
+        const statsEl = $('#subscription-stats');
+        const alertEl = $('#subscription-alert');
+        if (statsEl && (plan !== 'FREE' || d.expiresAt)) {
+          statsEl.style.display = 'grid';
+          const daysTxt = d.daysRemaining != null ? String(d.daysRemaining) : '—';
+          statsEl.innerHTML = `
+            <div class="sub-stat"><div class="sub-stat-label">Plano</div><div class="sub-stat-value">${escapeHtml(d.planLabel || plan)}</div></div>
+            <div class="sub-stat"><div class="sub-stat-label">Status</div><div class="sub-stat-value" id="sub-status-val">${escapeHtml(statusLabel)}</div></div>
+            <div class="sub-stat"><div class="sub-stat-label">Expira em</div><div class="sub-stat-value">${fmtDate(d.expiresAt)}</div></div>
+            <div class="sub-stat"><div class="sub-stat-label">Dias restantes</div><div class="sub-stat-value" id="sub-days-val">${escapeHtml(daysTxt)}</div></div>
+          `;
+        } else if (statsEl) {
+          statsEl.style.display = 'none';
+        }
+
+        if (alertEl) {
+          alertEl.style.display = 'none';
+          alertEl.className = '';
+          alertEl.innerHTML = '';
+          if (d.blocked || d.subscriptionStatus === 'blocked') {
+            alertEl.style.display = 'block';
+            alertEl.className = 'sub-alert danger';
+            alertEl.innerHTML = `<span>Sua conta foi bloqueada. Entre em contato com o suporte.</span>`;
+          } else if (d.renewRequired || d.subscriptionStatus === 'expired') {
+            alertEl.style.display = 'block';
+            alertEl.className = 'sub-alert danger';
+            alertEl.innerHTML = `
+              <span>Sua assinatura expirou. Renove para recuperar o acesso Premium.</span>
+              <button type="button" id="alert-renew-btn" class="btn-primary" style="padding:10px 18px;font-weight:800;">Renovar Assinatura</button>
+            `;
+            $('#alert-renew-btn')?.addEventListener('click', () => window.virarPremium?.({ plan: plan === 'VIP' ? 'VIP' : 'PREMIUM' }));
+          } else if (d.warningExpiry) {
+            alertEl.style.display = 'block';
+            alertEl.className = 'sub-alert warn';
+            alertEl.innerHTML = `<span>⚠ Sua assinatura expira em <b>${d.daysRemaining}</b> dia(s). Renove para não perder o acesso.</span>`;
+          }
+        }
+
         const meta = $('#plan-meta');
         const sub = d.subscription;
-        if (sub && sub.status === 'active') {
+        if (d.expiresAt && isPrem) {
+          meta.innerHTML = `<div><span style="opacity:.7">Válido até <b style="color:var(--text)">${fmtDate(d.expiresAt)}</b></span></div>`;
+        } else if (sub && sub.status === 'active') {
           meta.innerHTML = `
             <div><b style="color: var(--text)">${escapeHtml(sub.provider)}</b> <span style="opacity:.7">· provedor</span></div>
             <div><b style="color: var(--text)">${fmtDate(sub.startedAt)}</b> <span style="opacity:.7">· início</span></div>
@@ -269,13 +328,17 @@
           meta.innerHTML = `<div><span style="opacity:.7">Sem assinatura ativa registrada</span></div>`;
         }
 
-        // CTA
         const ctaZone = $('#plan-cta-zone');
-        if (isPrem) {
+        if (isPrem && !d.renewRequired && d.subscriptionStatus !== 'expired') {
           ctaZone.innerHTML = `
             <a href="/" class="btn-primary justify-center" style="text-align:center; padding: 12px 24px;">Ir para o dashboard →</a>
-            <span class="text-xs" style="color: var(--muted); text-align: center;">Renovação automática mensal</span>
+            <span class="text-xs" style="color: var(--muted); text-align: center;">Premium ${plan === 'VIP' ? '365' : '180'} dias por ciclo</span>
           `;
+        } else if (isPrem && (d.renewRequired || d.subscriptionStatus === 'expired')) {
+          ctaZone.innerHTML = `
+            <button type="button" id="cta-renew-expired" class="btn-primary justify-center" style="padding: 14px 28px; font-weight: 800;">Renovar Assinatura</button>
+          `;
+          $('#cta-renew-expired')?.addEventListener('click', () => window.virarPremium?.({ plan: plan === 'VIP' ? 'VIP' : 'PREMIUM' }));
         } else {
           ctaZone.innerHTML = `
             <div class="promo-pill" style="margin-bottom:8px;">

@@ -51,6 +51,8 @@ const { buildAuthRoutes } = require('./auth');
 const bruteforce = require('./bruteforce');
 const { buildPaymentRoutes } = require('./payments');
 const { buildAdminRoutes } = require('./admin');
+const { buildMasterRoutes } = require('./master');
+const subscription = require('./subscription');
 const { buildFootballRoutes } = require('./routes/football');
 const footballHistory = require('./services/footballHistory');
 const footballAlerts = require('./services/footballAlerts');
@@ -136,6 +138,7 @@ for (const [legacy, target] of Object.entries(HTML_PAGE_ALIASES)) {
  * Cada rota serve um HTML DIFERENTE — sem hash, sem reuso de página.
  */
 const ADMIN_CLEAN_ROUTES = {
+  '/master':           'master.html',
   '/admin':            'admin.html',
   '/admin/users':      'admin-users.html',
   '/admin/finance':    'admin-finance.html',
@@ -168,7 +171,7 @@ const PUBLIC_PAGES = [
   'results.html', 'quality.html', 'backtest.html',
   'admin.html', 'admin-football.html', 'admin-ops.html',
   'admin-users.html', 'admin-finance.html', 'admin-system.html', 'admin-backtest.html',
-  'account.html',
+  'account.html', 'master.html',
 ];
 
 function sendHtmlNoStore(res, file) {
@@ -440,17 +443,19 @@ buildPaymentRoutes(app, db, auth.requireAuth);
  */
 app.get('/api/signals',
   auth.requireAuth(db),
+  subscription.requireNotBlocked,
   async (req, res) => {
+    const sub = req.subscription || subscription.resolveSubscriptionState(req.user);
     const role = String(req.user.role || '').toLowerCase();
     const plan = String(req.user.plan || 'FREE').toUpperCase();
-    const isAdmin = role === 'admin' || role === 'owner';
+    const isAdmin = subscription.isAdminUser(req.user);
+    const effectivePlan = (isAdmin || sub.hasPaidAccess) ? plan : 'FREE';
 
-    // Limites por plano
     let cap;
-    if (isAdmin)              cap = 1000;
-    else if (plan === 'PREMIUM') cap = 500;
-    else if (plan === 'VIP')     cap = 200;
-    else                          cap = 30; // FREE
+    if (isAdmin)                   cap = 1000;
+    else if (effectivePlan === 'PREMIUM') cap = 500;
+    else if (effectivePlan === 'VIP')     cap = 200;
+    else                                   cap = 30;
 
     const requested = Number(req.query.limit || 50);
     const limit = Math.min(requested, cap);
@@ -533,16 +538,21 @@ app.get('/api/me/subscription',
   auth.requireAuth(db),
   async (req, res) => {
     try {
-      const user = req.user;
-      const fresh = await db.findUserById(user.id);
-      const planDef = require('./plans').getPlan(fresh?.plan || 'FREE');
+      let fresh = await db.findUserById(req.user.id);
+      fresh = await subscription.syncSubscriptionStatus(db, fresh);
+      const subState = subscription.resolveSubscriptionState(fresh);
+      const planDef = require('./plans').getPlan(
+        (subState.hasPaidAccess || subscription.isAdminUser(fresh)) ? (fresh?.plan || 'FREE') : 'FREE'
+      );
+      const displayPlanDef = require('./plans').getPlan(fresh?.plan || 'FREE');
 
-      let subscription = null;
+      let subRecord = null;
       let paymentHistory = [];
       try {
+        subRecord = await db.getSubscription(fresh.id);
         const allPayments = await db.listPayments(200);
         const mine = (allPayments || []).filter(p =>
-          String(p.user_id || p.userId) === String(user.id)
+          String(p.user_id || p.userId) === String(fresh.id)
         );
         paymentHistory = mine.slice(0, 10).map(p => ({
           id: p.id,
@@ -552,41 +562,30 @@ app.get('/api/me/subscription',
           status: p.status,
           createdAt: p.created_at || p.createdAt,
         }));
-        const lastPaid = mine.find(p => p.status === 'paid' || p.status === 'active' || p.status === 'trialing');
-        if (lastPaid) {
-          subscription = {
-            status: lastPaid.status,
-            provider: lastPaid.provider,
-            plan: lastPaid.plan,
-            startedAt: lastPaid.created_at || lastPaid.createdAt,
-            externalId: lastPaid.external_id || lastPaid.externalId,
-          };
-        }
       } catch (err) {
-        log.warn('me/subscription: listPayments falhou', { err: err.message });
+        log.warn('me/subscription: payments falhou', { err: err.message });
       }
 
-      const role = String(fresh?.role || 'user').toLowerCase();
-      const planUp = String(fresh?.plan || 'FREE').toUpperCase();
-      const isAdmin = role === 'admin' || role === 'owner';
-      const isPremium = isAdmin || role === 'premium'
-        || planUp === 'PREMIUM' || planUp === 'VIP' || planUp === 'PRO' || planUp === 'TRIAL';
+      const isAdmin = subscription.isAdminUser(fresh);
+      const isPremium = isAdmin || subState.isPremium;
+      const isVip = isAdmin || subState.isVip;
 
-      // `access` é a fonte canônica de "o que o user pode fazer" — toda UI
-      // deve checar `access.bestSignal`, `access.realtimeSignals`, etc.
       const access = {
-        // Frontend gates
-        bestSignal:         isPremium,
-        realtimeSignals:    isPremium,    // sinais sem delay
-        fullSignalAnalysis: isPremium,    // premiumInsight + betScore visíveis
-        signalFilters:      isPremium,    // confidence >= 75
-        // Backend features (gating real, requireFeature)
-        over25:         !!planDef.features.over25,
+        bestSignal: isPremium,
+        realtimeSignals: isPremium,
+        fullSignalAnalysis: isPremium,
+        signalFilters: isPremium,
+        over25: !!planDef.features.over25,
         telegramAlerts: !!planDef.features.telegramAlerts,
-        api:            !!planDef.features.api,
-        // Admin
-        admin:    isAdmin,
+        api: !!planDef.features.api,
+        admin: isAdmin,
         analytics: true,
+      };
+
+      const statusLabels = {
+        active: 'Ativo',
+        expired: 'Expirado',
+        blocked: 'Bloqueado',
       };
 
       res.json({
@@ -594,15 +593,28 @@ app.get('/api/me/subscription',
           id: fresh.id, email: fresh.email, name: fresh.name,
           plan: fresh.plan, role: fresh.role,
           createdAt: fresh.created_at || fresh.createdAt,
+          expiresAt: fresh.expiresAt,
+          subscriptionStatus: subState.subscriptionStatus,
+          blocked: subState.blocked,
+          daysRemaining: subState.daysRemaining,
         },
-        plan: planDef.id,
-        planLabel: planDef.label,
-        planPriceBRL: planDef.priceBRL,
+        plan: displayPlanDef.id,
+        planLabel: displayPlanDef.label,
+        planPriceBRL: displayPlanDef.priceBRL,
         role: fresh.role,
         isPremium,
+        isVip,
         isAdmin,
+        subscriptionStatus: subState.subscriptionStatus,
+        subscriptionStatusLabel: statusLabels[subState.subscriptionStatus] || subState.subscriptionStatus,
+        expiresAt: subState.expiresAt,
+        daysRemaining: subState.daysRemaining,
+        blocked: subState.blocked,
+        blockedReason: subState.blockedReason,
+        renewRequired: subState.subscriptionStatus === subscription.STATUS.EXPIRED,
+        warningExpiry: subState.daysRemaining != null && subState.daysRemaining <= 15 && subState.daysRemaining > 0,
         access,
-        subscription,
+        subscription: subRecord,
         paymentHistory,
         features: planDef.features,
         dailySignalsLimit: planDef.dailySignals,
@@ -750,6 +762,7 @@ buildFootballRoutes(app, auth.requireAuth, db, auth.requireAdmin, io);
    ADMIN
    ============================================================ */
 buildAdminRoutes(app, db, auth.requireAuth, auth.requireAdmin);
+buildMasterRoutes(app, db, auth.requireAuth, auth.requireAdmin);
 
 /* ============================================================
    /api/admin/ops — central operacional (Operacional IA)

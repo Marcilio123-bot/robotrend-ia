@@ -870,10 +870,17 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   function isPremiumRequester(req) {
     const u = req.user;
     if (!u) return false;
-    const role = String(u.role || '').toLowerCase();
-    const plan = String(u.plan || '').toUpperCase();
-    return role === 'admin' || role === 'owner' || role === 'premium'
-        || plan === 'PREMIUM' || plan === 'VIP' || plan === 'PRO' || plan === 'TRIAL';
+    try {
+      const subMod = require('../subscription');
+      if (subMod.isAdminUser(u)) return true;
+      const sub = req.subscription || subMod.resolveSubscriptionState(u);
+      return !!sub.isPremium;
+    } catch (_) {
+      const role = String(u.role || '').toLowerCase();
+      const plan = String(u.plan || '').toUpperCase();
+      return role === 'admin' || role === 'owner' || role === 'premium'
+          || plan === 'PREMIUM' || plan === 'VIP' || plan === 'PRO';
+    }
   }
 
   function stripForFree(s) {

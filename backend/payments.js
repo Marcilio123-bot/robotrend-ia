@@ -15,6 +15,7 @@ const { getPlan } = require('./plans');
 const auth = require('./auth');
 const onboarding = require('./onboarding');
 const mp = require('./services/mercadopago');
+const subSvc = require('./subscription');
 const { logger } = require('./logger');
 const log = logger.child({ module: 'payments' });
 
@@ -91,6 +92,24 @@ function buildBackUrls(extra = '') {
 }
 
 /* ============================================================
+   MERCADO PAGO — meios de pagamento habilitados
+   ------------------------------------------------------------
+   Exclui boleto/lotérica (payment_type_id 'ticket' e 'atm').
+   Mantém habilitados:
+     - PIX            (payment_type_id 'bank_transfer')
+     - Cartão crédito (payment_type_id 'credit_card')
+     - Cartão débito  (payment_type_id 'debit_card')
+   ============================================================ */
+function buildPaymentMethods() {
+  return {
+    excluded_payment_types: [
+      { id: 'ticket' }, // boleto bancário
+      { id: 'atm' },    // pagamento em lotérica/caixa (offline)
+    ],
+  };
+}
+
+/* ============================================================
    STRIPE — checkout session p/ assinatura
    ============================================================ */
 async function createStripeCheckout({ user, plan, _planOverride }) {
@@ -115,7 +134,7 @@ async function createStripeCheckout({ user, plan, _planOverride }) {
 }
 
 /* ============================================================
-   MERCADO PAGO — preferência de pagamento (Pix/Boleto/Cartão)
+   MERCADO PAGO — preferência de pagamento (PIX/Cartão crédito/débito)
    ============================================================ */
 async function createMercadoPagoCheckout({ user, plan, _planOverride }) {
   const def = _planOverride || getPlan(plan);
@@ -133,6 +152,7 @@ async function createMercadoPagoCheckout({ user, plan, _planOverride }) {
     }],
     payer: { email: user.email },
     back_urls: buildBackUrls('?provider=mp'),
+    payment_methods: buildPaymentMethods(),
     external_reference: `${user.id}:${plan}`,
     notification_url: `${base}/api/payments/webhook`,
     statement_descriptor: 'ROBOTREND IA',
@@ -311,31 +331,22 @@ async function provisionUserFromPayment(db, payload) {
       userId: user.id, email: normalizedEmail, plan: safePlan, provider, externalId,
     });
   } else {
-    // User já existe → apenas upgrade de plano/role (não baixa nível existente)
-    const patch = {};
-    if (user.plan !== safePlan)            patch.plan = safePlan;
-    if (user.role !== 'admin' && user.role !== role) patch.role = role;
-    if (Object.keys(patch).length) {
-      user = await db.updateUser(user.id, patch);
-      log.info('user upgraded via payment', {
-        userId: user.id, email: normalizedEmail, patch, provider, externalId,
-      });
-    }
+    log.info('user existente — ativando assinatura via pagamento', {
+      userId: user.id, email: normalizedEmail, plan: safePlan, provider, externalId,
+    });
   }
 
-  // Subscription
-  const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000); // 30 dias padrão
-  let subscription = null;
+  // Assinatura: Premium +180d, VIP +365d
+  let subRecord = null;
   try {
-    subscription = await db.upsertSubscription(user.id, {
+    user = await subSvc.activateSubscription(db, user.id, {
       plan: safePlan,
       provider,
       externalId: externalId || null,
-      status: 'active',
-      expiresAt,
     });
+    subRecord = await db.getSubscription?.(user.id);
   } catch (err) {
-    log.warn('upsertSubscription falhou', { err: err.message });
+    log.warn('activateSubscription falhou', { err: err.message });
   }
 
   // Payment record (auditoria)
@@ -384,7 +395,9 @@ async function provisionUserFromPayment(db, payload) {
     created,
     user: safeUser,
     password: created ? initialPassword : null,
-    subscription,
+    subscription: subRecord,
+    expiresAt: user?.expiresAt,
+    subscriptionStatus: user?.subscriptionStatus || 'active',
   };
 }
 
@@ -557,6 +570,7 @@ function buildPaymentRoutes(app, db, requireAuth) {
         }],
         payer: { email: user.email, name: user.name || undefined },
         back_urls: buildBackUrls(`?provider=mp&plan=${plan}`),
+        payment_methods: buildPaymentMethods(),
         // external_reference identifica o user no webhook (formato: userId:plan)
         external_reference: `${user.id}:${plan}`,
         notification_url: `${base}/api/payments/webhook`,
@@ -900,36 +914,27 @@ function buildPaymentRoutes(app, db, requireAuth) {
       const newRole = (user.role === 'admin' || user.role === 'owner')
         ? user.role
         : 'premium';
-      const patch = { plan, role: newRole };
       let updatedUser;
       try {
-        updatedUser = await db.updateUser(user.id, patch);
-        log.info('user upgraded via webhook MP', {
-          userId: user.id, email: user.email,
-          before: { plan: user.plan, role: user.role },
-          after: patch, paymentId,
-        });
-      } catch (err) {
-        log.error('updateUser FALHOU no webhook — upgrade não persistiu!', {
-          userId: user.id, err: err.message, paymentId,
-        });
-        throw err; // não marca como processado — MP vai reentregar
-      }
-      // Usa user atualizado nos passos seguintes
-      user = updatedUser || { ...user, ...patch };
-
-      // Subscription ativa por 30 dias
-      try {
-        await db.upsertSubscription(user.id, {
+        updatedUser = await subSvc.activateSubscription(db, user.id, {
           plan,
           provider: 'mercadopago',
           externalId: String(paymentInfo.id),
-          status: 'active',
-          expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000),
+        });
+        if (user.role === 'admin' || user.role === 'owner') {
+          updatedUser = await db.updateUser(user.id, { role: user.role });
+        }
+        log.info('user upgraded via webhook MP', {
+          userId: user.id, email: user.email,
+          plan, expiresAt: updatedUser?.expiresAt, paymentId,
         });
       } catch (err) {
-        log.warn('upsertSubscription falhou no webhook', { err: err.message });
+        log.error('activateSubscription FALHOU no webhook — upgrade não persistiu!', {
+          userId: user.id, err: err.message, paymentId,
+        });
+        throw err;
       }
+      user = updatedUser || user;
 
       // Payment record final
       try {

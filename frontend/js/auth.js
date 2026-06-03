@@ -45,7 +45,7 @@
       }
       // Conta bloqueada pelo admin — limpa sessão e força redirect ao login
       // com aviso (a página de login lê ?reason=blocked para mostrar mensagem).
-      if (res.status === 403 && code === 'USER_BLOCKED') {
+      if (res.status === 403 && (code === 'USER_BLOCKED' || code === 'ACCOUNT_BLOCKED')) {
         clearSession();
         try {
           if (!location.pathname.startsWith('/login')) {
