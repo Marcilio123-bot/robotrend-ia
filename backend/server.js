@@ -399,14 +399,26 @@ buildAuthRoutes(app, db);
         console.log(`[AUTH LOGIN] /api/dev/reset-admin OK → ${info.email} · bruteforce.resetAll: ${clearedAll}`);
         res.json({
           ok: true,
+          action: info.action, // 'created' (recriado) ou 'promoted' (já existia)
+          adminsBefore: info.adminsBefore,
           admin: {
             email: info.email,
             password: customPass || process.env.BOOTSTRAP_ADMIN_PASSWORD || 'admin123',
             role: info.role,
             plan: info.plan,
+            isAdmin: info.isAdmin,
+            blocked: info.blocked,
+            subscription_status: info.subscriptionStatus,
+          },
+          camposAlterados: {
+            role: 'master',
+            isAdmin: true,
+            blocked: false,
+            subscription_status: 'active',
+            plan: 'PREMIUM',
           },
           bruteforceCleared: clearedAll,
-          hint: 'Faça POST /api/auth/login com { email, password } acima.',
+          hint: 'Faça login em /login.html com o email e senha acima. Você cairá em /master.',
         });
       } catch (err) {
         console.error('[AUTH LOGIN] /api/dev/reset-admin ERRO:', err.message);
@@ -1080,31 +1092,72 @@ async function resetAdminUser({ email, password } = {}) {
   const targetEmail = (email || process.env.BOOTSTRAP_ADMIN_EMAIL || 'admin@robotrend.local').toLowerCase();
   const targetPassword = password || process.env.BOOTSTRAP_ADMIN_PASSWORD || 'admin123';
   const passwordHash = await auth.hashPassword(targetPassword);
+
+  // Diagnóstico: quantos admins existem ANTES do reset (não conta clientes).
+  let adminsBefore = 0;
+  try {
+    const all = await db.listUsers(10_000);
+    adminsBefore = all.filter((u) => {
+      const r = String(u.role || '').toLowerCase();
+      return r === 'master' || r === 'admin' || r === 'owner' || r === 'super_admin';
+    }).length;
+  } catch (_) { /* segue */ }
+
+  // Campos master de emergência — role=master, desbloqueado e assinatura ativa.
+  const adminPatch = {
+    passwordHash,
+    role: 'master',
+    plan: 'PREMIUM',
+    blocked: false,
+    blockedReason: null,
+    subscriptionStatus: 'active',
+    active: true,
+    resetToken: null,
+    resetTokenExpires: null,
+  };
+
   const existing = await db.findUserByEmail(targetEmail);
   let user;
+  let action;
   if (existing) {
-    user = await db.updateUser(existing.id, {
-      passwordHash,
-      role: 'admin',
-      plan: 'PREMIUM',
-      resetToken: null,
-      resetTokenExpires: null,
-    });
-    console.log(`[AUTH LOGIN] resetAdminUser → atualizado email="${targetEmail}" id=${existing.id}`);
+    user = await db.updateUser(existing.id, adminPatch);
+    action = 'promoted';
+    console.log(`[AUTH LOGIN] resetAdminUser → promovido email="${targetEmail}" id=${existing.id} role=master`);
   } else {
+    // Recria a conta admin removida acidentalmente — clientes não são afetados.
     user = await db.createUser({
       email: targetEmail,
-      name: 'Admin',
+      name: 'Master Admin',
       passwordHash,
-      role: 'admin',
+      role: 'master',
       plan: 'PREMIUM',
     });
-    console.log(`[AUTH LOGIN] resetAdminUser → criado email="${targetEmail}" id=${user.id}`);
+    // createUser não aceita os campos de assinatura — aplica em seguida.
+    user = await db.updateUser(user.id, {
+      blocked: false,
+      blockedReason: null,
+      subscriptionStatus: 'active',
+      active: true,
+    });
+    action = 'created';
+    console.log(`[AUTH LOGIN] resetAdminUser → CRIADO email="${targetEmail}" id=${user.id} role=master`);
   }
-  // Limpa qualquer lock de bruteforce associado a esse email
+
   const cleared = bruteforce.reset(targetEmail);
   if (cleared) console.log(`[AUTH LOGIN] resetAdminUser → bruteforce limpo (${cleared} entradas removidas)`);
-  return { email: targetEmail, id: user.id, role: user.role, plan: user.plan, bruteforceCleared: cleared };
+
+  return {
+    email: targetEmail,
+    id: user.id,
+    role: user.role,
+    plan: user.plan,
+    blocked: user.blocked === true,
+    subscriptionStatus: user.subscriptionStatus || 'active',
+    isAdmin: ['master', 'admin', 'owner', 'super_admin'].includes(String(user.role || '').toLowerCase()),
+    action,
+    adminsBefore,
+    bruteforceCleared: cleared,
+  };
 }
 
 /* ============================================================
