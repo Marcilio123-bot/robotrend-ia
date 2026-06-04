@@ -183,9 +183,7 @@ function attachFootballRealtime(io, opts = {}) {
       ts: Date.now(),
     });
 
-    let snapshotMatches = poller.getMatches();
-    const { ensureAllMinimal } = require('./fixtureNormalizer');
-    ensureAllMinimal(snapshotMatches);
+    const snapshotMatches = poller.getMatches();
     socket.emit('tick', {
       matches: snapshotMatches,
       generatedAt: new Date().toISOString(),

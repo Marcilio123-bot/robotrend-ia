@@ -13,6 +13,8 @@
 const db = require('./database');
 const ml = require('./ml');
 const { createLiveScanner } = require('./live');
+const { analyzeLiveMatch } = require('./analyzer');
+const { hasRealStats } = require('./services/fixtureNormalizer');
 const { sendSignal } = require('./telegram');
 const { logger } = require('./logger');
 const metrics = require('./metrics');
@@ -53,14 +55,19 @@ class RobotrendBot {
 
     // Atualiza o dashboard assim que o enricher traz /fixtures/statistics
     // (sem esperar o próximo tick de 15s do scanner).
-    this._onMatchEnriched = ({ match }) => {
+    this._onMatchEnriched = ({ match, partial }) => {
       if (!this.liveEnabled || !match || !this.io) return;
+      if (partial || !hasRealStats(match)) return;
       const legacy = this.live.mapNormalizedMatch(match);
       const id = String(legacy.id);
       const idx = this.lastMatches.findIndex((m) => String(m.id) === id);
       if (idx < 0) return;
+      const history = this.live.history?.get?.(id) || [];
+      const analysis = analyzeLiveMatch(legacy, { history });
       this.lastMatches[idx] = legacy;
+      this.lastAnalyses[idx] = analysis;
       this.io.emit('matches:update', [legacy]);
+      this.io.emit('analyses:update', this.lastAnalyses);
     };
     footballEvents.on('match:enriched', this._onMatchEnriched);
   }
@@ -119,6 +126,20 @@ class RobotrendBot {
       minScore: this.minScore,
       monitored: this.lastMatches.length,
     };
+  }
+
+  /** Lê o cache mais recente do poller (com stats do enricher). */
+  _syncMatchesFromPoller(matches) {
+    try {
+      const { getPoller } = require('./workers/liveFootballPoller');
+      const poller = getPoller();
+      return matches.map((m) => {
+        const cached = poller.getMatch?.(String(m.id));
+        return cached ? this.live.mapNormalizedMatch(cached) : m;
+      });
+    } catch (_) {
+      return matches;
+    }
   }
 
   cleanup() {
@@ -251,8 +272,11 @@ class RobotrendBot {
       });
     }
 
-    this.lastMatches = safe.map((r) => r.match);
-    this.lastAnalyses = safe.map((r) => r.analysis);
+    this.lastMatches = this._syncMatchesFromPoller(safe.map((r) => r.match));
+    this.lastAnalyses = this.lastMatches.map((m) => {
+      const history = this.live.history?.get?.(m.id) || [];
+      return analyzeLiveMatch(m, { history });
+    });
     db.bumpMonitored(safe.length);
 
     // Snapshot completo do pipeline desta tick (consumido por

@@ -30,7 +30,7 @@ const apiFootball = require('../services/footballProvider');
 const history     = require('../services/footballHistory');
 const events      = require('../services/footballEvents');
 const metrics     = require('../services/metrics');
-const { normalizeFixture } = require('../services/fixtureNormalizer');
+const { normalizeFixture, hasRealStats } = require('../services/fixtureNormalizer');
 const {
   isLiveMatch,
   statusGroup,
@@ -693,7 +693,18 @@ class LiveFootballPoller {
         // statistics — se regenerássemos o match do zero, perderíamos toda a
         // pressão/corners/cards/etc. acumulados pelo enricher. O enricher
         // refaz isso na sua cadência (default 30min).
-        if (prev?.enriched && !m.enriched) {
+        if (prev && hasRealStats(prev) && !hasRealStats(m)) {
+          m.stats           = prev.stats;
+          m.perMinute       = prev.perMinute;
+          m.momentum        = prev.momentum;
+          m.bttsLikelihood  = prev.bttsLikelihood;
+          m.events          = prev.events || m.events || [];
+          m.enriched        = true;
+          m.enrichedAt      = prev.enrichedAt;
+          m.enrichedPartial = false;
+          m.insight         = prev.insight;
+          m.signals         = prev.signals;
+        } else if (prev?.enriched && !m.enriched) {
           m.stats        = prev.stats;
           m.perMinute    = prev.perMinute;
           m.momentum     = prev.momentum;

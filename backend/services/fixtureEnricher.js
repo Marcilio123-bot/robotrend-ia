@@ -43,10 +43,12 @@ const log = logger.child({ module: 'fixtureEnricher' });
 
 const ENABLED            = String(process.env.ENRICH_ENABLED || 'true').toLowerCase() !== 'false';
 const REFRESH_MS         = Number(process.env.ENRICH_REFRESH_MS || 30 * 60_000); // 30min default
-const TICK_MS            = Number(process.env.ENRICH_TICK_MS || 30_000);          // checa pendências a cada 30s
-const MAX_PER_TICK       = Number(process.env.ENRICH_MAX_PER_TICK || 2);
-const AUTO_TOP           = Number(process.env.ENRICH_AUTO_TOP ?? 5);              // top-N no boot (default 5)
-const POLLER_ENRICH_TOP  = Number(process.env.POLLER_ENRICH_TOP ?? 5);            // top-N a cada tick do poller
+const TICK_MS            = Number(process.env.ENRICH_TICK_MS || 15_000);         // checa pendências a cada 15s
+const MAX_PER_TICK       = Number(process.env.ENRICH_MAX_PER_TICK || 8);
+const AUTO_TOP           = Number(process.env.ENRICH_AUTO_TOP ?? 12);            // top-N no boot
+// 0 = enfileira TODOS os jogos live (até ENRICH_QUEUE_MAX)
+const POLLER_ENRICH_TOP  = Number(process.env.POLLER_ENRICH_TOP ?? 0);
+const ENRICH_QUEUE_MAX   = Number(process.env.ENRICH_QUEUE_MAX || 40);
 const INCLUDE_EVENTS     = String(process.env.ENRICH_INCLUDE_EVENTS || 'true').toLowerCase() !== 'false';
 
 const m_req         = metrics.counter('enricher_requests_total');
@@ -140,6 +142,7 @@ class FixtureEnricher {
       systemQueue: this.systemQueue.size,
       autoTop: AUTO_TOP,
       pollerEnrichTop: POLLER_ENRICH_TOP,
+      enrichQueueMax: ENRICH_QUEUE_MAX,
       stats: { ...this.stats },
     };
   }
@@ -152,21 +155,29 @@ class FixtureEnricher {
    * O usuário ainda pode subscrever uma fixture específica e disparar
    * enrichment via socket — passa pelo requestEnrich que respeita o gate.
    */
+  _sortedLiveMatches(matches) {
+    return matches.slice().sort((a, b) => {
+      const ga = (a.score?.home || 0) + (a.score?.away || 0);
+      const gb = (b.score?.home || 0) + (b.score?.away || 0);
+      if (gb !== ga) return gb - ga;
+      return (b.minute || 0) - (a.minute || 0);
+    });
+  }
+
+  /** limit<=0 → todos os jogos live (cap ENRICH_QUEUE_MAX). */
+  _selectForQueue(matches, limit = POLLER_ENRICH_TOP) {
+    const sorted = this._sortedLiveMatches(matches);
+    if (!limit || limit <= 0) return sorted.slice(0, ENRICH_QUEUE_MAX);
+    return sorted.slice(0, limit);
+  }
+
   queueFromPoller(matches, limit = POLLER_ENRICH_TOP) {
-    if (!ENABLED || !matches?.length || limit <= 0) return;
+    if (!ENABLED || !matches?.length) return;
     if (apiFootball.isSafeMode && apiFootball.isSafeMode()) {
       m_skip.inc(1, { reason: 'safe-mode' });
       return;
     }
-    const top = matches
-      .slice()
-      .sort((a, b) => {
-        const ga = (a.score?.home || 0) + (a.score?.away || 0);
-        const gb = (b.score?.home || 0) + (b.score?.away || 0);
-        if (gb !== ga) return gb - ga;
-        return (b.minute || 0) - (a.minute || 0);
-      })
-      .slice(0, limit);
+    const top = this._selectForQueue(matches, limit);
     let added = 0;
     for (const m of top) {
       const id = String(m.fixtureId || m.id);
@@ -186,36 +197,20 @@ class FixtureEnricher {
    * Bootstrap síncrono: enrichment mínimo (apenas signals locais, ZERO API).
    * Em SAFE-MODE só faz a parte mínima e NÃO enfileira chamadas reais.
    */
+  /**
+   * Enfileira jogos para enrichment REAL (/fixtures/statistics).
+   * Não aplica mais applyMinimalEnrichment aqui — zeros marcados como
+   * enriched bloqueavam o dashboard e a IA.
+   */
   bootstrapTop(matches, limit = POLLER_ENRICH_TOP) {
-    if (!ENABLED || !matches?.length || !this.poller) return;
-    const safeMode = apiFootball.isSafeMode && apiFootball.isSafeMode();
-    const top = matches
-      .slice()
-      .sort((a, b) => {
-        const ga = (a.score?.home || 0) + (a.score?.away || 0);
-        const gb = (b.score?.home || 0) + (b.score?.away || 0);
-        if (gb !== ga) return gb - ga;
-        return (b.minute || 0) - (a.minute || 0);
-      })
-      .slice(0, limit);
-
+    if (!ENABLED || !matches?.length) return;
+    if (apiFootball.isSafeMode && apiFootball.isSafeMode()) return;
+    const top = this._selectForQueue(matches, limit);
     for (const m of top) {
       const id = String(m.fixtureId || m.id);
-      if (!id) continue;
-      const cached = this.poller.getMatch(id) || m;
-      if (!cached.enriched || !cached.signals?.length) {
-        try {
-          applyMinimalEnrichment(cached);
-          this.poller.cache?.set?.(id, cached);
-          this._emitEnriched(cached, id, true);
-        } catch (e) {
-          log.warn('bootstrap minimal fail', { id, err: e.message });
-        }
-      }
-      if (!safeMode) this.systemQueue.add(id);
+      if (id) this.systemQueue.add(id);
     }
-    // API enrichment em background SÓ se não estiver em safe-mode
-    if (!safeMode) {
+    if (this.systemQueue.size > 0) {
       this.tick().catch((e) => log.warn('bootstrap tick fail', { err: e.message }));
     }
   }

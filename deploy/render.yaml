@@ -67,12 +67,17 @@ services:
       # Modos válidos: strict | relaxed | off. Aqui ficamos em off.
       - key: MATCH_CONSENSUS_MODE
         value: "off"
-      # FixtureEnricher automático desligado para não gastar 2 req por
-      # fixture (stats+events). Quando alguém abre uma fixture na UI o
-      # enricher é chamado sob demanda separadamente — esse flag corta
-      # apenas o pipeline automático (queueFromPoller / autoEnrich).
+      # Enrichment automático — chama /fixtures/statistics para escanteios,
+      # chutes, ataques etc. (obrigatório para dashboard + IA de pressão).
+      # Requer plano API-Football com quota para stats live.
       - key: ENRICH_ENABLED
-        value: "false"
+        value: "true"
+      - key: ENRICH_MAX_PER_TICK
+        value: "8"
+      - key: POLLER_ENRICH_TOP
+        value: "0"
+      - key: ENRICH_QUEUE_MAX
+        value: "40"
       # Apenas UM processo deve rodar o poller. Como NÃO existe service
       # `type: worker` neste blueprint, o web é o único poller.
       - key: FOOTBALL_POLLER_ENABLED

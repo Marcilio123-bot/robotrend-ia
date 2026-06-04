@@ -282,7 +282,6 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     noStore(res);
     const allLive = await liveMatches();
     const matches = annotateMatches(applyFilters(allLive, req.query));
-    ensureAllMinimal(matches);
 
     // [STAT TRACE 4/6] rest-live — payload final entregue pelo /api/football/live.
     try {
@@ -340,7 +339,6 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     // SCANNER nunca aplica consensus. Anota tudo como single-source para
     // que o frontend mostre o badge "📡 SINGLE-SOURCE" no card.
     const matches = annotateMatches(filtered);
-    ensureAllMinimal(matches);
     console.log(`[RENDERED MATCHES] /scanner — devolvendo ${matches.length} matches anotados ao frontend`);
 
     res.json({
@@ -379,7 +377,6 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       allLeagues.get(key).count++;
     }
 
-    ensureAllMinimal(matches);
     const filtered = annotateMatches(applyFilters(matches, req.query));
     const total = filtered.length;
     let totalCorners = 0, totalShots = 0, totalDang = 0, totalGoals = 0, totalCardsY = 0, totalCardsR = 0;
@@ -823,7 +820,6 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     };
     const { filterSignalsByPrefs } = require('../services/signalGenerator');
     const matches = poller.getMatches();
-    ensureAllMinimal(matches);
     const all = [];
     for (const m of matches) {
       if (!m.enriched || !Array.isArray(m.signals)) continue;
@@ -1645,7 +1641,6 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       else if (!snap.lastTickAt) reason = 'poller-warming-up';
       else reason = 'no-live-matches';
     }
-    ensureAllMinimal(matches);
     res.json({
       ok: true,
       count: matches.length,

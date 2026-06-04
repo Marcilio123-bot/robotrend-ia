@@ -62,6 +62,21 @@ function parseStatValue(v) {
   return Number(v) || 0;
 }
 
+/** Soma corners+shots+dang — usado para não sobrescrever stats reais com zeros. */
+function statsRichnessTotal(stats) {
+  if (!stats) return 0;
+  return (
+    Number(stats.corners?.total || 0) +
+    Number(stats.shots?.total || 0) +
+    Number(stats.shotsOnTarget?.total || 0) +
+    Number(stats.dangerousAttacks?.total || 0)
+  );
+}
+
+function hasRealStats(match) {
+  return statsRichnessTotal(match?.stats) > 0;
+}
+
 function findStatRow(statistics, type) {
   if (!Array.isArray(statistics)) return null;
   const aliases = [type, ...(STAT_TYPE_ALIASES[type] || [])];
@@ -157,6 +172,7 @@ function normalizeFixture(fx) {
    ============================================================ */
 function applyEnrichment(match, statsResp, eventsResp) {
   if (!match) return match;
+  const prevHadReal = hasRealStats(match);
   const homeId = match.teams?.home?.id;
   const awayId = match.teams?.away?.id;
   const elapsed = Number(match.minute || 0);
@@ -189,6 +205,15 @@ function applyEnrichment(match, statsResp, eventsResp) {
   const totalShots   = shotsHome + shotsAway;
   const totalSot     = sotHome + sotAway;
   const totalAttacks = attacksHome + attacksAway;
+  const newHasReal = (totalCorners + totalShots + totalSot + totalDang) > 0;
+
+  // API devolveu vazio/zerado mas já tínhamos stats reais — mantém último válido.
+  if (prevHadReal && !newHasReal) {
+    if (Array.isArray(eventsResp) && eventsResp.length) {
+      match.events = eventsResp.map(normalizeEvent);
+    }
+    return match;
+  }
 
   match.stats = {
     corners:          { home: cornersHome, away: cornersAway, total: totalCorners },
@@ -279,6 +304,7 @@ function applyEnrichment(match, statsResp, eventsResp) {
   }
 
   match.enriched = true;
+  match.enrichedPartial = false;
   match.enrichedAt = Date.now();
 
   // Camada interpretativa (IA explicada). Lazy-require para evitar ciclo.
@@ -427,6 +453,8 @@ function computeBttsLikelihood(m) {
 /** Garante enriched+signals mínimos sem API (síncrono). */
 function ensureMinimalEnrichment(match) {
   if (!match) return match;
+  // Nunca troca stats reais da API por zeros locais.
+  if (hasRealStats(match)) return match;
   if (match.enriched && Array.isArray(match.signals) && match.signals.length) return match;
   return applyMinimalEnrichment(match);
 }
@@ -445,6 +473,8 @@ module.exports = {
   ensureAllMinimal,
   normalizeEvent,
   statName,
+  hasRealStats,
+  statsRichnessTotal,
   computeBttsLikelihood,
   LIVE_STATUSES,
   FINISHED_STATUSES,

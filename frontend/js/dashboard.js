@@ -67,23 +67,26 @@
     return Number(m?.lastApiUpdate || m?.updatedAt || m?.lastTickAt || 0);
   }
 
-  /**
-   * Merge por ID: placar/minuto do registro mais recente, mas NUNCA
-   * descarta stats reais por causa de timestamp (ex.: socket com zeros
-   * e lastApiUpdate=now sobrescrevendo REST enriquecido).
-   */
-  function pickBetterMatch(existing, incoming) {
+  const STAT_MERGE_FIELDS = [
+    'corners', 'dangerousAttacks', 'shots', 'shotsOnTarget', 'yellowCards', 'redCards',
+  ];
+
+  /** Placar/minuto do mais recente; stats = máximo entre as duas versões. */
+  function mergeMatchRecords(existing, incoming) {
     if (!existing) return incoming;
     if (!incoming) return existing;
-    const ra = matchStatsRichness(existing);
-    const rb = matchStatsRichness(incoming);
-    if (ra > 0 && rb === 0) return existing;
-    if (rb > 0 && ra === 0) return incoming;
-    const ta = matchFreshnessTs(existing);
-    const tb = matchFreshnessTs(incoming);
-    if (tb > ta) return incoming;
-    if (ta > tb) return existing;
-    return rb >= ra ? incoming : existing;
+    const fresher = matchFreshnessTs(incoming) >= matchFreshnessTs(existing) ? incoming : existing;
+    const older = fresher === incoming ? existing : incoming;
+    const out = { ...older, ...fresher };
+    for (const f of STAT_MERGE_FIELDS) {
+      out[f] = Math.max(Number(fresher[f] || 0), Number(older[f] || 0));
+    }
+    out.enriched = !!(fresher.enriched || older.enriched);
+    out.enrichedPartial = matchStatsRichness(out) === 0 && !!(fresher.enrichedPartial || older.enrichedPartial);
+    out.lastApiUpdate = matchFreshnessTs(fresher) >= matchFreshnessTs(older)
+      ? (fresher.lastApiUpdate || fresher.updatedAt || fresher.lastTickAt)
+      : (older.lastApiUpdate || older.updatedAt || older.lastTickAt);
+    return out;
   }
 
   function mergeMatchesById(currentList, incomingList) {
@@ -93,7 +96,7 @@
         if (!m || m.id == null) continue;
         const id = String(m.id);
         const existing = map.get(id);
-        map.set(id, existing ? pickBetterMatch(existing, m) : m);
+        map.set(id, existing ? mergeMatchRecords(existing, m) : m);
       }
     };
     addAll(currentList);
