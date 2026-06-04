@@ -37,14 +37,47 @@
 const LIVE_STATUSES = new Set(['1H','2H','HT','ET','BT','P','LIVE','INT']);
 const FINISHED_STATUSES = new Set(['FT','AET','PEN','CANC','PST','ABD','AWD','WO','SUSP']);
 
-function statName(stats, teamId, type) {
-  const block = stats?.find?.((s) => s?.team?.id === teamId);
-  if (!block) return 0;
-  const row = block.statistics?.find?.((x) => x.type === type);
-  const v = row?.value;
+/** Aliases de `type` — API-Sports pode variar o label entre ligas/versões. */
+const STAT_TYPE_ALIASES = {
+  'Corner Kicks':      ['Corners', 'Corner kicks'],
+  'Dangerous Attacks': ['Dangerous attacks', 'Dangerous Attack'],
+  'Attacks':           ['Total Attacks', 'Attack'],
+  'Total Shots':       ['Shots Total', 'Shots', 'Total shots'],
+  'Shots on Goal':     ['Shots on Target', 'Shots On Goal', 'On Target'],
+  'Shots off Goal':    ['Shots Off Goal', 'Shots off Target'],
+  'Yellow Cards':      ['Yellow cards', 'Yellow card'],
+  'Red Cards':         ['Red cards', 'Red card'],
+  'Ball Possession':   ['Possession', 'Ball possession'],
+  'Passes %':          ['Pass Accuracy', 'Passes accurate %'],
+};
+
+function sameTeamId(a, b) {
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+
+function parseStatValue(v) {
   if (v == null) return 0;
-  if (typeof v === 'string' && v.endsWith('%')) return Number(v.replace('%','')) || 0;
+  if (typeof v === 'string' && v.endsWith('%')) return Number(v.replace('%', '')) || 0;
   return Number(v) || 0;
+}
+
+function findStatRow(statistics, type) {
+  if (!Array.isArray(statistics)) return null;
+  const aliases = [type, ...(STAT_TYPE_ALIASES[type] || [])];
+  for (const alias of aliases) {
+    const row = statistics.find((x) => x?.type === alias);
+    if (row?.value != null) return row;
+  }
+  const lower = type.toLowerCase();
+  return statistics.find((x) => String(x?.type || '').toLowerCase() === lower) || null;
+}
+
+function statName(stats, teamId, type) {
+  const block = stats?.find?.((s) => sameTeamId(s?.team?.id, teamId));
+  if (!block) return 0;
+  const row = findStatRow(block.statistics, type);
+  return parseStatValue(row?.value);
 }
 
 /* ============================================================

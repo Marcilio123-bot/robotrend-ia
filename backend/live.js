@@ -15,6 +15,7 @@ const { analyzeLiveMatch } = require('./analyzer');
 const freshness = require('./freshness');
 const consensus = require('./consensus');
 const apiFootball = require('./services/footballProvider');
+const { statName } = require('./services/fixtureNormalizer');
 
 // STRICT_REAL_ONLY: bloqueia 100% qualquer fonte sintética residual.
 // Default: true em production/staging, false em development.
@@ -210,11 +211,15 @@ class ApiLiveScanner {
         home: Number(m.score?.home || 0),
         away: Number(m.score?.away || 0),
       },
-      corners: Number(m.stats?.corners?.total || 0),
-      dangerousAttacks: Number(m.stats?.dangerousAttacks?.total || 0),
-      shots: Number(m.stats?.shots?.total || 0),
-      shotsOnTarget: Number(m.stats?.shotsOnTarget?.total || 0),
-      possession: Number(m.stats?.possession?.home || 50),
+      corners: Number(m.stats?.corners?.total ?? 0),
+      dangerousAttacks: Number(m.stats?.dangerousAttacks?.total ?? 0),
+      shots: Number(m.stats?.shots?.total ?? 0),
+      shotsOnTarget: Number(m.stats?.shotsOnTarget?.total ?? 0),
+      yellowCards: Number(m.stats?.cards?.yellow?.total ?? 0),
+      redCards: Number(m.stats?.cards?.red?.total ?? 0),
+      possession: Number(m.stats?.possession?.home ?? 50),
+      enriched: !!m.enriched,
+      enrichedPartial: !!m.enrichedPartial,
       isLive: freshness.isLiveStatus(m.status),
       isFromLiveAPI: true,
       source: 'api-football',
@@ -231,14 +236,9 @@ class ApiLiveScanner {
 
   mapFixture(fix) {
     const stats = fix.statistics || [];
-    const getStat = (team, type) => {
-      const teamStats = stats.find((s) => s.team.id === team);
-      if (!teamStats) return 0;
-      const row = teamStats.statistics.find((x) => x.type === type);
-      return Number(row?.value || 0);
-    };
     const homeId = fix.teams.home.id;
     const awayId = fix.teams.away.id;
+    const getStat = (team, type) => statName(stats, team, type);
     const statusShort = fix.fixture.status?.short;
     return {
       id: String(fix.fixture.id),
@@ -258,6 +258,10 @@ class ApiLiveScanner {
         getStat(homeId, 'Total Shots') + getStat(awayId, 'Total Shots'),
       shotsOnTarget:
         getStat(homeId, 'Shots on Goal') + getStat(awayId, 'Shots on Goal'),
+      yellowCards:
+        getStat(homeId, 'Yellow Cards') + getStat(awayId, 'Yellow Cards'),
+      redCards:
+        getStat(homeId, 'Red Cards') + getStat(awayId, 'Red Cards'),
       possession: getStat(homeId, 'Ball Possession') || 50,
       isLive: freshness.isLiveStatus(statusShort),
       // === Origem REAL — única forma de habilitar emissão de sinal ===

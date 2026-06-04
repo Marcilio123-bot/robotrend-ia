@@ -50,13 +50,42 @@
     return Array.isArray(arr) ? arr.filter(isValidMatch) : [];
   }
 
+  function matchStatsRichness(m) {
+    if (!m) return 0;
+    const n = (v) => Number(v) || 0;
+    return (
+      n(m.corners ?? m.stats?.corners?.total) +
+      n(m.shots ?? m.stats?.shots?.total) +
+      n(m.shotsOnTarget ?? m.stats?.shotsOnTarget?.total) +
+      n(m.dangerousAttacks ?? m.stats?.dangerousAttacks?.total) +
+      n(m.yellowCards ?? m.stats?.cards?.yellow?.total) +
+      n(m.redCards ?? m.stats?.cards?.red?.total)
+    );
+  }
+
+  function matchFreshnessTs(m) {
+    return Number(m?.lastApiUpdate || m?.updatedAt || m?.lastTickAt || 0);
+  }
+
   /**
-   * Faz merge de matches por ID, mantendo a versão MAIS NOVA quando há
-   * conflito entre socket e REST. Critério "mais novo":
-   *   1) maior `lastApiUpdate` ou `updatedAt` ou `lastTickAt`
-   *   2) na ausência desses campos, sempre prefere o incoming.
-   * Devolve o array deduplicado preservando a ordem de chegada.
+   * Merge por ID: placar/minuto do registro mais recente, mas NUNCA
+   * descarta stats reais por causa de timestamp (ex.: socket com zeros
+   * e lastApiUpdate=now sobrescrevendo REST enriquecido).
    */
+  function pickBetterMatch(existing, incoming) {
+    if (!existing) return incoming;
+    if (!incoming) return existing;
+    const ra = matchStatsRichness(existing);
+    const rb = matchStatsRichness(incoming);
+    if (ra > 0 && rb === 0) return existing;
+    if (rb > 0 && ra === 0) return incoming;
+    const ta = matchFreshnessTs(existing);
+    const tb = matchFreshnessTs(incoming);
+    if (tb > ta) return incoming;
+    if (ta > tb) return existing;
+    return rb >= ra ? incoming : existing;
+  }
+
   function mergeMatchesById(currentList, incomingList) {
     const map = new Map();
     const addAll = (arr) => {
@@ -64,10 +93,7 @@
         if (!m || m.id == null) continue;
         const id = String(m.id);
         const existing = map.get(id);
-        if (!existing) { map.set(id, m); continue; }
-        const a = Number(existing.lastApiUpdate || existing.updatedAt || existing.lastTickAt || 0);
-        const b = Number(m.lastApiUpdate || m.updatedAt || m.lastTickAt || 0);
-        map.set(id, b >= a ? m : existing);
+        map.set(id, existing ? pickBetterMatch(existing, m) : m);
       }
     };
     addAll(currentList);
@@ -92,6 +118,11 @@
       dangerousAttacks: Number(m.stats?.dangerousAttacks?.total ?? m.dangerousAttacks ?? 0),
       shots: Number(m.stats?.shots?.total ?? m.shots ?? 0),
       shotsOnTarget: Number(m.stats?.shotsOnTarget?.total ?? m.shotsOnTarget ?? 0),
+      yellowCards: Number(m.stats?.cards?.yellow?.total ?? m.yellowCards ?? 0),
+      redCards: Number(m.stats?.cards?.red?.total ?? m.redCards ?? 0),
+      lastApiUpdate: m.lastApiUpdate || m.updatedAt || m.lastTickAt || null,
+      enriched: !!m.enriched,
+      enrichedPartial: !!m.enrichedPartial,
       provider: m.provider,
     };
 
@@ -335,6 +366,8 @@
           <div class="stat"><div class="k">Atq+</div><div class="v">${esc(match.dangerousAttacks ?? 0)}</div></div>
           <div class="stat"><div class="k">Fin</div><div class="v">${esc(match.shots ?? 0)}</div></div>
           <div class="stat"><div class="k">Alvo</div><div class="v">${esc(match.shotsOnTarget ?? 0)}</div></div>
+          <div class="stat"><div class="k">🟨</div><div class="v">${esc(match.yellowCards ?? 0)}</div></div>
+          <div class="stat"><div class="k">🟥</div><div class="v">${esc(match.redCards ?? 0)}</div></div>
         </div>
         <div class="mt-3">
           <div class="flex items-center justify-between text-[11px]" style="color: var(--muted);">
@@ -361,7 +394,7 @@
     const sc = m.score || {};
     return [
       m.minute, m.status, sc.home, sc.away,
-      m.corners, m.dangerousAttacks, m.shots, m.shotsOnTarget,
+      m.corners, m.dangerousAttacks, m.shots, m.shotsOnTarget, m.yellowCards, m.redCards,
       a?.pressure, a?.confidence, a?.verdict, a?.classification?.level,
       a?.risk?.level, a?.suggestion, a?.odd,
     ].join('|');
@@ -977,7 +1010,9 @@
   // tomarem conta da UX.
   socket.on('matches:update', (m) => {
     window.RobotrendHeartbeat?.markSocketActivity('matches:update');
-    const incoming = filterValidMatches(m || []);
+    const incoming = filterValidMatches(
+      (m || []).map(mapApiMatchToDashboard).filter(Boolean)
+    );
     if (incoming.length) {
       // Merge incremental: socket pode chegar atrasado depois de um REST e
       // não queremos sobrescrever versões mais novas do mesmo match.
@@ -1106,7 +1141,7 @@
   window.addEventListener('load', () => {
     try { loadBetSignals(); } catch (e) { console.error('[LIVE SIGNAL FRONT] load handler error:', e); }
   });
-  setInterval(loadLiveFromApi, 30_000);              // backup REST do poller football
+  setInterval(loadLiveFromApi, 15_000);              // backup REST do poller (stats enriquecidas)
   setInterval(loadBetSignals,  60_000);              // backup polling caso socket caia
   setInterval(loadBestSignal,  90_000);              // refresh do best-bet a cada 90s
   setInterval(detectFootballAvailability, 120_000);  // reavalia disponibilidade periodicamente

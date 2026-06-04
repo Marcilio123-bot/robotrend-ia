@@ -17,6 +17,7 @@ const { sendSignal } = require('./telegram');
 const { logger } = require('./logger');
 const metrics = require('./metrics');
 const freshness = require('./freshness');
+const footballEvents = require('./services/footballEvents');
 
 const SCAN_INTERVAL = Number(process.env.LIVE_SCAN_INTERVAL_MS || 15000);
 const BASE_MIN_SCORE = Number(process.env.SIGNAL_MIN_SCORE || 80);
@@ -49,6 +50,19 @@ class RobotrendBot {
 
     // Toggles globais (sobrescrevíveis via .env)
     this.liveEnabled    = String(process.env.LIVE_ENABLED    || 'true').toLowerCase() !== 'false';
+
+    // Atualiza o dashboard assim que o enricher traz /fixtures/statistics
+    // (sem esperar o próximo tick de 15s do scanner).
+    this._onMatchEnriched = ({ match }) => {
+      if (!this.liveEnabled || !match || !this.io) return;
+      const legacy = this.live.mapNormalizedMatch(match);
+      const id = String(legacy.id);
+      const idx = this.lastMatches.findIndex((m) => String(m.id) === id);
+      if (idx < 0) return;
+      this.lastMatches[idx] = legacy;
+      this.io.emit('matches:update', [legacy]);
+    };
+    footballEvents.on('match:enriched', this._onMatchEnriched);
   }
 
   start() {
@@ -71,6 +85,9 @@ class RobotrendBot {
   stop() {
     if (this.timer) clearInterval(this.timer);
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    if (this._onMatchEnriched) {
+      footballEvents.off('match:enriched', this._onMatchEnriched);
+    }
   }
 
   /* ============================================================
