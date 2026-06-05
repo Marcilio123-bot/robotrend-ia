@@ -144,6 +144,8 @@ const OPPOSITE_MARKET_KEY = {
   under25:      'over25',
   cornersOver:  'cornersUnder',
   cornersUnder: 'cornersOver',
+  cardsOver:    'cardsUnder',
+  cardsUnder:   'cardsOver',
   // 'btts' não tem chave oposta: Sim e Não compartilham a key 'btts',
   // então o gate already-emitted já cobre "BTTS SIM depois BTTS NÃO".
 };
@@ -181,6 +183,7 @@ const FUNNEL_KEYS = [
   'post-goal-window',      // mercado de gol suprimido (gol recente — sinal seria reativo)
   'low-confidence',
   'odd-out-of-range',
+  'low-score',             // cartões: score da análise < CARDS_MIN_SCORE
   'cooldown',
   'emitted',
 ];
@@ -232,6 +235,7 @@ function matchHeader(m) {
     league: m.league?.name || m.league,
     leagueFull: m.league?.fullName || leagueWhitelist.fullName(m.league),
     country: m.league?.country,
+    referee: m.referee || null,
     minute: m.minute,
     status: m.status,
     score: m.score,
@@ -271,6 +275,31 @@ const BASELINE_HOME_BUMP  = Number(process.env.BET_SIGNAL_BASELINE_HOME_BUMP  ||
 // ≈ 9 em 90′ (média de liga). Sem isso, computeCornersBet ficava preso em
 // "compute-null" silencioso quando corners.total=0.
 const BASELINE_CORNERS_PER_MIN = Number(process.env.BET_SIGNAL_BASELINE_CORNERS_PER_MIN || 0.10);
+
+/* ============================================================
+   CARTÕES — configuração da análise Over/Under
+   ------------------------------------------------------------
+   Linhas analisadas: 2.5 / 3.5 / 4.5 / 5.5 (contagem de cartões,
+   amarelo=1, vermelho=1 — somados de stats.cards.yellow+red).
+
+   Filtros próprios (pedido do produto):
+     - confiança mínima  : CARDS_MIN_CONFIDENCE (default 60)
+     - score mínimo      : CARDS_MIN_SCORE       (default 55)
+   Cartões NÃO usam o filtro de odd-range (uma linha forte como
+   Over 2.5 pode ter odd 1.30 e ainda assim ser um bom sinal).
+
+   Calibração (médias de liga):
+     - ~3.8 cartões/jogo  → taxa base ≈ 0.042/min
+     - conversão faltas→cartão ≈ 1 cartão a cada ~6.5 faltas
+     - escalonamento tardio: cartões aceleram no 2º tempo / reta final
+   ============================================================ */
+const CARDS_LINES = [2.5, 3.5, 4.5, 5.5];
+const CARDS_MIN_CONFIDENCE = Number(process.env.BET_SIGNAL_CARDS_MIN_CONFIDENCE || MIN_CONFIDENCE || 60);
+const CARDS_MIN_SCORE      = Number(process.env.BET_SIGNAL_CARDS_MIN_SCORE || 55);
+const CARDS_BASELINE_PER_MIN = Number(process.env.BET_SIGNAL_CARDS_BASELINE_PER_MIN || 0.042); // ≈ 3.8/90′
+const CARDS_FOUL_TO_CARD     = Number(process.env.BET_SIGNAL_CARDS_FOUL_TO_CARD || 0.155);     // ~1 cartão / 6.5 faltas
+const CARDS_RED_WEIGHT       = Number(process.env.BET_SIGNAL_CARDS_RED_WEIGHT || 1);           // vermelho conta como N cartões
+const CARDS_MARKETS = new Set(['cards', 'cardsUnder']);
 
 function hasAdvancedStats(m) {
   const s = m?.stats || {};
@@ -856,6 +885,239 @@ function computeUnder25Bet(m) {
 }
 
 /* ============================================================
+   4) CARTÕES — Over/Under X.5 (2.5 / 3.5 / 4.5 / 5.5)
+   ------------------------------------------------------------
+   Modelo Poisson sobre cartões REMANESCENTES, calibrado por:
+     - cartões já mostrados (amarelo + vermelho)
+     - taxa observada + taxa derivada de faltas + baseline de liga
+     - escalonamento tardio (cartões aceleram no 2º tempo / reta final)
+     - rivalidade/intensidade (proxy de faltas+cartões; ou m.rivalry)
+     - pressão ofensiva (perMinute.pressureIndex)
+     - média do árbitro (m.refereeCardsAvg, opcional via enrichment)
+     - média de cartões dos times (m.teamCardsAvg, opcional)
+   Produz probabilidade Over/Under para TODAS as linhas e escolhe a
+   linha/lado mais informativo na zona de valor.
+   ============================================================ */
+
+/**
+ * Índice de rivalidade/intensidade (0..1). Aceita override m.rivalry;
+ * caso contrário deriva da agressividade observada (faltas + cartões).
+ * Não inventa dados — usa só o que está no feed ao vivo.
+ */
+function cardsRivalryIndex(m) {
+  if (Number.isFinite(Number(m?.rivalry))) return clamp(Number(m.rivalry), 0, 1);
+  const min = Math.max(1, n(m.minute));
+  const fouls = n(m.stats?.fouls?.total);
+  const foulsRate = fouls / min;
+  const cardsRate = (n(m.stats?.cards?.yellow?.total) + n(m.stats?.cards?.red?.total)) / min;
+  const r = (foulsRate - 0.30) / 0.30 * 0.6 + (cardsRate - 0.04) / 0.06 * 0.4;
+  return clamp(r, 0, 1);
+}
+
+/**
+ * Modelo central de cartões. Retorna λ remanescente, total esperado,
+ * probabilidades por linha (over/under), confiança base e motivos.
+ */
+function _cardsModel(m) {
+  const min = Math.max(1, n(m.minute));
+  const remaining = Math.max(0, 95 - min);
+  const yellow = n(m.stats?.cards?.yellow?.total);
+  const red = n(m.stats?.cards?.red?.total);
+  const totalCards = yellow + red * CARDS_RED_WEIGHT;
+  const fouls = n(m.stats?.fouls?.total);
+  const foulsRate = fouls / min;
+  const pressure = n(m.perMinute?.pressureIndex);
+  const advanced = hasAdvancedStats(m);
+
+  // Dados suficientes? Precisa de faltas OU cartões reportados (ou stats avançados).
+  const hasCardData = (yellow + red) > 0;
+  const hasFoulData = fouls > 0;
+  const dataOk = (hasCardData || hasFoulData || advanced);
+
+  // Médias opcionais (preenchidas por enrichment futuro). null → neutro.
+  const refAvg = Number.isFinite(Number(m.refereeCardsAvg)) ? Number(m.refereeCardsAvg) : null;
+  const teamAvg = Number.isFinite(Number(m.teamCardsAvg)) ? Number(m.teamCardsAvg) : null;
+  const rivalry = cardsRivalryIndex(m);
+
+  // Taxa de cartões/min combinando observado + faltas + baseline.
+  const obsRate = totalCards / min;
+  const foulCardRate = foulsRate * CARDS_FOUL_TO_CARD;
+  const earliness = clamp(1 - min / 90, 0, 1);
+  const wObs = clamp(0.55 * (1 - earliness) + 0.25, 0, 1);
+  const wFoul = 0.30;
+  const wBase = Math.max(0, 1 - wObs - wFoul);
+  const rate = obsRate * wObs + foulCardRate * wFoul + CARDS_BASELINE_PER_MIN * wBase;
+
+  // Escalonamento tardio + modificadores de contexto.
+  let lateFactor = 1;
+  if (min >= 60) lateFactor += 0.20;
+  if (min >= 75) lateFactor += 0.20;
+  if (min >= 85) lateFactor += 0.15;
+  let ctxFactor = 1 + rivalry * 0.25;
+  if (pressure >= 55) ctxFactor += 0.08;
+  if (refAvg) ctxFactor *= clamp(refAvg / 4.2, 0.7, 1.6);
+  if (teamAvg) ctxFactor *= clamp(teamAvg / 4.0, 0.8, 1.3);
+
+  const lambdaRem = Math.max(0, rate * remaining * lateFactor * ctxFactor);
+  const expected = totalCards + lambdaRem;
+
+  // P(total_final > linha) via Poisson nos cartões ADICIONAIS.
+  function pOver(line) {
+    const need = Math.ceil((line + 0.5) - totalCards - 1e-9);
+    if (need <= 0) return 0.99; // linha já superada
+    let cdfBelow = 0;
+    for (let k = 0; k < need; k++) cdfBelow += poisson(lambdaRem, k);
+    return clamp(1 - cdfBelow, 0.01, 0.99);
+  }
+
+  const lines = {};
+  for (const L of CARDS_LINES) {
+    const po = pOver(L);
+    lines[L] = { over: Math.round(po * 100), under: Math.round((1 - po) * 100) };
+  }
+
+  // Confiança base — qualidade do dado/estágio do jogo.
+  let confidence = 40;
+  if (min >= 25) confidence += 8;
+  if (min >= 45) confidence += 8;
+  if (min >= 65) confidence += 6;
+  if (hasFoulData) confidence += 6;
+  if (hasCardData) confidence += 6;
+  if (advanced) confidence += 4;
+  if (refAvg) confidence += 6;
+  if (teamAvg) confidence += 3;
+  if (foulsRate >= 0.30) confidence += 3;
+  confidence = clamp(confidence, 0, 95);
+
+  // Motivos legíveis — apenas fatores REAIS disponíveis.
+  const reasons = [];
+  if (refAvg) reasons.push(`Árbitro${m.referee ? ` ${m.referee}` : ''} com média ${refAvg.toFixed(1)} cartões/jogo`);
+  else if (m.referee) reasons.push(`Árbitro: ${m.referee}`);
+  reasons.push(`${yellow + red} cartões já mostrados (${yellow}🟨 ${red}🟥)`);
+  if (rivalry >= 0.6) reasons.push('Jogo de alta rivalidade / intensidade');
+  else if (rivalry >= 0.35) reasons.push('Confronto de intensidade moderada');
+  if (hasFoulData) reasons.push(`${fouls} faltas aos ${min} minutos`);
+  if (pressure >= 55) reasons.push(`Pressão ofensiva elevada (${Math.round(pressure)})`);
+  if (teamAvg) reasons.push(`Média de cartões dos times ≈ ${teamAvg.toFixed(1)}`);
+
+  return {
+    min, remaining, yellow, red, totalCards, fouls, foulsRate, pressure,
+    advanced, dataOk, refAvg, teamAvg, rivalry,
+    rate, lambdaRem, expected, lines, confidence, reasons,
+  };
+}
+
+/**
+ * Score da análise (0..100) — mesma fórmula da "melhor aposta",
+ * self-contained para poder filtrar cartões por score antes de emitir.
+ */
+function cardsAnalysisScore(probability, odd, confidence, minute) {
+  const v = valueScore(probability, odd);
+  const mo = momentumScore(minute);
+  const r = riskScore(riskFromMetrics(confidence).level);
+  return Math.round(0.50 * confidence + 0.25 * v + 0.15 * mo + 0.10 * r);
+}
+
+/**
+ * Resolve o melhor sinal de cartões (UM por jogo): escolhe a linha/lado
+ * mais informativo na zona de valor (prob 58–90%, mais perto de ~72%).
+ * Retorna o candidato (market 'cards' = Over | 'cardsUnder' = Under) ou null.
+ * Emite o log [CARDS ANALYSIS] e registra DROP no funil quando aplicável.
+ */
+function resolveCardsWinner(m, sigStats) {
+  const mkDrop = (market, reason) => {
+    recordFunnel('compute-null');
+    recordMarketFunnel(market, 'compute-null');
+    recordDrop({ stage: 'compute-null', market, match: matchSummary(m), reason });
+    const d = { market, fixtureId: sigStats.fixtureId, match: `${m.home} x ${m.away}`, min: sigStats.min, result: 'DROP', reason };
+    logDecision(d);
+    tickDecisions.push(d);
+  };
+
+  const model = safe(() => _cardsModel(m));
+  const fxId = sigStats.fixtureId;
+
+  if (!model || !model.dataOk) {
+    if (PIPELINE_LOG) {
+      console.log(`[CARDS ANALYSIS]\n  Fixture: ${fxId} ${m.home} x ${m.away}\n  Current Cards: ${model ? (model.yellow + model.red) : '?'}\n  Expected Cards: n/d\n  Probability: n/d\n  Decision: DROP (dados insuficientes)`);
+    }
+    mkDrop('cards', 'cards: dados insuficientes (sem faltas/cartões/stats)');
+    mkDrop('cardsUnder', 'cards: dados insuficientes (sem faltas/cartões/stats)');
+    return null;
+  }
+
+  // Para cada linha, lado dominante + probabilidade.
+  const candidates = CARDS_LINES.map((L) => {
+    const o = model.lines[L].over;
+    const u = model.lines[L].under;
+    return o >= u
+      ? { line: L, side: 'over', market: 'cards', prob: o }
+      : { line: L, side: 'under', market: 'cardsUnder', prob: u };
+  });
+
+  // Zona de valor: prob 58–90% (confiável, não-trivial). Escolhe a mais
+  // próxima de ~72% (equilíbrio confiança × valor). Se NENHUMA linha cair na
+  // banda, ainda devolvemos a mais próxima de 72% como CANDIDATO — quem decide
+  // a emissão são os gates de confiança (>=60) e score (>=55). Assim o resolver
+  // só devolve null por FALTA DE DADOS (model.dataOk === false), nunca por
+  // "sem edge" — garantia exigida pela auditoria.
+  const inBand = candidates.filter((c) => c.prob >= 58 && c.prob <= 90);
+  const pool = inBand.length ? inBand : candidates;
+  pool.sort((a, b) => Math.abs(a.prob - 72) - Math.abs(b.prob - 72));
+  const best = pool[0];
+
+  // [CARDS ANALYSIS] — log estruturado solicitado pelo produto.
+  if (PIPELINE_LOG) {
+    console.log(
+      `[CARDS ANALYSIS]\n` +
+      `  Fixture: ${fxId} ${m.home} x ${m.away} (${model.min}′)\n` +
+      `  Current Cards: ${model.yellow + model.red} (${model.yellow}Y ${model.red}R) · fouls=${model.fouls}\n` +
+      `  Expected Cards: ${model.expected.toFixed(1)} (λrem=${model.lambdaRem.toFixed(2)})\n` +
+      `  Probability: ${best.side.toUpperCase()} ${best.line} = ${best.prob}%\n` +
+      `  Decision: CANDIDATE (gates: conf>=${CARDS_MIN_CONFIDENCE}, score>=${CARDS_MIN_SCORE})`
+    );
+  }
+
+  // Confiança final: base + bônus quando a linha está bem separada do esperado.
+  let confidence = model.confidence;
+  if (Math.abs(model.expected - (best.line + 0.5)) >= 1.0) confidence += 5;
+  confidence = clamp(confidence, 0, 95);
+
+  const odd = probToOdd(best.prob);
+  const analysisScore = cardsAnalysisScore(best.prob, odd, confidence, model.min);
+  const loserMarket = best.market === 'cards' ? 'cardsUnder' : 'cards';
+  recordMarketFunnel(loserMarket, 'lower-probability');
+
+  return {
+    market: best.market,
+    prediction: `${best.side === 'over' ? 'Over' : 'Under'} ${best.line} cartões`,
+    probability: best.prob,
+    confidence,
+    oddEstimated: odd,
+    analysisScore,
+    justification: model.reasons.join(' • '),
+    extras: {
+      direction: best.side,
+      line: best.line,
+      currentCards: model.yellow + model.red,
+      yellow: model.yellow,
+      red: model.red,
+      expectedCards: +model.expected.toFixed(1),
+      lambdaRemaining: +model.lambdaRem.toFixed(2),
+      fouls: model.fouls,
+      foulsRate: +model.foulsRate.toFixed(2),
+      rivalry: +model.rivalry.toFixed(2),
+      pressure: Math.round(model.pressure),
+      refereeCardsAvg: model.refAvg,
+      teamCardsAvg: model.teamAvg,
+      analysisScore,
+      reasons: model.reasons,
+      lines: model.lines, // todas as 8 probabilidades (over/under × 2.5/3.5/4.5/5.5)
+    },
+  };
+}
+
+/* ============================================================
    3) WIN — 1X2 (Home / Draw / Away)
    Lógica: modelo Poisson 2-D sobre gols restantes:
      - λ_home = xG-rate × remaining × (1 + posseEdge)
@@ -1195,6 +1457,8 @@ function buildSignal(m, c) {
            : c.market === 'btts'         ? '🎯'
            : c.market === 'over25'       ? '⚽'
            : c.market === 'under25'      ? '🛡️'
+           : c.market === 'cards'        ? '🟨'
+           : c.market === 'cardsUnder'   ? '🟨'
            : '🏆',
     },
     createdAt: new Date().toISOString(),
@@ -1438,6 +1702,12 @@ function processMatch(m) {
   const goalsWinner = resolveGoalsWinner(m, sigStats);
   if (goalsWinner) rawCandidates.push({ market: goalsWinner.market, fn: () => goalsWinner });
 
+  // === CARTÕES (Over/Under 2.5–5.5) — UM lado por fixture ===
+  // Mesmo padrão dos gols: o resolver escolhe a melhor linha/lado, calcula
+  // todas as 8 probabilidades (extras.lines) e já loga [CARDS ANALYSIS].
+  const cardsWinner = safe(() => resolveCardsWinner(m, sigStats));
+  if (cardsWinner) rawCandidates.push({ market: cardsWinner.market, fn: () => cardsWinner });
+
   for (const { market, fn } of rawCandidates) {
     const c = safe(fn);
     let decision = { market, fixtureId: sigStats.fixtureId, match: `${m.home} x ${m.away}`, min: sigStats.min };
@@ -1481,20 +1751,22 @@ function processMatch(m) {
       continue;
     }
 
-    if (c.confidence < MIN_CONFIDENCE) {
-      console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=low-confidence conf=${c.confidence} min=${MIN_CONFIDENCE}`);
-      if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP low-confidence | ${m.home} x ${m.away} | market=${c.market} | conf=${c.confidence} < min=${MIN_CONFIDENCE} | pred=${c.prediction}`);
+    const isCardsMarket = CARDS_MARKETS.has(c.market);
+    const minConfForMarket = isCardsMarket ? CARDS_MIN_CONFIDENCE : MIN_CONFIDENCE;
+    if (c.confidence < minConfForMarket) {
+      console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=low-confidence conf=${c.confidence} min=${minConfForMarket}`);
+      if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP low-confidence | ${m.home} x ${m.away} | market=${c.market} | conf=${c.confidence} < min=${minConfForMarket} | pred=${c.prediction}`);
       recordMarketFunnel(c.market, 'low-confidence');
       dropAndLog('low-confidence', m, {
         market: c.market,
         confidence: c.confidence,
-        minRequired: MIN_CONFIDENCE,
+        minRequired: minConfForMarket,
         probability: c.probability,
         prediction: c.prediction,
       });
       decision = {
         ...decision, result: 'DROP', reason: 'low-confidence',
-        confidence: c.confidence, threshold: MIN_CONFIDENCE,
+        confidence: c.confidence, threshold: minConfForMarket,
         probability: c.probability, odd: c.oddEstimated, prediction: c.prediction,
         extras: c.extras || null, justification: c.justification || null,
       };
@@ -1502,7 +1774,29 @@ function processMatch(m) {
       tickDecisions.push(decision);
       continue;
     }
-    if (c.oddEstimated < MIN_ODD || c.oddEstimated > MAX_ODD) {
+    // Cartões usam gate de SCORE (>= CARDS_MIN_SCORE) em vez do odd-range:
+    // uma linha forte (ex.: Over 2.5) pode ter odd 1.30 e ainda ser ótimo sinal.
+    if (isCardsMarket) {
+      const score = n(c.analysisScore);
+      if (score < CARDS_MIN_SCORE) {
+        console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=low-score score=${score} min=${CARDS_MIN_SCORE}`);
+        if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP low-score | ${m.home} x ${m.away} | market=${c.market} | score=${score} < min=${CARDS_MIN_SCORE} | pred=${c.prediction}`);
+        recordMarketFunnel(c.market, 'low-score');
+        dropAndLog('low-score', m, {
+          market: c.market, analysisScore: score, minRequired: CARDS_MIN_SCORE,
+          confidence: c.confidence, probability: c.probability, prediction: c.prediction,
+        });
+        decision = {
+          ...decision, result: 'DROP', reason: 'low-score',
+          analysisScore: score, threshold: CARDS_MIN_SCORE,
+          confidence: c.confidence, probability: c.probability, odd: c.oddEstimated, prediction: c.prediction,
+          extras: c.extras || null, justification: c.justification || null,
+        };
+        logDecision(decision);
+        tickDecisions.push(decision);
+        continue;
+      }
+    } else if (c.oddEstimated < MIN_ODD || c.oddEstimated > MAX_ODD) {
       console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=odd-out-of-range odd=${c.oddEstimated} band=[${MIN_ODD},${MAX_ODD}]`);
       if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP odd-out-of-range | ${m.home} x ${m.away} | market=${c.market} | odd=${c.oddEstimated} fora=[${MIN_ODD},${MAX_ODD}] | conf=${c.confidence} | pred=${c.prediction}`);
       recordMarketFunnel(c.market, 'odd-out-of-range');
@@ -1721,7 +2015,7 @@ let started = false;
 
 let lastTickAt = null;
 let lastTickSummary = null;
-let tickByMarket = { corners: 0, cornersUnder: 0, btts: 0, over25: 0, under25: 0 };
+let tickByMarket = { corners: 0, cornersUnder: 0, btts: 0, over25: 0, under25: 0, cards: 0, cardsUnder: 0 };
 let cornersStats = { withTotal: 0, totalZeroNoAdv: 0, totalZeroWithAdv: 0 };
 
 /* ============================================================
@@ -1741,7 +2035,7 @@ let cornersStats = { withTotal: 0, totalZeroNoAdv: 0, totalZeroWithAdv: 0 };
    estágio per-market (`computed`) — assim fica explícito no relatório
    que o mercado é estrutural, não um descarte por filtro.
    ============================================================ */
-const MARKET_KEYS = ['btts', 'over25', 'under25', 'cornersOver', 'cornersUnder'];
+const MARKET_KEYS = ['btts', 'over25', 'under25', 'cornersOver', 'cornersUnder', 'cardsOver', 'cardsUnder'];
 function makeMarketFunnel() {
   const out = {};
   for (const k of MARKET_KEYS) out[k] = { candidates: 0, emitted: 0, drops: {} };
@@ -1764,6 +2058,8 @@ function deriveMarketKey(internalMarket /*, candidate */) {
   if (internalMarket === 'cornersUnder') return 'cornersUnder';
   if (internalMarket === 'over25') return 'over25';
   if (internalMarket === 'under25') return 'under25';
+  if (internalMarket === 'cards') return 'cardsOver';
+  if (internalMarket === 'cardsUnder') return 'cardsUnder';
   return null;
 }
 
@@ -1778,6 +2074,8 @@ const MARKET_LOG_TAG = {
   under25:      '[GOALS UNDER25]',
   corners:      '[CORNERS OVER]',
   cornersUnder: '[CORNERS UNDER]',
+  cards:        '[CARDS OVER]',
+  cardsUnder:   '[CARDS UNDER]',
   win:          '[WIN]',
 };
 function marketTag(market) {
@@ -1823,7 +2121,7 @@ function tick() {
       });
     }
     // Contadores por mercado dentro do tick (não persistem entre ticks).
-    tickByMarket = { corners: 0, cornersUnder: 0, btts: 0, over25: 0, under25: 0 };
+    tickByMarket = { corners: 0, cornersUnder: 0, btts: 0, over25: 0, under25: 0, cards: 0, cardsUnder: 0 };
     tickByMarketFunnel = makeMarketFunnel();
     cornersStats = { withTotal: 0, totalZeroNoAdv: 0, totalZeroWithAdv: 0 };
     tickDecisions = []; // populado dentro de processMatch via logDecision
@@ -1857,7 +2155,8 @@ function tick() {
       `withCornerData=${cornersStats.withTotal} totalZeroNoAdv=${cornersStats.totalZeroNoAdv} ` +
       `totalZeroWithAdv=${cornersStats.totalZeroWithAdv} → ` +
       `emitted: cornersOver=${tickByMarket.corners} cornersUnder=${tickByMarket.cornersUnder} ` +
-      `btts=${tickByMarket.btts} over25=${tickByMarket.over25} under25=${tickByMarket.under25}`
+      `btts=${tickByMarket.btts} over25=${tickByMarket.over25} under25=${tickByMarket.under25} ` +
+      `cardsOver=${tickByMarket.cards} cardsUnder=${tickByMarket.cardsUnder}`
     );
 
     // [SIGNAL DROP REPORT] — agregado por (market, reason) deste tick.
@@ -2124,6 +2423,8 @@ function getMarketFunnel() {
       under25:       'Implementado em computeUnder25Bet (1 - P(Over 2.5) sobre o mesmo λ).',
       cornersOver:   'Implementado em computeCornersBet (Over X.5 dinâmico).',
       cornersUnder:  'Implementado em computeCornersUnderBet (Under X.5, mesma projeção do Over).',
+      cardsOver:     'Implementado em resolveCardsWinner (Poisson Over X.5 cartões 2.5–5.5; gates conf≥60 + score≥55).',
+      cardsUnder:    'Implementado em resolveCardsWinner (Under X.5 cartões, lado oposto da mesma projeção).',
     },
     lastTickAt,
     generatedAt: new Date().toISOString(),
@@ -2192,5 +2493,8 @@ module.exports = {
     computeOver25Bet, computeUnder25Bet,
     computeWinBet,
     probToOdd, poisson, premiumInsight,
+    // Cartões (Over/Under) — expostos para auditoria/testes.
+    _cardsModel, resolveCardsWinner, cardsAnalysisScore, cardsRivalryIndex,
+    CARDS_LINES, CARDS_MIN_CONFIDENCE, CARDS_MIN_SCORE, CARDS_MARKETS,
   },
 };

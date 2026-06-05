@@ -285,40 +285,84 @@ function buildCardsSignal(m) {
   const remaining = Math.max(0, 95 - min);
   const yel = n(m.stats?.cards?.yellow?.total);
   const red = n(m.stats?.cards?.red?.total);
-  const totalWeighted = yel + red * 1.5;
+  const total = yel + red; // contagem de cartões (alinha com mercado Bet365)
   const fouls = n(m.stats?.fouls?.total);
-  const rate = totalWeighted / min;
-  const rateFouls = fouls / min;
+  const foulsRate = fouls / min;
+  const press = n(m.perMinute?.pressureIndex);
 
-  const dispersion = 1 - clamp(min / 90, 0, 0.6);
-  const projMin = Math.max(totalWeighted, Math.round(totalWeighted + rate * remaining * (1 - dispersion * 0.4)));
-  const projMax = Math.max(projMin, Math.round(totalWeighted + rate * remaining * (1 + dispersion * 0.4)));
-  const proj    = Math.round((projMin + projMax) / 2);
+  // Taxa de cartões/min combinando observado + faltas + baseline (~3.8/90′).
+  const obsRate = total / min;
+  const foulCardRate = foulsRate * 0.155;
+  const earliness = clamp(1 - min / 90, 0, 1);
+  const wObs = clamp(0.55 * (1 - earliness) + 0.25, 0, 1);
+  const rate = obsRate * wObs + foulCardRate * 0.30 + 0.042 * Math.max(0, 1 - wObs - 0.30);
 
-  // Confidence
+  // Escalonamento tardio (cartões aceleram na reta final).
+  let lateFactor = 1;
+  if (min >= 60) lateFactor += 0.20;
+  if (min >= 75) lateFactor += 0.20;
+  if (min >= 85) lateFactor += 0.15;
+  if (press >= 55) lateFactor += 0.05;
+
+  const lambdaRem = Math.max(0, rate * remaining * lateFactor);
+  const expected = total + lambdaRem;
+
+  // P(total_final > linha) via Poisson nos cartões adicionais.
+  const pOver = (line) => {
+    const need = Math.ceil((line + 0.5) - total - 1e-9);
+    if (need <= 0) return 0.99;
+    let cdfBelow = 0, term = Math.exp(-lambdaRem);
+    for (let k = 0; k < need; k++) { cdfBelow += term; term *= lambdaRem / (k + 1); }
+    return clamp(1 - cdfBelow, 0.01, 0.99);
+  };
+
+  const LINES = [2.5, 3.5, 4.5, 5.5];
+  const picks = LINES.map((L) => {
+    const o = pOver(L);
+    return o >= (1 - o)
+      ? { line: L, side: 'Over', prob: o }
+      : { line: L, side: 'Under', prob: 1 - o };
+  });
+  const band = picks.filter((p) => p.prob >= 0.58 && p.prob <= 0.90);
+  const pool = band.length ? band : picks;
+  pool.sort((a, b) => Math.abs(a.prob - 0.72) - Math.abs(b.prob - 0.72));
+  const best = pool[0];
+  const probPct = Math.round(best.prob * 100);
+
+  // Confidence base
   let conf = 45;
-  if (rate >= 0.05) conf += 10;
-  if (rate >= 0.10) conf += 10;
-  if (rateFouls >= 0.25) conf += 6;
-  if (red >= 1) conf += 8;
+  if (obsRate >= 0.05) conf += 8;
+  if (foulsRate >= 0.25) conf += 6;
+  if (red >= 1) conf += 6;
+  if (min >= 45) conf += 6;
+  if (min >= 65) conf += 4;
   if (min < 25) conf -= 12;
-  if (min > 75) conf -= 4;
   conf = clamp(Math.round(conf), 35, 92);
 
-  const target = Math.max(proj - 1, Math.max(2, Math.floor(totalWeighted) + 1));
+  const oddFair = +(1 / clamp(best.prob, 0.01, 0.99)).toFixed(2);
   const risk = riskFromConf(conf);
 
   return {
     market: 'cards',
-    signal: `Over ${target}.5 cartões`,
+    signal: `${best.side} ${best.line} cartões`,
     confidence: conf,
+    probability: probPct,
+    oddFair,
     risk,
-    reasoning: `${yel} amarelos${red ? ` + ${red} vermelho${red > 1 ? 's' : ''}` : ''} em ${min}′. ${fouls} faltas (${rateFouls.toFixed(2)}/min).`,
+    reasoning: `${total} cartões (${yel}🟨 ${red}🟥) em ${min}′ · ${fouls} faltas (${foulsRate.toFixed(2)}/min) · projeção ${expected.toFixed(1)}.`,
     projection: {
-      cards: `${projMin}–${projMax}`,
-      currentTotal: totalWeighted,
+      cards: `${Math.floor(expected)}–${Math.ceil(expected + lambdaRem * 0.25)}`,
+      currentTotal: total,
+      expected: +expected.toFixed(1),
       ratePerMin: +rate.toFixed(2),
-      target,
+      direction: best.side.toLowerCase(),
+      line: best.line,
+      target: best.line,
+      lines: LINES.reduce((acc, L) => {
+        const o = pOver(L);
+        acc[L] = { over: Math.round(o * 100), under: Math.round((1 - o) * 100) };
+        return acc;
+      }, {}),
     },
     match: matchHeader(m),
     profile: profileFromRisk(risk),

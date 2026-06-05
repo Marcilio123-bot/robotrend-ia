@@ -106,6 +106,7 @@
         <button class="signal-filter" data-market="btts">Ambas marcam</button>
         <button class="signal-filter" data-market="win">Vitória</button>
         <button class="signal-filter" data-market="goals">Gols</button>
+        <button class="signal-filter" data-market="cards">Cartões</button>
       </div>
 
       <!-- Grid de sinais -->
@@ -137,6 +138,11 @@
       btts:    { label: 'Ambas marcam', accent: '#06b6d4' },
       win:     { label: 'Vitória',      accent: '#14b85e' },
       goals:   { label: 'Gols',         accent: '#a855f7' },
+      over25:  { label: 'Over 2.5 gols',  accent: '#a855f7' },
+      under25: { label: 'Under 2.5 gols', accent: '#7c3aed' },
+      cornersUnder: { label: 'Under escanteios', accent: '#eab308' },
+      cards:   { label: 'Over cartões',  accent: '#f59e0b' },
+      cardsUnder: { label: 'Under cartões', accent: '#f97316' },
     };
 
     let signals = [];
@@ -185,7 +191,9 @@
 
     function render() {
       const grid = $('#signals-grid');
-      const filtered = filter ? signals.filter((s) => s.market === filter) : signals;
+      const filtered = filter
+        ? signals.filter((s) => s.market === filter || (filter === 'cards' && s.market === 'cardsUnder'))
+        : signals;
       if (!filtered.length) {
         grid.innerHTML = `<div class="col-span-full saas-card saas-empty">Sem sinais para esse mercado ainda.</div>`;
       } else {

@@ -947,7 +947,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
 
     // Painel restrito aos 5 mercados ativos (remove WIN/1X2 legado que possa
     // ainda estar no ring buffer de sinais anteriores ao corte).
-    const ALLOWED_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder']);
+    const ALLOWED_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder', 'cards', 'cardsUnder']);
     signals = signals.filter((s) => ALLOWED_MARKETS.has(s.market));
 
     if (!isPrem) {
@@ -1301,6 +1301,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       under25:      funnel?.markets?.under25      || { candidates: 0, emitted: 0, drops: {} },
       cornersOver:  funnel?.markets?.cornersOver  || { candidates: 0, emitted: 0, drops: {} },
       cornersUnder: funnel?.markets?.cornersUnder || { candidates: 0, emitted: 0, drops: {} },
+      cardsOver:    funnel?.markets?.cardsOver    || { candidates: 0, emitted: 0, drops: {} },
+      cardsUnder:   funnel?.markets?.cardsUnder   || { candidates: 0, emitted: 0, drops: {} },
 
       // === metadados de diagnóstico ===
       lastTick:     funnel?.lastTick     || null,

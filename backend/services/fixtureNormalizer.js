@@ -140,6 +140,8 @@ function normalizeFixture(fx) {
     status: statusShort,
     statusLong: fx.fixture?.status?.long,
     venue: fx.fixture?.venue || null,
+    // Árbitro da partida (quando disponível no feed) — usado pela análise de cartões.
+    referee: fx.fixture?.referee || null,
     kickoffAt: fx.fixture?.date,
     date: fx.fixture?.date,
     score: {

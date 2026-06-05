@@ -508,7 +508,7 @@
      BET SIGNALS (corners / btts / win) — cards compactos
      ============================================================ */
   // Mercados ativos exibidos no painel (WIN/1X2 removido)
-  const ALLOWED_BET_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder']);
+  const ALLOWED_BET_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder', 'cards', 'cardsUnder']);
   function marketLabel(m) {
     return ({
       corners: 'Over escanteios',
@@ -517,6 +517,8 @@
       goals: 'Gols',
       over25: 'Over 2.5 gols',
       under25: 'Under 2.5 gols',
+      cards: 'Over cartões',
+      cardsUnder: 'Under cartões',
     }[m] || m || 'Sinal');
   }
   function marketAccent(m) {
@@ -527,6 +529,8 @@
       goals: '#a855f7',
       over25: '#a855f7',
       under25: '#7c3aed',
+      cards: '#f59e0b',
+      cardsUnder: '#f97316',
     }[m] || '#14b85e');
   }
 
@@ -541,7 +545,26 @@
       : `${s.home || ''} × ${s.away || ''}`;
     const minute = s.match?.minute ?? s.minute ?? 0;
     const league = s.match?.leagueFull || s.leagueFull || s.match?.league || s.league || '';
+    const score = s.betScore ?? s.extras?.analysisScore ?? s.analysisScore ?? null;
+    const isCards = s.market === 'cards' || s.market === 'cardsUnder';
+    const lines = isCards ? (s.extras?.lines || null) : null;
     const isLocked = s.locked === true;
+    const cardsLinesHtml = (lines && !isLocked)
+      ? `<div class="mt-3" style="background:rgba(245,158,11,.06);border-radius:6px;padding:6px 8px;">
+           <div class="text-[10px] uppercase tracking-wider mb-1" style="color:var(--muted);">Probabilidades por linha</div>
+           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;text-align:center;">
+             ${[2.5, 3.5, 4.5, 5.5].map((L) => {
+               const ln = lines[L] || lines[String(L)] || {};
+               const over = ln.over ?? 0; const under = ln.under ?? 0;
+               return `<div>
+                 <div class="text-[10px]" style="color:var(--muted);">${L}</div>
+                 <div class="font-mono text-[10px]" style="color:#22c55e;">O ${over}%</div>
+                 <div class="font-mono text-[10px]" style="color:#ef4444;">U ${under}%</div>
+               </div>`;
+             }).join('')}
+           </div>
+         </div>`
+      : '';
     const isPremium = s.tier === 'premium' && !isLocked;
     const tierBadge = isPremium
       ? `<span class="badge" style="background:linear-gradient(135deg,#ffd166,#ffb547);color:#2a1a05;font-weight:900;letter-spacing:1px;">💎 PREMIUM</span>`
@@ -570,7 +593,7 @@
         <div class="text-sm font-bold mb-1">${escapeHtml(matchTxt)}</div>
         <div class="text-[11px] mb-3" style="color: var(--muted);">${escapeHtml(league)} · ${minute}'</div>
         <div class="text-lg font-extrabold mb-2" style="color: ${accent};">${escapeHtml(s.prediction || s.suggestion || '—')}</div>
-        <div class="grid grid-cols-3 gap-2 text-center mt-3">
+        <div class="grid ${score != null ? 'grid-cols-4' : 'grid-cols-3'} gap-2 text-center mt-3">
           <div>
             <div class="text-[10px] uppercase tracking-wider" style="color: var(--muted);">Prob</div>
             <div class="font-mono font-bold">${prob}%</div>
@@ -580,10 +603,15 @@
             <div class="font-mono font-bold">${conf}%</div>
           </div>
           <div>
-            <div class="text-[10px] uppercase tracking-wider" style="color: var(--muted);">Odd</div>
+            <div class="text-[10px] uppercase tracking-wider" style="color: var(--muted);">Odd justa</div>
             <div class="font-mono font-bold">${odd ? '~' + odd : '—'}</div>
           </div>
+          ${score != null ? `<div>
+            <div class="text-[10px] uppercase tracking-wider" style="color: var(--muted);">Score</div>
+            <div class="font-mono font-bold">${score}</div>
+          </div>` : ''}
         </div>
+        ${cardsLinesHtml}
         ${insightHtml}
       </article>
     `;
