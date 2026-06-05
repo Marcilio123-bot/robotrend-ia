@@ -230,6 +230,74 @@
     }
   }
 
+  /* ============================================================
+     Consumo API-Football — conecta ao MESMO endpoint do Painel Técnico
+     (GET /api/admin/api-usage). admin/master têm acesso (requireAdmin).
+     ============================================================ */
+  function fmtNum(n) {
+    return n == null || isNaN(n) ? '—' : Number(n).toLocaleString('pt-BR');
+  }
+
+  function muBarChart(el, data, color, maxLabels) {
+    if (!el) return;
+    const arr = data || [];
+    const vals = arr.map((d) => Number(d.total) || 0);
+    const max = Math.max(1, ...vals);
+    const n = arr.length || 1;
+    const step = Math.max(1, Math.ceil(n / (maxLabels || 8)));
+    const bars = arr.map((d, i) => {
+      const v = Number(d.total) || 0;
+      const pct = Math.round((v / max) * 100);
+      const show = (i % step === 0) || i === n - 1;
+      return `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:0">
+        <div title="${escapeHtml(d.label)}: ${v}" style="width:78%;height:${pct}%;min-height:1px;background:${color};border-radius:2px 2px 0 0"></div>
+        <div style="font-size:8px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;max-width:100%">${show ? escapeHtml(d.label) : ''}</div>
+      </div>`;
+    }).join('');
+    el.innerHTML = `<div style="display:flex;align-items:flex-end;gap:2px;height:110px">${bars}</div>`;
+  }
+
+  async function loadApiUsage() {
+    try {
+      const d = await RobotrendAuth.api('/api/admin/api-usage');
+      if (!d || !d.ok) return;
+      const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+      set('mu-today', fmtNum(d.callsToday));
+      set('mu-hour', fmtNum(d.callsLastHour));
+      set('mu-consumed', fmtNum(d.credits?.consumed));
+      set('mu-remaining', d.credits?.remaining == null ? '—' : fmtNum(d.credits.remaining));
+      set('mu-games', fmtNum(d.gamesMonitored));
+      set('mu-poller', fmtNum(d.consumption?.poller));
+      set('mu-enricher', fmtNum(d.consumption?.enricher));
+      set('mu-route', fmtNum(d.consumption?.route));
+      set('mu-avg', fmtNum(d.report?.avgDaily));
+      set('mu-monthly', fmtNum(d.report?.monthlyProjection));
+
+      const riskEl = $('mu-risk');
+      if (riskEl) {
+        const lvl = d.report?.riskLevel || '—';
+        const pct = d.report?.riskRatio != null ? ` (${Math.round(d.report.riskRatio * 100)}%)` : '';
+        riskEl.textContent = lvl + pct;
+        riskEl.style.color = (lvl === 'CRÍTICO' || lvl === 'ALTO') ? '#ff6677'
+          : lvl === 'MODERADO' ? '#ffb547' : '#14b85e';
+      }
+
+      muBarChart($('mu-chart-hourly'), d.charts?.hourly, '#06b6d4', 8);
+      muBarChart($('mu-chart-daily'), d.charts?.daily, '#a855f7', 10);
+
+      const note = $('mu-note');
+      if (note) {
+        const limit = d.credits?.limit;
+        note.textContent = limit
+          ? `Limite do plano: ${fmtNum(limit)}/dia.` + (d.safeMode ? ' ⚠️ SAFE-MODE ativo — enricher pausado.' : '')
+          : 'Limite ainda não reportado pela API — usando rate-limiter local.';
+      }
+    } catch (e) {
+      const note = $('mu-note');
+      if (note) note.textContent = `Falha ao carregar consumo: ${e.message}`;
+    }
+  }
+
   async function boot() {
     try {
       if (window.RobotrendGuard?.ready) me = await RobotrendGuard.ready;
@@ -237,10 +305,12 @@
     } catch (_) {}
     $('btn-filter')?.addEventListener('click', loadUsers);
     $('filter-q')?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') loadUsers(); });
-    $('btn-refresh')?.addEventListener('click', () => { loadUsers(); loadLogs(); });
+    $('btn-refresh')?.addEventListener('click', () => { loadUsers(); loadLogs(); loadApiUsage(); });
     await loadUsers();
     await loadLogs();
+    loadApiUsage();
     setInterval(loadUsers, 60000);
+    setInterval(loadApiUsage, 30000);
   }
 
   if (window.RobotrendGuard?.ready) {

@@ -58,6 +58,42 @@
         <div class="saas-kpi"><div class="saas-kpi-label">Bloqueados</div><div class="saas-kpi-value" id="kpi-blocked" style="color:#ffb547;">—</div></div>
       </section>
 
+      <!-- Consumo API-Football (mesmo endpoint do Painel Técnico) -->
+      <section class="saas-section" id="api-usage-section">
+        <div class="saas-section-head">
+          <h3 class="text-lg font-extrabold">Consumo API-Football</h3>
+          <p class="text-xs" style="color:var(--muted);">Créditos reais gastos · poller, enricher e rotas</p>
+        </div>
+        <div class="saas-card" style="padding: 18px 22px;">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px;margin-bottom:16px;">
+            <div><div class="text-xs uppercase tracking-wider" style="color:var(--muted);">Hoje</div><div class="text-2xl font-extrabold" id="mu-today">—</div></div>
+            <div><div class="text-xs uppercase tracking-wider" style="color:var(--muted);">Última hora</div><div class="text-2xl font-extrabold" id="mu-hour">—</div></div>
+            <div><div class="text-xs uppercase tracking-wider" style="color:var(--muted);">Consumidos</div><div class="text-2xl font-extrabold" id="mu-consumed">—</div></div>
+            <div><div class="text-xs uppercase tracking-wider" style="color:var(--muted);">Restantes</div><div class="text-2xl font-extrabold" id="mu-remaining">—</div></div>
+            <div><div class="text-xs uppercase tracking-wider" style="color:var(--muted);">Jogos</div><div class="text-2xl font-extrabold" id="mu-games">—</div></div>
+            <div><div class="text-xs uppercase tracking-wider" style="color:var(--muted);">Poller</div><div class="text-2xl font-extrabold" id="mu-poller">—</div></div>
+            <div><div class="text-xs uppercase tracking-wider" style="color:var(--muted);">Enricher</div><div class="text-2xl font-extrabold" id="mu-enricher">—</div></div>
+            <div><div class="text-xs uppercase tracking-wider" style="color:var(--muted);">Rotas</div><div class="text-2xl font-extrabold" id="mu-route">—</div></div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;">
+            <div>
+              <div class="text-xs uppercase tracking-wider" style="color:var(--muted);margin-bottom:6px;">Por hora (24h)</div>
+              <div id="mu-chart-hourly"></div>
+            </div>
+            <div>
+              <div class="text-xs uppercase tracking-wider" style="color:var(--muted);margin-bottom:6px;">Por dia (30d)</div>
+              <div id="mu-chart-daily"></div>
+            </div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:24px;margin-top:14px;font-size:13px;">
+            <div>Média diária: <b id="mu-avg">—</b></div>
+            <div>Projeção mensal: <b id="mu-monthly">—</b></div>
+            <div>Risco: <b id="mu-risk">—</b></div>
+          </div>
+          <p id="mu-note" class="text-xs" style="color:var(--muted);margin-top:8px;line-height:1.5;"></p>
+        </div>
+      </section>
+
       <section class="saas-section">
         <div class="saas-card" style="padding: 18px 22px;">
           <div class="master-toolbar">
