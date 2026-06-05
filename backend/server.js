@@ -1251,6 +1251,11 @@ async function main() {
   try { attachFootballRealtime(io, { db, auth }); }
   catch (e) { log.warn('footballRealtime init falhou (modo degradado)', { err: e.message }); }
 
+  // Goal clock — rastreia último gol por fixture (supressão pós-gol dos
+  // sinais de BTTS / Over 2.5). Deve subir ANTES dos motores de sinais.
+  try { require('./services/goalClock').start(); }
+  catch (e) { log.warn('goalClock start falhou', { err: e.message }); }
+
   try { footballAlerts.start(); } catch (e) { log.warn('footballAlerts start falhou', { err: e.message }); }
   try { signalsEngine.start(); } catch (e) { log.warn('signalsEngine start falhou', { err: e.message }); }
   try {

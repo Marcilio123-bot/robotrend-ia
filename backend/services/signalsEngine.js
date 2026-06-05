@@ -26,6 +26,7 @@
 
 const events = require('./footballEvents');
 const metrics = require('./metrics');
+const goalClock = require('./goalClock');
 const { logger } = require('../logger');
 // history fica disponível para evolução futura (IA com base em snapshots)
 // const history = require('./footballHistory');
@@ -58,6 +59,16 @@ const OVER_GOALS_MIN_RATE  = Number(process.env.SIGNALS_OVER_GOALS_MIN_RATE || 0
 const OVER_GOALS_MIN_MIN   = Number(process.env.SIGNALS_OVER_GOALS_MIN_MINUTE || 25);
 const OVER_GOALS_MAX_MIN   = Number(process.env.SIGNALS_OVER_GOALS_MAX_MINUTE || 70);
 
+// Chutes no gol (shots on target) — detector ao vivo dedicado.
+const SOT_MIN_MINUTE       = Number(process.env.SIGNALS_SOT_MIN_MINUTE || 20);
+const SOT_MAX_MINUTE       = Number(process.env.SIGNALS_SOT_MAX_MINUTE || 85);
+const SOT_MIN_RATE         = Number(process.env.SIGNALS_SOT_MIN_RATE || 0.12);  // chutes no alvo/min (~11 em 90)
+const SOT_MIN_TOTAL        = Number(process.env.SIGNALS_SOT_MIN_TOTAL || 5);    // piso de chutes no alvo p/ evitar ruído
+
+// Supressão pós-gol (Problema 1): sinais de gol (btts-imminent / over-goals)
+// não disparam logo após um gol — seriam reativos, não preditivos. 0 desliga.
+const POST_GOAL_SUPPRESS_MS = Number(process.env.SIGNALS_POST_GOAL_SUPPRESS_MS || 120_000);
+
 // Threshold mínimo p/ entrar no Radar (frontend ainda pode subir)
 const RADAR_MIN_CONFIDENCE = Number(process.env.SIGNALS_RADAR_MIN_CONFIDENCE || 70);
 
@@ -87,6 +98,7 @@ const TYPE_TO_MARKETS = {
   'over-corners'     : [MARKET.CORNERS],
   'over-goals'       : [MARKET.GOALS],
   'cards-surge'      : [MARKET.CARDS],
+  'shots-surge'      : [MARKET.GOALS, MARKET.BTTS],
 };
 function marketsFor(type) { return TYPE_TO_MARKETS[type] || []; }
 
@@ -238,6 +250,11 @@ function onPressure({ match, pressure, delta }) {
  */
 function onBttsNear({ match, reason }) {
   if (!match) return;
+  // Supressão pós-gol: não anuncia "Ambas Marcam" logo depois de um gol.
+  if (POST_GOAL_SUPPRESS_MS > 0 && goalClock.hadRecentGoal(match.fixtureId, POST_GOAL_SUPPRESS_MS)) {
+    skip('post-goal-window', 'btts-imminent', match, { sinceGoalMs: goalClock.msSinceLastGoal(match.fixtureId) });
+    return;
+  }
   const min = n(match.minute);
   if (min < BTTS_MIN_MINUTE || min > BTTS_MAX_MINUTE) { skip('minute-range', 'btts-imminent', match, { minute: min, range: [BTTS_MIN_MINUTE, BTTS_MAX_MINUTE] }); return; }
   const sh = n(match.score?.home), sa = n(match.score?.away);
@@ -411,6 +428,11 @@ function onCard({ match, color }) {
 function onMatchUpdateGoals({ match }) {
   if (!match) return;
   if (!match.enriched) return;
+  // Supressão pós-gol: não emite "Over gols" reativo logo após um gol.
+  if (POST_GOAL_SUPPRESS_MS > 0 && goalClock.hadRecentGoal(match.fixtureId, POST_GOAL_SUPPRESS_MS)) {
+    skip('post-goal-window', 'over-goals', match, { sinceGoalMs: goalClock.msSinceLastGoal(match.fixtureId) });
+    return;
+  }
   const min = n(match.minute);
   if (min < OVER_GOALS_MIN_MIN || min > OVER_GOALS_MAX_MIN) return;
 
@@ -457,6 +479,67 @@ function onMatchUpdateGoals({ match }) {
   });
 }
 
+/**
+ * 7) ShotsOnTargetSurgeDetector (mercado: goals + btts)
+ *    Sinal AO VIVO baseado em CHUTES NO GOL (shots on target). Quando o ritmo
+ *    de finalizações no alvo é alto e sustentado, a probabilidade do próximo
+ *    gol sobe — sinal preditivo de Over / BTTS. Não dispara logo após um gol
+ *    (supressão pós-gol) para permanecer preditivo.
+ */
+function onMatchUpdateShots({ match }) {
+  if (!match) return;
+  if (!match.enriched) return;
+  const min = n(match.minute);
+  if (min < SOT_MIN_MINUTE || min > SOT_MAX_MINUTE) return;
+
+  // Supressão pós-gol — mantém o sinal preditivo (antes do próximo gol).
+  if (POST_GOAL_SUPPRESS_MS > 0 && goalClock.hadRecentGoal(match.fixtureId, POST_GOAL_SUPPRESS_MS)) {
+    skip('post-goal-window', 'shots-surge', match, { sinceGoalMs: goalClock.msSinceLastGoal(match.fixtureId) });
+    return;
+  }
+
+  const sotTotal = n(match.stats?.shotsOnTarget?.total);
+  const sotHome  = n(match.stats?.shotsOnTarget?.home);
+  const sotAway  = n(match.stats?.shotsOnTarget?.away);
+  if (sotTotal < SOT_MIN_TOTAL) { skip('below-min', 'shots-surge', match, { sotTotal, min: SOT_MIN_TOTAL }); return; }
+
+  const rate = min > 0 ? sotTotal / min : 0;
+  if (rate < SOT_MIN_RATE) { skip('rate-low', 'shots-surge', match, { rate: +rate.toFixed(3), min: SOT_MIN_RATE }); return; }
+
+  const key = `${match.id}:shots-surge`;
+  if (!canFire(key)) { skip('cooldown', 'shots-surge', match); return; }
+
+  // Lado mais ofensivo + confiança proporcional ao excesso de ritmo.
+  const side = sotHome >= sotAway ? 'home' : 'away';
+  const pressure = n(match.perMinute?.pressureIndex);
+  const confidence = clamp(
+    55 + Math.round((rate - SOT_MIN_RATE) * 180) + (pressure >= 50 ? 6 : 0) + (Math.min(sotHome, sotAway) >= 2 ? 6 : 0),
+    60, 95
+  );
+
+  fireSignal({
+    type: 'shots-surge',
+    matchId: match.fixtureId,
+    home: match.home, away: match.away,
+    league: match.league?.name,
+    minute: match.minute,
+    snapshot: {
+      score: match.score,
+      shotsOnTarget: sotTotal,
+      shotsOnTargetHome: sotHome,
+      shotsOnTargetAway: sotAway,
+      pressureIndex: pressure,
+    },
+    side,
+    rateSotPerMin: +rate.toFixed(3),
+    suggestion: `Chutes no gol em alta — ${sotTotal} no alvo (${(rate * 90).toFixed(1)}/90′). Gol/Over provável.`,
+    classification: { label: 'SHOTS-SURGE', emoji: '🎯' },
+    risk: { level: 'MED', emoji: '🟡', label: 'MÉDIO' },
+    confidence,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 /* ============================================================
    LIFECYCLE
    ============================================================ */
@@ -471,6 +554,7 @@ function start() {
   events.on('fixture:card',      onCard);
   events.on('match:update',      onMatchUpdate);
   events.on('match:update',      onMatchUpdateGoals);
+  events.on('match:update',      onMatchUpdateShots);
   log.info('signals engine ativo', {
     pressureMin: PRESSURE_MIN,
     pressureRamp: PRESSURE_RAMP_DELTA,
@@ -482,6 +566,8 @@ function start() {
     cardsWin: CARDS_WINDOW_MIN,
     cardsMin: CARDS_MIN_COUNT,
     overGoalsRate: OVER_GOALS_MIN_RATE,
+    sotMinRate: SOT_MIN_RATE,
+    postGoalSuppressMs: POST_GOAL_SUPPRESS_MS,
     radarMinConfidence: RADAR_MIN_CONFIDENCE,
   });
 }
@@ -493,6 +579,7 @@ function stop() {
   events.off('fixture:card',      onCard);
   events.off('match:update',      onMatchUpdate);
   events.off('match:update',      onMatchUpdateGoals);
+  events.off('match:update',      onMatchUpdateShots);
   started = false;
 }
 function snapshot() {
@@ -509,6 +596,8 @@ function snapshot() {
       overCorners: { minRate: OVER_CORNERS_MIN_RATE },
       cards:    { windowMin: CARDS_WINDOW_MIN, minCount: CARDS_MIN_COUNT, includeRed: CARDS_INCLUDE_RED },
       overGoals:{ minRate: OVER_GOALS_MIN_RATE, minMin: OVER_GOALS_MIN_MIN, maxMin: OVER_GOALS_MAX_MIN },
+      shots:    { minRate: SOT_MIN_RATE, minTotal: SOT_MIN_TOTAL, minMin: SOT_MIN_MINUTE, maxMin: SOT_MAX_MINUTE },
+      postGoalSuppressMs: POST_GOAL_SUPPRESS_MS,
     },
     activeCooldowns: cooldowns.size,
     cornerWindows: cornerWindow.size,

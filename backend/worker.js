@@ -43,6 +43,7 @@ async function main() {
   });
 
   await footballHistory.init();
+  require('./services/goalClock').start();
   footballAlerts.start();
   signalsEngine.start();
   quotaMonitor.start();

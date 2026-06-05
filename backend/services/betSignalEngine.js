@@ -49,6 +49,7 @@
 
 const events = require('./footballEvents');
 const metrics = require('./metrics');
+const goalClock = require('./goalClock');
 const { getPoller } = require('../workers/liveFootballPoller');
 const { logger } = require('../logger');
 
@@ -95,6 +96,16 @@ const MIN_MINUTE     = TEST_MODE ? 1    : Number(process.env.BET_SIGNAL_MIN_MINU
 const MAX_MINUTE     = TEST_MODE ? 120  : Number(process.env.BET_SIGNAL_MAX_MINUTE  || 85);
 const RECENT_MAX     = Number(process.env.BET_SIGNAL_RECENT_MAX      || 200);
 const DROPS_MAX      = Number(process.env.BET_SIGNAL_DROPS_MAX       || 100);
+
+// ============================================================
+// SUPRESSÃO PÓS-GOL (Problema 1 — "não quero sinais de BTTS / Over 2.5
+// depois que sai gol"). Logo após um gol, os mercados dependentes de gol
+// (btts / over25 / under25) ficam BLOQUEADOS por esta janela. O objetivo é
+// só emitir sinais PREDITIVOS (antes do próximo gol), nunca reativos ao gol
+// que acabou de sair. 0 desliga. Default 120s.
+const POST_GOAL_SUPPRESS_MS = Number(process.env.BET_SIGNAL_POST_GOAL_SUPPRESS_MS || 120_000);
+// Mercados que sofrem supressão pós-gol (gol altera diretamente o resultado).
+const GOAL_SENSITIVE_MARKETS = new Set(['btts', 'over25', 'under25']);
 
 // Janela em que a "melhor aposta do momento" continua válida (default 8min)
 const BEST_TTL_MS    = Number(process.env.BET_SIGNAL_BEST_TTL_MS     || 8 * 60_000);
@@ -165,6 +176,7 @@ const FUNNEL_KEYS = [
   'minute-out-of-range',
   'computed',              // passou os gates de match → entrou em compute*
   'compute-null',          // compute*Bet() retornou null (sem sinal candidato)
+  'post-goal-window',      // mercado de gol suprimido (gol recente — sinal seria reativo)
   'low-confidence',
   'odd-out-of-range',
   'cooldown',
@@ -1393,6 +1405,14 @@ function processMatch(m) {
   recordFunnel('computed');
   m_processed.inc();
 
+  // === Supressão pós-gol ====================================================
+  // Se um gol saiu há menos de POST_GOAL_SUPPRESS_MS, mercados dependentes de
+  // gol (btts / over25 / under25) ficam bloqueados: o sinal seria reativo ao
+  // gol que acabou de sair, não preditivo. Mercados de escanteio NÃO são
+  // afetados (gol não muda diretamente a projeção de escanteios).
+  const msSinceGoal = goalClock.msSinceLastGoal(m.fixtureId);
+  const postGoal = POST_GOAL_SUPPRESS_MS > 0 && msSinceGoal < POST_GOAL_SUPPRESS_MS;
+
   // === Mercados independentes (corners over/under + BTTS) ===
   const rawCandidates = [
     { market: 'corners',      fn: () => computeCornersBet(m)      }, // cornersOver
@@ -1427,6 +1447,27 @@ function processMatch(m) {
 
     if (PIPELINE_LOG) {
       console.log(`[LIVE PIPELINE] candidate ${market} | conf=${c.confidence} | prob=${c.probability} | odd=${c.oddEstimated} | ${c.prediction}`);
+    }
+
+    // Gate pós-gol — só para mercados dependentes de gol (btts/over25/under25).
+    if (postGoal && GOAL_SENSITIVE_MARKETS.has(c.market)) {
+      const secs = Math.round(msSinceGoal / 1000);
+      console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=DROP reason=post-goal-window sinceGoalMs=${msSinceGoal}`);
+      if (PIPELINE_LOG) console.log(`[LIVE PIPELINE] DROP post-goal-window | ${m.home} x ${m.away} | market=${c.market} | gol há ${secs}s (< ${Math.round(POST_GOAL_SUPPRESS_MS / 1000)}s) | pred=${c.prediction}`);
+      recordMarketFunnel(c.market, 'post-goal-window');
+      dropAndLog('post-goal-window', m, {
+        market: c.market,
+        sinceGoalMs: msSinceGoal,
+        windowMs: POST_GOAL_SUPPRESS_MS,
+        prediction: c.prediction,
+      });
+      decision = {
+        ...decision, result: 'DROP', reason: 'post-goal-window',
+        sinceGoalMs: msSinceGoal, confidence: c.confidence, odd: c.oddEstimated, prediction: c.prediction,
+      };
+      logDecision(decision);
+      tickDecisions.push(decision);
+      continue;
     }
 
     if (c.confidence < MIN_CONFIDENCE) {
@@ -1919,6 +1960,7 @@ function snapshot() {
     oddRange: { min: MIN_ODD, max: MAX_ODD },
     minuteRange: { min: MIN_MINUTE, max: MAX_MINUTE },
     cooldownMs: COOLDOWN_MS,
+    postGoalSuppressMs: POST_GOAL_SUPPRESS_MS,
     freeDelayMs: FREE_DELAY_MS,
     bestTtlMs: BEST_TTL_MS,
     activeCooldowns: cooldowns.size,
@@ -2021,7 +2063,7 @@ function buildHints(breakdown) {
  */
 // Motivos de drop sempre presentes na resposta por mercado (default 0).
 // 'market-conflict' / 'lower-probability' aplicam-se ao par de gols (Over/Under).
-const MARKET_DROP_KEYS = ['compute-null', 'low-confidence', 'odd-out-of-range', 'cooldown', 'market-conflict', 'lower-probability', 'already-emitted', 'opposite-market-already-emitted'];
+const MARKET_DROP_KEYS = ['compute-null', 'post-goal-window', 'low-confidence', 'odd-out-of-range', 'cooldown', 'market-conflict', 'lower-probability', 'already-emitted', 'opposite-market-already-emitted'];
 function normalizeMarketEntry(src) {
   const drops = {};
   for (const r of MARKET_DROP_KEYS) drops[r] = (src?.drops?.[r]) || 0;
@@ -2132,6 +2174,7 @@ module.exports = {
     MIN_MINUTE,
     MAX_MINUTE,
     COOLDOWN_MS,
+    POST_GOAL_SUPPRESS_MS,
   },
   _internals: {
     computeCornersBet, computeCornersUnderBet, computeBttsBet,

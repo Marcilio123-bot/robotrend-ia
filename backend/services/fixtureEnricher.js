@@ -42,7 +42,20 @@ const { logger }  = require('../logger');
 const log = logger.child({ module: 'fixtureEnricher' });
 
 const ENABLED            = String(process.env.ENRICH_ENABLED || 'true').toLowerCase() !== 'false';
-const REFRESH_MS         = Number(process.env.ENRICH_REFRESH_MS || 30 * 60_000); // 30min default
+const REFRESH_MS         = Number(process.env.ENRICH_REFRESH_MS || 30 * 60_000); // 30min default (jogos fora da janela ativa)
+// ============================================================
+// REFRESH AO VIVO (Problema 1 — sinais atrasados).
+// Para jogos ao vivo dentro da janela de sinais, as estatísticas (escanteios,
+// chutes no gol, cartões, posse) precisam estar FRESCAS — senão os sinais são
+// calculados sobre dados de até 30min atrás e chegam DEPOIS do evento.
+// LIVE_REFRESH_MS (default 2min) reduz drasticamente essa defasagem.
+// ⚠️ CUSTO DE QUOTA: cada refresh = 2 calls (stats+events). N jogos a cada
+// LIVE_REFRESH_MS. Em plano free/limitado, suba o valor (ex.: 300000=5min) ou
+// reduza ENRICH_QUEUE_MAX. Em safe-mode o enricher pausa automaticamente.
+// ============================================================
+const LIVE_REFRESH_MS    = Number(process.env.ENRICH_LIVE_REFRESH_MS || 120_000);          // 2min p/ jogos ao vivo
+const LIVE_REFRESH_MIN_MINUTE = Number(process.env.ENRICH_LIVE_REFRESH_MIN_MINUTE || 1);
+const LIVE_REFRESH_MAX_MINUTE = Number(process.env.ENRICH_LIVE_REFRESH_MAX_MINUTE || 88);
 const TICK_MS            = Number(process.env.ENRICH_TICK_MS || 15_000);         // checa pendências a cada 15s
 const MAX_PER_TICK       = Number(process.env.ENRICH_MAX_PER_TICK || 8);
 const AUTO_TOP           = Number(process.env.ENRICH_AUTO_TOP ?? 12);            // top-N no boot
@@ -89,6 +102,21 @@ class FixtureEnricher {
   /** Injeta o poller (precisamos do cache de matches para mesclar enrichment). */
   setPoller(poller) { this.poller = poller; }
 
+  /**
+   * Intervalo de refresh aplicável a UMA fixture.
+   * Jogos ao vivo dentro da janela ativa usam LIVE_REFRESH_MS (rápido, p/ que
+   * os sinais sejam preditivos); o resto usa REFRESH_MS (lento, economiza quota).
+   */
+  _refreshMsFor(match) {
+    if (!match) return REFRESH_MS;
+    const min = Number(match.minute || 0);
+    const isLive = match.flags?.isLive || (match.status && !match.flags?.isFinished);
+    if (isLive && min >= LIVE_REFRESH_MIN_MINUTE && min <= LIVE_REFRESH_MAX_MINUTE) {
+      return LIVE_REFRESH_MS;
+    }
+    return REFRESH_MS;
+  }
+
   /** Injeta uma função que devolve a lista de fixtureIds subscritos. */
   setSubscriberSource(fn) { this.getSubscribers = fn; }
 
@@ -100,8 +128,8 @@ class FixtureEnricher {
     }
     if (this.running) return;
     this.running = true;
-    log.info('enricher started', { refreshMs: REFRESH_MS, tickMs: TICK_MS, maxPerTick: MAX_PER_TICK, autoTop: AUTO_TOP });
-    console.log(`[STATS FETCH] ENABLED — enricher started, top=${AUTO_TOP} pollerTop=${POLLER_ENRICH_TOP} refresh=${REFRESH_MS}ms tick=${TICK_MS}ms`);
+    log.info('enricher started', { refreshMs: REFRESH_MS, liveRefreshMs: LIVE_REFRESH_MS, tickMs: TICK_MS, maxPerTick: MAX_PER_TICK, autoTop: AUTO_TOP });
+    console.log(`[STATS FETCH] ENABLED — enricher started, top=${AUTO_TOP} pollerTop=${POLLER_ENRICH_TOP} refresh=${REFRESH_MS}ms liveRefresh=${LIVE_REFRESH_MS}ms tick=${TICK_MS}ms`);
     this.timer = setInterval(() => this.tick().catch((e) => log.warn('tick error', { err: e.message })), TICK_MS);
     if (typeof this.timer.unref === 'function') this.timer.unref();
 
@@ -133,6 +161,7 @@ class FixtureEnricher {
       enabled: ENABLED,
       running: this.running,
       refreshMs: REFRESH_MS,
+      liveRefreshMs: LIVE_REFRESH_MS,
       tickMs: TICK_MS,
       maxPerTick: MAX_PER_TICK,
       includeEvents: INCLUDE_EVENTS,
@@ -239,7 +268,7 @@ class FixtureEnricher {
     const needsFullApi = !cached?.enriched || cached?.enrichedPartial;
     if (!force && !needsFullApi) {
       const last = this.lastEnrichedAt.get(id) || 0;
-      if (Date.now() - last < REFRESH_MS) {
+      if (Date.now() - last < this._refreshMsFor(cached)) {
         this.stats.skipped++;
         m_skip.inc(1, { reason: 'cooldown' });
         return { ok: true, skipped: true, reason: 'cooldown' };
@@ -296,7 +325,8 @@ class FixtureEnricher {
       const match = this.poller?.getMatch?.(id);
       const needsFull = !match?.enriched || match?.enrichedPartial;
       const last = this.lastEnrichedAt.get(String(id)) || 0;
-      if (needsFull || now - last >= REFRESH_MS) {
+      const refreshMs = this._refreshMsFor(match);
+      if (needsFull || now - last >= refreshMs) {
         pending.push(String(id));
       }
     }
