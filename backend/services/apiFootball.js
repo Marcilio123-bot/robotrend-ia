@@ -504,6 +504,9 @@ async function rawGet(endpoint, params, attempt = 1) {
   await acquireSlot();
   m_calls.inc(1, { endpoint });
   m_calls_window.hit();
+  // Telemetria de consumo real (1 crédito = 1 chamada de rede). Conta também
+  // retries, pois cada retry gasta crédito. Nunca lança.
+  try { require('./apiUsageTracker').record(endpoint, params); } catch (_) {}
   const t0 = Date.now();
   let response;
   try {

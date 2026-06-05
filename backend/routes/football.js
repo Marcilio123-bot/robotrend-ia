@@ -1821,6 +1821,98 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     res.json({ ok: true, enricher: getEnricher().snapshot() });
   });
 
+  /* ============================================================
+     MONITOR DE CONSUMO DA API-FOOTBALL (admin)
+     GET /api/admin/api-usage
+     Números REAIS de créditos gastos (1 chamada de rede = 1 crédito),
+     atribuídos por fonte (poller/enricher/rotas), com séries para gráfico
+     e relatório de projeção/risco. ZERO chamada à API (só leitura).
+     ============================================================ */
+  app.get('/api/admin/api-usage', requireAuth(db), requireAdmin, (req, res) => {
+    noStore(res);
+
+    let usage;
+    try { usage = require('../services/apiUsageTracker').snapshot(); }
+    catch (e) { usage = { error: e.message, callsToday: 0, callsLastHour: 0, byEndpoint: [], charts: { hourly: [], daily: [] }, avgDaily: 0, todayProjected: 0 }; }
+
+    const status = af.status?.() || {};
+    const quota = status.quota || {};
+    const perDay  = status.rateLimit?.perDay ?? null;
+    const dayUsed = status.rateLimit?.dayUsed ?? null;
+
+    // Limite/restante: prioriza headers oficiais da API; cai pro rate-limiter local.
+    const dailyLimit = quota.dailyLimit ?? perDay ?? null;
+    const dailyRemaining = quota.dailyRemaining
+      ?? (perDay != null && dayUsed != null ? Math.max(0, perDay - dayUsed) : null);
+    const creditsConsumed = (dailyLimit != null && dailyRemaining != null)
+      ? (dailyLimit - dailyRemaining)
+      : (dayUsed ?? usage.callsToday);
+
+    // Jogos monitorados (cache do poller) + fila do enricher.
+    let gamesMonitored = 0;
+    try { gamesMonitored = (poller.getMatches?.() || []).length; } catch (_) {}
+    let enricherSnap = null;
+    try { enricherSnap = getEnricher().snapshot(); } catch (_) {}
+
+    // === Relatório: média diária, projeção mensal, risco ===
+    const basis = Math.max(usage.avgDaily || 0, usage.todayProjected || 0);
+    const monthlyProjection = Math.round(basis * 30);
+    let riskLevel = 'BAIXO';
+    let riskRatio = null;
+    if (dailyLimit && dailyLimit > 0) {
+      riskRatio = +(basis / dailyLimit).toFixed(2);
+      if (riskRatio >= 0.9) riskLevel = 'CRÍTICO';
+      else if (riskRatio >= 0.7) riskLevel = 'ALTO';
+      else if (riskRatio >= 0.5) riskLevel = 'MODERADO';
+      else riskLevel = 'BAIXO';
+    }
+
+    res.json({
+      ok: true,
+      // KPIs principais
+      callsToday: usage.callsToday,
+      callsLastHour: usage.callsLastHour,
+      byEndpoint: usage.byEndpoint,
+      credits: {
+        limit: dailyLimit,
+        consumed: creditsConsumed,
+        remaining: dailyRemaining,
+        source: quota.dailyLimit != null ? 'api-headers' : 'rate-limiter-local',
+      },
+      gamesMonitored,
+      consumption: {
+        poller:   usage.pollerToday,
+        enricher: usage.enricherToday,
+        route:    usage.routeToday,
+        other:    usage.otherToday,
+        bySource: usage.todayBySource,
+      },
+      // Gráficos
+      charts: usage.charts,
+      // Relatório
+      report: {
+        avgDaily: usage.avgDaily,
+        todayProjected: usage.todayProjected,
+        monthlyProjection,
+        riskLevel,
+        riskRatio,
+        completeDaysSampled: usage.completeDaysSampled,
+      },
+      // Telemetria auxiliar
+      safeMode: af.isSafeMode?.() || false,
+      breaker: status.breaker?.state || null,
+      enricher: enricherSnap ? {
+        running: enricherSnap.running,
+        liveRefreshMs: enricherSnap.liveRefreshMs,
+        includeEvents: enricherSnap.includeEvents,
+        systemQueue: enricherSnap.systemQueue,
+        tracked: enricherSnap.tracked,
+      } : null,
+      totalSinceBoot: usage.totalSinceBoot,
+      generatedAt: usage.generatedAt,
+    });
+  });
+
   // Pipeline SYSTEM — ZERO auth no mount (token inválido não pode quebrar bootstrap).
   app.use('/api/football', router);
 }

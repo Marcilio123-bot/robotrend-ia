@@ -130,6 +130,49 @@
           </div>
         </div>
 
+        <!-- Consumo API-Football -->
+        <div class="card col-12" id="api-usage-card">
+          <h2>Consumo API-Football</h2>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:14px">
+            <div><div class="lbl-mini">Chamadas hoje</div><div class="big" id="usage-today">—</div></div>
+            <div><div class="lbl-mini">Última hora</div><div class="big" id="usage-hour">—</div></div>
+            <div><div class="lbl-mini">Créditos consumidos</div><div class="big" id="usage-consumed">—</div></div>
+            <div><div class="lbl-mini">Créditos restantes</div><div class="big" id="usage-remaining">—</div></div>
+            <div><div class="lbl-mini">Jogos monitorados</div><div class="big" id="usage-games">—</div></div>
+            <div><div class="lbl-mini">Poller (hoje)</div><div class="big" id="usage-poller">—</div></div>
+            <div><div class="lbl-mini">Enricher (hoje)</div><div class="big" id="usage-enricher">—</div></div>
+            <div><div class="lbl-mini">Rotas (hoje)</div><div class="big" id="usage-route">—</div></div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+            <div>
+              <div class="lbl-mini" style="margin-bottom:6px">Consumo por hora (últimas 24h)</div>
+              <div id="usage-chart-hourly" style="width:100%"></div>
+            </div>
+            <div>
+              <div class="lbl-mini" style="margin-bottom:6px">Consumo por dia (últimos 30 dias)</div>
+              <div id="usage-chart-daily" style="width:100%"></div>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px">
+            <div>
+              <div class="lbl-mini" style="margin-bottom:6px">Chamadas por endpoint (acumulado)</div>
+              <table class="met"><tbody id="usage-endpoints"><tr><td colspan="2" style="color:var(--muted)">aguardando…</td></tr></tbody></table>
+            </div>
+            <div>
+              <div class="lbl-mini" style="margin-bottom:6px">Relatório</div>
+              <table class="met">
+                <tr><td>Consumo médio diário</td><td id="usage-avg">—</td></tr>
+                <tr><td>Projeção (hoje → 24h)</td><td id="usage-proj-today">—</td></tr>
+                <tr><td>Projeção mensal</td><td id="usage-monthly">—</td></tr>
+                <tr><td>Risco de atingir o limite</td><td id="usage-risk">—</td></tr>
+              </table>
+              <div id="usage-risk-note" style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Cache + memória -->
         <div class="card col-4">
           <h2>Cache Store</h2>

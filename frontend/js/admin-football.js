@@ -179,6 +179,7 @@
 
   async function tick() {
     if (paused) return;
+    loadApiUsage();
     try {
       const [diag, met] = await Promise.all([
         api('/api/football/diagnostics'),
@@ -249,6 +250,87 @@
       renderLeagueFilter(data);
     } catch (e) {
       console.warn('league-filter load falhou', e.message);
+    }
+  }
+
+  // ============================================================
+  // Consumo API-Football (monitor de créditos)
+  // ============================================================
+  /** Gráfico de barras responsivo (sem dependências) com tooltip por hover. */
+  function barChart(el, data, { color = '#14b85e', valueKey = 'total', labelKey = 'label', maxLabels = 8 } = {}) {
+    if (!el) return;
+    const vals = (data || []).map((d) => Number(d[valueKey]) || 0);
+    const max = Math.max(1, ...vals);
+    const n = (data || []).length || 1;
+    const step = Math.max(1, Math.ceil(n / maxLabels));
+    const bars = (data || []).map((d, i) => {
+      const v = Number(d[valueKey]) || 0;
+      const pct = Math.round((v / max) * 100);
+      const showLabel = (i % step === 0) || i === n - 1;
+      return `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:0">
+        <div title="${escapeHtml(d[labelKey])}: ${v}" style="width:78%;height:${pct}%;min-height:1px;background:${color};border-radius:2px 2px 0 0"></div>
+        <div style="font-size:8px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;max-width:100%">${showLabel ? escapeHtml(d[labelKey]) : ''}</div>
+      </div>`;
+    }).join('');
+    el.innerHTML = `<div style="display:flex;align-items:flex-end;gap:2px;height:110px">${bars}</div>`;
+  }
+
+  function riskClass(level) {
+    if (level === 'CRÍTICO' || level === 'ALTO') return 'neg';
+    if (level === 'MODERADO') return 'warn';
+    return 'pos';
+  }
+
+  async function loadApiUsage() {
+    try {
+      const d = await api('/api/admin/api-usage');
+      if (!d || !d.ok) return;
+      $('#usage-today').textContent = fmt(d.callsToday);
+      $('#usage-hour').textContent = fmt(d.callsLastHour);
+      $('#usage-consumed').textContent = fmt(d.credits?.consumed);
+      const rem = d.credits?.remaining;
+      const remEl = $('#usage-remaining');
+      if (remEl) {
+        remEl.textContent = rem == null ? '—' : fmt(rem);
+        const low = rem != null && d.credits?.limit && (rem / d.credits.limit) < 0.2;
+        remEl.className = 'big ' + (low ? 'neg' : 'pos');
+      }
+      $('#usage-games').textContent = fmt(d.gamesMonitored);
+      $('#usage-poller').textContent = fmt(d.consumption?.poller);
+      $('#usage-enricher').textContent = fmt(d.consumption?.enricher);
+      $('#usage-route').textContent = fmt(d.consumption?.route);
+
+      barChart($('#usage-chart-hourly'), d.charts?.hourly || [], { color: '#06b6d4', maxLabels: 8 });
+      barChart($('#usage-chart-daily'), d.charts?.daily || [], { color: '#a855f7', maxLabels: 10 });
+
+      const ep = $('#usage-endpoints');
+      if (ep) {
+        const rows = (d.byEndpoint || []).slice(0, 8)
+          .map((e) => `<tr><td>${escapeHtml(e.endpoint)}</td><td>${fmt(e.count)}</td></tr>`).join('');
+        ep.innerHTML = rows || '<tr><td colspan="2" style="color:var(--muted)">sem chamadas ainda</td></tr>';
+      }
+
+      $('#usage-avg').textContent = fmt(d.report?.avgDaily);
+      $('#usage-proj-today').textContent = fmt(d.report?.todayProjected);
+      $('#usage-monthly').textContent = fmt(d.report?.monthlyProjection);
+      const riskEl = $('#usage-risk');
+      if (riskEl) {
+        const lvl = d.report?.riskLevel || '—';
+        const pctTxt = d.report?.riskRatio != null ? ` (${Math.round(d.report.riskRatio * 100)}% do limite/dia)` : '';
+        riskEl.textContent = lvl + pctTxt;
+        riskEl.className = riskClass(lvl);
+      }
+      const note = $('#usage-risk-note');
+      if (note) {
+        const limit = d.credits?.limit;
+        const base = Math.max(d.report?.avgDaily || 0, d.report?.todayProjected || 0);
+        note.textContent = limit
+          ? `Limite do plano: ${fmt(limit)}/dia. Base de cálculo: ${fmt(base)}/dia (média de ${d.report?.completeDaysSampled || 0} dia(s) completo(s) vs run-rate de hoje).` +
+            (d.safeMode ? ' ⚠️ SAFE-MODE ATIVO — enricher pausado para poupar quota.' : '')
+          : 'Limite do plano ainda não reportado pela API — usando rate-limiter local.';
+      }
+    } catch (e) {
+      console.warn('api-usage load falhou', e.message);
     }
   }
 
