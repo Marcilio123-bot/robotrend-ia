@@ -106,6 +106,30 @@
           <div class="lbl-mini" id="kpi-sockets-sub">—</div>
         </div>
 
+        <!-- Filtro de ligas populares (Bet365) -->
+        <div class="card col-12">
+          <h2>Filtro de Sinais · Ligas Populares (Bet365)</h2>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+            <div style="flex:1;min-width:260px">
+              <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+                <input type="checkbox" id="league-filter-toggle" style="width:18px;height:18px;accent-color:#14b85e;cursor:pointer">
+                <span style="font-size:14px;font-weight:700;color:var(--text)">Mostrar apenas ligas populares da Bet365</span>
+              </label>
+              <p style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5">
+                Quando ATIVADO (padrão), o sistema exibe jogos e gera sinais somente para campeonatos
+                populares e amplamente disponíveis na Bet365 (Brasileirão, Premier League, La Liga,
+                Champions, Libertadores, etc.). Amistosos, categorias de base (U21/Sub-17), times B,
+                reservas e divisões inferiores são ignorados.
+              </p>
+              <div id="league-filter-state" style="font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--muted);margin-top:6px">—</div>
+            </div>
+            <div style="min-width:220px">
+              <div class="lbl-mini" style="margin-bottom:6px">Competições permitidas (<span id="league-filter-count">—</span>)</div>
+              <div id="league-filter-list" style="display:flex;flex-wrap:wrap;gap:4px;max-height:140px;overflow:auto"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Cache + memória -->
         <div class="card col-4">
           <h2>Cache Store</h2>

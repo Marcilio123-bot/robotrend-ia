@@ -36,6 +36,7 @@ const {
   statusGroup,
   matchDebugFields,
 } = require('../services/liveMatchFilter');
+const leagueWhitelist = require('../services/leagueWhitelist');
 const { logger }  = require('../logger');
 
 const log = logger.child({ module: 'liveFootballPoller' });
@@ -84,7 +85,7 @@ const INTERVAL_MS         = Number(process.env.FOOTBALL_POLL_INTERVAL_MS || DEFA
 
 // Filtro de ligas excluídas (amador, categoria de base, reservas, feminino).
 // Comparação case-insensitive contra league.name e league.country.
-const EXCLUDE_LEAGUE_TOKENS = (process.env.FOOTBALL_EXCLUDE_LEAGUES || 'Reserve,Women,U23,U21,U20,U19,U17,U16,Amateur,Kreisliga,2e Klasse,Bezirksliga,Youth')
+const EXCLUDE_LEAGUE_TOKENS = (process.env.FOOTBALL_EXCLUDE_LEAGUES || 'Reserve,Women,U23,U21,U20,U19,U18,U17,U16,Amateur,Kreisliga,2e Klasse,Bezirksliga,Youth')
   .split(',')
   .map((s) => s.trim().toLowerCase())
   .filter(Boolean);
@@ -501,7 +502,29 @@ class LiveFootballPoller {
    * Sempre filtra FT/NS antigos — evita vazar jogos encerrados para REST/WS.
    */
   getMatches() {
-    return Array.from(this.cache.values()).filter((m) => isLiveMatch(m));
+    return Array.from(this.cache.values())
+      .filter((m) => isLiveMatch(m) && leagueWhitelist.shouldAllow(m));
+  }
+
+  /**
+   * Remove do cache jogos fora da whitelist (chamado quando o filtro
+   * "somente ligas populares" é LIGADO em runtime pelo painel admin).
+   * Sem efeito quando o filtro está desligado.
+   */
+  purgeNonWhitelisted(reason = 'whitelist-toggle') {
+    if (!leagueWhitelist.isPopularOnly()) return [];
+    const removed = [];
+    for (const [id, m] of this.cache) {
+      if (leagueWhitelist.shouldAllow(m)) continue;
+      this.cache.delete(id);
+      this._missCounts.delete(id);
+      removed.push({ id, league: m?.league?.name, country: m?.league?.country });
+      try { events.emit('match:remove', { matchId: id, match: m }); } catch (_) {}
+    }
+    if (removed.length && LINGER_LOG) {
+      console.warn(`[LIVE WHITELIST] ${removed.length} removido(s) do cache (${reason})`, removed.slice(0, 12));
+    }
+    return removed;
   }
 
   getLastFeedCompare() {
@@ -582,9 +605,13 @@ class LiveFootballPoller {
       const priorityFiltered = PRIORITY_ONLY
         ? noBlacklist.filter((m) => isPriorityLeague(m))
         : noBlacklist;
+      // WHITELIST RÍGIDA: quando "somente ligas populares" está ATIVO, só passam
+      // competições da whitelist (Brasileirão, PL, La Liga, Champions, etc.).
+      // Quando desativado, libera todas (comportamento legado).
+      const whitelisted = priorityFiltered.filter((m) => leagueWhitelist.shouldAllow(m));
       // FILTRO ESTRITO DE STATUS: só matches realmente ao vivo passam.
       // FT/AET/PEN/Finished/etc. são descartados — não entram no cache.
-      const matches = priorityFiltered.filter((m) => isLiveMatch(m));
+      const matches = whitelisted.filter((m) => isLiveMatch(m));
 
       // Marca origem da API-Football em cada match. Como a única fonte é
       // a API-Sports paga, dataQuality é sempre 'full' (stats avançadas).
@@ -599,8 +626,10 @@ class LiveFootballPoller {
           before: beforeFilter.length,
           afterBlacklist: noBlacklist.length,
           afterPriority: priorityFiltered.length,
+          afterWhitelist: whitelisted.length,
           afterLiveStatus: matches.length,
           priorityOnly: PRIORITY_ONLY,
+          popularOnly: leagueWhitelist.isPopularOnly(),
         });
       }
 
@@ -620,7 +649,13 @@ class LiveFootballPoller {
           .filter((m) => !isPriorityLeague(m))
           .slice(0, 8)
           .map((m) => ({ id: m.id, league: m?.league?.name, country: m?.league?.country }));
-        const notLive = priorityFiltered
+        const notWhitelisted = leagueWhitelist.isPopularOnly()
+          ? priorityFiltered
+            .filter((m) => !leagueWhitelist.shouldAllow(m))
+            .slice(0, 8)
+            .map((m) => ({ id: m.id, league: m?.league?.name, country: m?.league?.country }))
+          : [];
+        const notLive = whitelisted
           .filter((m) => !isLiveMatch(m))
           .slice(0, 8)
           .map(matchDebugFields);
@@ -630,9 +665,10 @@ class LiveFootballPoller {
           afterFilter: matches.length,
           provider: providerName,
           priorityOnly: PRIORITY_ONLY,
+          popularOnly: leagueWhitelist.isPopularOnly(),
           ids: matches.slice(0, 8).map((m) => String(m.id)),
           statuses: matches.slice(0, 8).map((m) => ({ id: String(m.id), status: m.status, minute: m.minute })),
-          reasons: { excluded, notPriority, notLive },
+          reasons: { excluded, notPriority, notWhitelisted, notLive },
         });
       }
       this._lastDebugSnapshot = {
@@ -641,8 +677,10 @@ class LiveFootballPoller {
         beforeFilter: beforeFilter.length,
         afterBlacklist: noBlacklist.length,
         afterPriority: priorityFiltered.length,
+        afterWhitelist: whitelisted.length,
         afterLiveStatus: matches.length,
         priorityOnly: PRIORITY_ONLY,
+        popularOnly: leagueWhitelist.isPopularOnly(),
       };
       // Log estruturado por match LIVE (verbose=true para debug)
       if (process.env.FOOTBALL_LIVE_VERBOSE === 'true') {
@@ -845,27 +883,31 @@ class LiveFootballPoller {
         normalizedCount: beforeFilter.length,
         afterBlacklist: noBlacklist.length,
         afterPriority: priorityFiltered.length,
+        afterWhitelist: whitelisted.length,
         liveAfterFilter: matches.length,
         cacheSize: this.cache.size,
         restGetMatchesCount: liveInCache.length,
         purgedByBlacklist: beforeFilter.length - noBlacklist.length,
         purgedByPriority: PRIORITY_ONLY ? (noBlacklist.length - priorityFiltered.length) : 0,
-        purgedByLiveStatus: priorityFiltered.length - matches.length,
+        purgedByWhitelist: priorityFiltered.length - whitelisted.length,
+        purgedByLiveStatus: whitelisted.length - matches.length,
         fromStale: !!fromStale,
         purgedPre: purgedPre.length,
         purgedPost: purgedPost.length,
         fallbackReason: fallbackReason || null,
         priorityOnly: PRIORITY_ONLY,
+        popularOnly: leagueWhitelist.isPopularOnly(),
         excludeTokens: EXCLUDE_LEAGUE_TOKENS,
       };
 
       // [POLLER FUNNEL] — único log unificado mostrando o caminho completo:
-      // API → blacklist → priority → liveStatus → cache → getMatches
+      // API → blacklist → priority → whitelist → liveStatus → cache → getMatches
       console.log(
         `[POLLER FUNNEL] apiRaw=${apiRawCount} normalized=${beforeFilter.length} ` +
         `→blacklist=${noBlacklist.length} (cut=${beforeFilter.length - noBlacklist.length}) ` +
         `→priority=${priorityFiltered.length} (cut=${PRIORITY_ONLY ? (noBlacklist.length - priorityFiltered.length) : 0}, ONLY=${PRIORITY_ONLY}) ` +
-        `→liveStatus=${matches.length} (cut=${priorityFiltered.length - matches.length}) ` +
+        `→whitelist=${whitelisted.length} (cut=${priorityFiltered.length - whitelisted.length}, ONLY=${leagueWhitelist.isPopularOnly()}) ` +
+        `→liveStatus=${matches.length} (cut=${whitelisted.length - matches.length}) ` +
         `→cache=${this.cache.size} →getMatches=${liveInCache.length} ` +
         `${fromStale ? '[FROM_STALE]' : ''}${fallbackReason ? '[FB:' + fallbackReason + ']' : ''}`
       );

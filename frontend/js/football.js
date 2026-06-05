@@ -1885,7 +1885,7 @@
     return `
       <article class="sig-mini-card" data-mid="${escapeHtml(String(m.id))}">
         <header>
-          <span class="lg">${escapeHtml(m.league?.name || '')}</span>
+          <span class="lg">${escapeHtml(m.league?.fullName || m.league?.name || '')}</span>
           <span class="mn">${m.minute || 0}'</span>
         </header>
         <div class="tt">
@@ -1945,7 +1945,7 @@
           <span class="score">${m.score?.home ?? 0}–${m.score?.away ?? 0}</span>
           <span class="min">${m.minute || 0}'</span>
         </div>
-        <div class="sig-league">${escapeHtml(m.league || '')}${m.country ? ` · ${escapeHtml(m.country)}` : ''}</div>
+        <div class="sig-league">${m.leagueFull ? escapeHtml(m.leagueFull) : `${escapeHtml(m.league || '')}${m.country ? ` · ${escapeHtml(m.country)}` : ''}`}</div>
         ${projHtml}
         <div class="sig-reason">${escapeHtml(s.reasoning || '')}</div>
         <div class="sig-conf-bar"><div style="width:${s.confidence}%"></div></div>
@@ -2100,7 +2100,7 @@
         <div class="teams">
           <div class="row"><span class="name ${winHome ? 'winning' : ''}">${escapeHtml(m.home)}</span><span class="score">${m.score.home}</span></div>
           <div class="row"><span class="name ${winAway ? 'winning' : ''}">${escapeHtml(m.away)}</span><span class="score">${m.score.away}</span></div>
-          <div style="font-size:10px;color:var(--muted);margin-top:2px">${escapeHtml(m.league?.name || '')} ${sourceBadge} ${partialBadge}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${escapeHtml(m.league?.fullName || m.league?.name || '')} ${sourceBadge} ${partialBadge}</div>
         </div>
         <div class="stats" data-stats="${id}" title="🚩 escanteios · ⚡ ataques perigosos · 🔥 pressão · 🎯 BTTS likelihood">
           ${cardStatsHTML(m)}
@@ -2224,7 +2224,7 @@
       <div class="fb-detail-h">
         <div>
           <div style="font-weight:800;font-size:14px">${escapeHtml(m.home)} <span style="color:var(--muted)">vs</span> ${escapeHtml(m.away)}</div>
-          <div style="font-size:11px;color:var(--muted)">${escapeHtml(m.league?.name || '')} · ${escapeHtml(m.league?.country || '')}</div>
+          <div style="font-size:11px;color:var(--muted)">${m.league?.fullName ? escapeHtml(m.league.fullName) : `${escapeHtml(m.league?.name || '')} · ${escapeHtml(m.league?.country || '')}`}</div>
         </div>
         <div style="text-align:right">
           <div style="font-family:'JetBrains Mono',monospace;font-weight:800;font-size:22px;color:var(--text)">${m.score.home} : ${m.score.away}</div>
@@ -2336,7 +2336,7 @@
           <div class="fb-tl-row" style="grid-template-columns:60px 1fr 60px">
             <div class="min" style="font-size:10px">${(fx.kickoffAt || fx.date || '').slice(0,10)}</div>
             <div class="desc"><strong>${escapeHtml(fx.home)}</strong> ${fx.score?.home}-${fx.score?.away} <strong>${escapeHtml(fx.away)}</strong></div>
-            <div class="min" style="font-size:10px;color:var(--muted);text-align:right">${escapeHtml(fx.league?.name || '')}</div>
+            <div class="min" style="font-size:10px;color:var(--muted);text-align:right">${escapeHtml(fx.league?.fullName || fx.league?.name || '')}</div>
           </div>
         `).join('');
       }).catch(() => { $('#h2h-container').innerHTML = '<div class="fb-empty">erro ao carregar H2H</div>'; });

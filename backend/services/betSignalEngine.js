@@ -50,6 +50,7 @@
 const events = require('./footballEvents');
 const metrics = require('./metrics');
 const goalClock = require('./goalClock');
+const leagueWhitelist = require('./leagueWhitelist');
 const { getPoller } = require('../workers/liveFootballPoller');
 const { logger } = require('../logger');
 
@@ -171,6 +172,7 @@ function markMarketEmitted(fixtureId, marketKey) {
 const FUNNEL_KEYS = [
   'input',                 // matches recebidos do poller
   'no-match',              // m falsy
+  'not-whitelisted',       // liga fora da whitelist (filtro de ligas populares)
   'not-enriched',          // !m.enriched
   'no-stats',              // !m.stats
   'minute-out-of-range',
@@ -228,6 +230,7 @@ function matchHeader(m) {
     home: m.home,
     away: m.away,
     league: m.league?.name || m.league,
+    leagueFull: m.league?.fullName || leagueWhitelist.fullName(m.league),
     country: m.league?.country,
     minute: m.minute,
     status: m.status,
@@ -1179,6 +1182,7 @@ function buildSignal(m, c) {
     home: header.home,
     away: header.away,
     league: header.league,
+    leagueFull: header.leagueFull,
     minute: header.minute,
     score: header.score,
     suggestion: c.prediction,
@@ -1330,6 +1334,13 @@ function processMatch(m) {
   recordFunnel('input');
 
   if (!m) { dropAndLog('no-match', m); return; }
+
+  // Whitelist de ligas populares: quando o filtro está ATIVO, nenhum sinal é
+  // gerado para competições fora da whitelist (Brasileirão, PL, Champions...).
+  if (!leagueWhitelist.shouldAllow(m)) {
+    dropAndLog('not-whitelisted', m, { league: m?.league?.name, country: m?.league?.country });
+    return;
+  }
 
   const matchHead = `[LIVE PIPELINE] match id=${m.fixtureId || m.id} ${m.home} x ${m.away} ${n(m.score?.home)}-${n(m.score?.away)} (${n(m.minute)}′)`;
   const advanced = hasAdvancedStats(m);

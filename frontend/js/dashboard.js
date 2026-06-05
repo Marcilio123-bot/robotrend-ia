@@ -111,7 +111,7 @@
       id: String(m.fixtureId || m.id),
       home: m.home || m.teams?.home?.name || '—',
       away: m.away || m.teams?.away?.name || '—',
-      league: m.league?.name || m.league || 'Live',
+      league: m.league?.fullName || m.league?.name || m.league || 'Live',
       minute: Number(m.minute || m.fixture?.status?.elapsed || 0),
       status: m.status || m.fixture?.status?.short || 'LIVE',
       kickoffAt: m.kickoffAt || m.date || m.fixture?.date,
@@ -540,7 +540,7 @@
       ? `${s.match.home} × ${s.match.away}`
       : `${s.home || ''} × ${s.away || ''}`;
     const minute = s.match?.minute ?? s.minute ?? 0;
-    const league = s.match?.league || s.league || '';
+    const league = s.match?.leagueFull || s.leagueFull || s.match?.league || s.league || '';
     const isLocked = s.locked === true;
     const isPremium = s.tier === 'premium' && !isLocked;
     const tierBadge = isPremium
@@ -734,7 +734,7 @@
 
     const home   = escapeHtml(signal.match?.home || signal.home);
     const away   = escapeHtml(signal.match?.away || signal.away);
-    const league = escapeHtml(signal.match?.league || signal.league || '');
+    const league = escapeHtml(signal.match?.leagueFull || signal.leagueFull || signal.match?.league || signal.league || '');
     const minute = signal.match?.minute ?? signal.minute ?? '—';
     const scoreH = signal.match?.score?.home ?? '—';
     const scoreA = signal.match?.score?.away ?? '—';

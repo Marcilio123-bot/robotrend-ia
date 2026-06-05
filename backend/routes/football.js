@@ -48,6 +48,7 @@ const signalsEngine = require('../services/signalsEngine');
 const betSignalEngine = require('../services/betSignalEngine');
 const consensus = require('../consensus');
 const { isLiveMatch } = require('../services/liveMatchFilter');
+const leagueWhitelist = require('../services/leagueWhitelist');
 const { getPoller } = require('../workers/liveFootballPoller');
 const { getEnricher } = require('../services/fixtureEnricher');
 const { normalizeFixture, statName, ensureAllMinimal } = require('../services/fixtureNormalizer');
@@ -852,6 +853,44 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   router.get('/signals/engine', adminMw, (req, res) => {
     noStore(res);
     res.json({ ok: true, engine: signalsEngine.snapshot() });
+  });
+
+  /* ============================================================
+     FILTRO DE LIGAS POPULARES (Bet365) — whitelist de competições
+     ------------------------------------------------------------
+     GET  → estado atual + competições da whitelist (público: o front
+            usa para mostrar o badge/legenda do filtro).
+     POST → liga/desliga o filtro "Mostrar apenas ligas populares da
+            Bet365" (admin). Default: ATIVADO.
+     ============================================================ */
+  router.get('/signals/league-filter', (req, res) => {
+    noStore(res);
+    res.json({
+      ok: true,
+      popularOnly: leagueWhitelist.isPopularOnly(),
+      default: leagueWhitelist.envDefault,
+      count: leagueWhitelist.WHITELIST_IDS.size,
+      leagues: leagueWhitelist.listWhitelist(),
+    });
+  });
+
+  router.post('/signals/league-filter', adminMw, express.json(), (req, res) => {
+    noStore(res);
+    const raw = req.body?.popularOnly;
+    if (typeof raw !== 'boolean') {
+      return res.status(400).json({ ok: false, error: 'popularOnly (boolean) é obrigatório' });
+    }
+    const value = leagueWhitelist.setPopularOnly(raw);
+    // Quando LIGADO, limpa imediatamente do cache jogos fora da whitelist.
+    let purged = [];
+    try { purged = poller.purgeNonWhitelisted?.('admin-toggle') || []; } catch (_) {}
+    log.info('league filter toggled', { popularOnly: value, purged: purged.length });
+    res.json({
+      ok: true,
+      popularOnly: value,
+      purged: purged.length,
+      count: leagueWhitelist.WHITELIST_IDS.size,
+    });
   });
 
   /* ============================================================

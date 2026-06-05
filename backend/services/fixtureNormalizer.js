@@ -34,6 +34,8 @@
 
 'use strict';
 
+const leagueWhitelist = require('./leagueWhitelist');
+
 const LIVE_STATUSES = new Set(['1H','2H','HT','ET','BT','P','LIVE','INT']);
 const FINISHED_STATUSES = new Set(['FT','AET','PEN','CANC','PST','ABD','AWD','WO','SUSP']);
 
@@ -120,6 +122,9 @@ function normalizeFixture(fx) {
       id: fx.league?.id,
       name: fx.league?.name,
       country: fx.league?.country,
+      // Nome completo da competição (ex.: "Premier League (Inglaterra)") para
+      // facilitar a identificação do jogo no painel.
+      fullName: leagueWhitelist.fullName(fx.league),
       logo: fx.league?.logo,
       flag: fx.league?.flag,
       season: fx.league?.season,

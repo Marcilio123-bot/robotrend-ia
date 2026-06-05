@@ -218,6 +218,71 @@
   }
 
   // ============================================================
+  // Filtro de ligas populares (Bet365)
+  // ============================================================
+  function renderLeagueFilter(data) {
+    const toggle = $('#league-filter-toggle');
+    const stateEl = $('#league-filter-state');
+    const countEl = $('#league-filter-count');
+    const listEl = $('#league-filter-list');
+    if (toggle) toggle.checked = !!data.popularOnly;
+    if (countEl) countEl.textContent = data.count ?? '—';
+    if (stateEl) {
+      stateEl.textContent = data.popularOnly
+        ? `ATIVADO — apenas ${data.count} ligas populares geram sinais`
+        : 'DESATIVADO — todas as ligas (inclui amistosos / base / divisões inferiores)';
+      stateEl.className = data.popularOnly ? 'pos' : 'warn';
+      stateEl.style.fontFamily = "'JetBrains Mono', monospace";
+      stateEl.style.fontSize = '11px';
+      stateEl.style.marginTop = '6px';
+    }
+    if (listEl) {
+      listEl.innerHTML = (data.leagues || [])
+        .map((l) => `<span class="pill info" title="ID ${l.id}">${escapeHtml(l.name)}</span>`)
+        .join('') || '<span style="color:var(--muted)">—</span>';
+    }
+  }
+
+  async function loadLeagueFilter() {
+    try {
+      const data = await api('/api/football/signals/league-filter');
+      renderLeagueFilter(data);
+    } catch (e) {
+      console.warn('league-filter load falhou', e.message);
+    }
+  }
+
+  function bindLeagueFilter() {
+    const toggle = $('#league-filter-toggle');
+    if (!toggle) return;
+    toggle.addEventListener('change', async () => {
+      const desired = toggle.checked;
+      toggle.disabled = true;
+      try {
+        const r = await api('/api/football/signals/league-filter', {
+          method: 'POST',
+          body: JSON.stringify({ popularOnly: desired }),
+        });
+        appendStream('league-filter', { popularOnly: r.popularOnly, purged: r.purged });
+        await loadLeagueFilter();
+        const t = window.RobotrendToast;
+        if (t) {
+          if (r.popularOnly) {
+            t.success('Filtro de ligas ATIVADO', `${r.purged} jogo(s) fora da whitelist removido(s) do painel.`);
+          } else {
+            t.info('Filtro de ligas DESATIVADO', 'Todas as ligas liberadas (inclui amistosos e base).');
+          }
+        }
+      } catch (e) {
+        toggle.checked = !desired; // reverte em caso de falha
+        if (window.RobotrendToast) window.RobotrendToast.error('Falha ao alterar filtro', e.message);
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  }
+
+  // ============================================================
   // Live stream de eventos (socket)
   // ============================================================
   function appendStream(name, payload) {
@@ -285,6 +350,8 @@
   function boot() {
     bindControls();
     bindTestHooks();
+    bindLeagueFilter();
+    loadLeagueFilter();
     initSocket();
     tick();
     timer = setInterval(tick, REFRESH_MS);

@@ -39,6 +39,8 @@
 
 'use strict';
 
+const leagueWhitelist = require('./leagueWhitelist');
+
 function n(v) { return Number.isFinite(Number(v)) ? Number(v) : 0; }
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function riskFromConf(conf) {
@@ -58,6 +60,7 @@ function matchHeader(m) {
     home: m.home,
     away: m.away,
     league: m.league?.name,
+    leagueFull: m.league?.fullName || leagueWhitelist.fullName(m.league),
     country: m.league?.country,
     minute: m.minute,
     status: m.status,
@@ -328,6 +331,8 @@ function buildCardsSignal(m) {
    ============================================================ */
 function generateSignals(match) {
   if (!match) return [];
+  // Whitelist: só gera sinal para competições populares (quando o filtro está ativo).
+  if (!leagueWhitelist.shouldAllow(match)) return [];
   // Bloqueios duros: FT/0' nunca produzem sinal, em qualquer modo.
   if (isFinishedStatus(match)) return [];
   if (n(match.minute) === 0) return [];
@@ -479,6 +484,8 @@ function buildUnderFreeSignal(m) {
  */
 function generatePartialSignals(match) {
   if (!match) return [];
+  // Whitelist: só gera sinal para competições populares (quando o filtro está ativo).
+  if (!leagueWhitelist.shouldAllow(match)) return [];
   // Bloqueios de segurança
   if (isFinishedStatus(match)) return [];
   if (n(match.minute) === 0) return [];
