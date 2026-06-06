@@ -36,6 +36,10 @@
 
 const leagueWhitelist = require('./leagueWhitelist');
 
+// Diagnóstico cru de stats (mesma flag do enricher). LIVE_STATS_DEBUG=true
+// imprime [RAW STATS DATA] / [TEAM IDS] / [FINAL STATS] dentro de applyEnrichment.
+const LIVE_STATS_DEBUG = String(process.env.LIVE_STATS_DEBUG || 'false').toLowerCase() === 'true';
+
 const LIVE_STATUSES = new Set(['1H','2H','HT','ET','BT','P','LIVE','INT']);
 const FINISHED_STATUSES = new Set(['FT','AET','PEN','CANC','PST','ABD','AWD','WO','SUSP']);
 
@@ -237,6 +241,54 @@ function applyEnrichment(match, statsResp, eventsResp) {
     fouls:        { home: foulsHome, away: foulsAway, total: foulsHome + foulsAway },
     passAccuracy: { home: passAccHome, away: passAccAway },
   };
+
+  // ============================================================
+  // DIAGNÓSTICO DE MISMATCH (RAW vs FINAL + team.id) — item 2..6.
+  // Sempre detecta e loga quando os teamIds não batem ou quando a API
+  // trouxe array mas tudo zerou (provável nome de stat divergente).
+  // [RAW STATS DATA] / [TEAM IDS] / [FINAL STATS] completos só com
+  // LIVE_STATS_DEBUG=true (evita inundar o log em produção).
+  // ============================================================
+  try {
+    const respArr = Array.isArray(statsResp) ? statsResp : [];
+    const respTeamIds = respArr.map((s) => s?.team?.id);
+    const homeFound = respArr.some((s) => sameTeamId(s?.team?.id, homeId));
+    const awayFound = respArr.some((s) => sameTeamId(s?.team?.id, awayId));
+    const allZero = (totalCorners + totalShots + totalSot) === 0;
+
+    if (LIVE_STATS_DEBUG) {
+      console.log('[RAW STATS DATA]', JSON.stringify(statsResp, null, 2));
+      console.log('[TEAM IDS]', {
+        fixtureId: match.fixtureId || match.id,
+        homeTeamId: homeId,
+        awayTeamId: awayId,
+        statsRespTeamIds: respTeamIds,
+        homeFoundInStats: homeFound,
+        awayFoundInStats: awayFound,
+      });
+      console.log('[FINAL STATS]', JSON.stringify(match.stats, null, 2));
+    }
+
+    // Sinal de alerta SEM gate: teamId não casou (item 6) → corners/shots
+    // viram 0 em statName() linha 95 (`if (!block) return 0`).
+    if (respArr.length && (!homeFound || !awayFound)) {
+      console.warn(
+        `[TEAM ID MISMATCH] fixtureId=${match.fixtureId || match.id} ` +
+        `matchHomeId=${homeId} matchAwayId=${awayId} ` +
+        `statsRespTeamIds=${JSON.stringify(respTeamIds)} ` +
+        `→ statName() não encontra o bloco e retorna 0 (fixtureNormalizer.js statName L95).`
+      );
+    }
+    // teamId casou mas tudo zerou → nome de stat divergente (item 4/5).
+    if (respArr.length && homeFound && awayFound && allZero) {
+      const typesHome = (respArr.find((s) => sameTeamId(s?.team?.id, homeId))?.statistics || []).map((s) => s?.type);
+      console.warn(
+        `[STAT TYPE MISMATCH] fixtureId=${match.fixtureId || match.id} ` +
+        `teamIds OK porém corners/shots/sot=0 — types retornados pela API: ${JSON.stringify(typesHome)} ` +
+        `(esperado: "Corner Kicks","Total Shots","Shots on Goal"). Ajustar STAT_TYPE_ALIASES.`
+      );
+    }
+  } catch (_) { /* nunca quebrar enrichment por log */ }
 
   // [ENRICH APPLY] — confirma que applyEnrichment FULL rodou e quais
   // números foram extraídos da resposta da API. Se aqui vier tudo 0
