@@ -201,9 +201,15 @@ class FixtureEnricher {
   }
 
   queueFromPoller(matches, limit = POLLER_ENRICH_TOP) {
-    if (!ENABLED || !matches?.length) return;
+    // [PIPELINE TRACE] — TEMPORÁRIO. Remover após diagnóstico (grep "[PIPELINE TRACE]").
+    const TRACE = String(process.env.PIPELINE_TRACE ?? 'true').toLowerCase() !== 'false';
+    if (!ENABLED || !matches?.length) {
+      if (TRACE) console.log(`[PIPELINE TRACE] enricher.queueFromPoller SKIP | enabled=${ENABLED} received=${matches?.length || 0} (sem jogos ou enricher desabilitado)`);
+      return;
+    }
     if (apiFootball.isSafeMode && apiFootball.isSafeMode()) {
       m_skip.inc(1, { reason: 'safe-mode' });
+      if (TRACE) console.warn(`[PIPELINE TRACE] enricher.queueFromPoller SKIP safe-mode | received=${matches.length} — NENHUMA chamada /fixtures/statistics será feita (Enricher=0).`);
       return;
     }
     const top = this._selectForQueue(matches, limit);
@@ -215,6 +221,13 @@ class FixtureEnricher {
       this.systemQueue.add(id);
     }
     this.stats.systemQueued = this.systemQueue.size;
+    if (TRACE) {
+      console.log(
+        `[PIPELINE TRACE] enricher.queueFromPoller | received=${matches.length} ` +
+        `selected=${top.length} newlyQueued=${added} queueSize=${this.systemQueue.size} ` +
+        `inflight=${this.inflight.size} pollerEnrichTop=${POLLER_ENRICH_TOP}`
+      );
+    }
     // SEMPRE dispara tick se há fila (mesmo IDs repetidos — pode estar pendente de enrich)
     if (this.systemQueue.size > 0) {
       log.debug?.('poller queue enrich', { queue: this.systemQueue.size, newIds: added });
@@ -232,8 +245,15 @@ class FixtureEnricher {
    * enriched bloqueavam o dashboard e a IA.
    */
   bootstrapTop(matches, limit = POLLER_ENRICH_TOP) {
-    if (!ENABLED || !matches?.length) return;
-    if (apiFootball.isSafeMode && apiFootball.isSafeMode()) return;
+    const TRACE = String(process.env.PIPELINE_TRACE ?? 'true').toLowerCase() !== 'false';
+    if (!ENABLED || !matches?.length) {
+      if (TRACE) console.log(`[PIPELINE TRACE] enricher.bootstrapTop SKIP | enabled=${ENABLED} received=${matches?.length || 0}`);
+      return;
+    }
+    if (apiFootball.isSafeMode && apiFootball.isSafeMode()) {
+      if (TRACE) console.warn(`[PIPELINE TRACE] enricher.bootstrapTop SKIP safe-mode | received=${matches.length} — Enricher permanece 0.`);
+      return;
+    }
     const top = this._selectForQueue(matches, limit);
     for (const m of top) {
       const id = String(m.fixtureId || m.id);
@@ -303,7 +323,12 @@ class FixtureEnricher {
    * abertas ao mesmo tempo.
    */
   async tick() {
-    if (!this.running) return;
+    // [PIPELINE TRACE] — TEMPORÁRIO. Remover após diagnóstico (grep "[PIPELINE TRACE]").
+    const TRACE = String(process.env.PIPELINE_TRACE ?? 'true').toLowerCase() !== 'false';
+    if (!this.running) {
+      if (TRACE) console.log('[PIPELINE TRACE] enricher.tick SKIP | running=false (enricher não iniciado)');
+      return;
+    }
     this.stats.lastTickAt = Date.now();
 
     // SAFE-MODE: o tick periódico não dispara chamadas de API. Apenas
@@ -312,6 +337,7 @@ class FixtureEnricher {
     if (apiFootball.isSafeMode && apiFootball.isSafeMode()) {
       m_skip.inc(1, { reason: 'safe-mode-tick' });
       g_qsize.set(0);
+      if (TRACE) console.warn(`[PIPELINE TRACE] enricher.tick SKIP safe-mode | queue=${this.systemQueue.size} — 0 chamadas de stats neste tick.`);
       return;
     }
 
@@ -331,10 +357,20 @@ class FixtureEnricher {
       }
     }
     g_qsize.set(pending.length);
-    if (!pending.length) return;
+    if (!pending.length) {
+      if (TRACE) console.log(`[PIPELINE TRACE] enricher.tick | targets=${allIds.size} pending=0 (nada a enriquecer — todos em cooldown/já enriquecidos)`);
+      return;
+    }
 
     // Processa apenas MAX_PER_TICK por vez (evita pico de quota)
     const slice = pending.slice(0, MAX_PER_TICK);
+    if (TRACE) {
+      console.log(
+        `[PIPELINE TRACE] enricher.tick DISPATCH | targets=${allIds.size} pending=${pending.length} ` +
+        `willEnrich=${slice.length} (maxPerTick=${MAX_PER_TICK}) → vai chamar /fixtures/statistics ` +
+        `para fixtureIds=${slice.join(',')}`
+      );
+    }
     log.debug?.('enricher tick', { pending: pending.length, willEnrich: slice.length });
     for (const id of slice) {
       try { await this._enrichOne(id); }

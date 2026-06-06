@@ -104,8 +104,9 @@ const EXCLUDE_RX = new RegExp(
     'women', 'femin', 'femen', 'f[eé]min', 'frauen', 'femmes',
     // Amador / baixa liquidez
     'amateur', 'amador',
-    // Divisões alemãs/inferiores que colidem por nome
-    '2\\.\\s*bundesliga', '3\\.\\s*liga',
+    // NOTA: 2.Bundesliga e 3.Liga (alemãs) NÃO são excluídas — são ligas
+    // profissionais adultas oferecidas pela Bet365 ao vivo. A exclusão antiga
+    // existia só para evitar colisão de nome com a whitelist fixa (modo legado).
   ].join('|'),
   'i'
 );
@@ -205,6 +206,21 @@ const FRIENDLY_NAMES = {
 const ENV_DEFAULT = String(process.env.SIGNALS_POPULAR_LEAGUES_ONLY ?? 'true')
   .toLowerCase() !== 'false';
 
+/* ============================================================
+   MODO DO FILTRO — exclude-only (default) vs whitelist (legado)
+   ------------------------------------------------------------
+   'exclude-only' (DEFAULT): com o filtro LIGADO, aceita QUALQUER liga
+       adulta profissional ao vivo e bloqueia APENAS categorias não
+       profissionais (base U15-U23, youth, reservas, times B, feminino,
+       amador, amistosos de clubes — ver EXCLUDE_RX). É o comportamento
+       "praticamente tudo que a Bet365 mostra ao vivo".
+   'whitelist' (LEGADO): com o filtro LIGADO, só passam competições em
+       WHITELIST_IDS / NAME_RULES (lista fixa).
+   Override via env LEAGUE_FILTER_MODE.
+   ============================================================ */
+const FILTER_MODE = String(process.env.LEAGUE_FILTER_MODE || 'exclude-only')
+  .toLowerCase().trim() === 'whitelist' ? 'whitelist' : 'exclude-only';
+
 const PERSIST_PATH = path.join(__dirname, '..', '..', 'data', 'signal-filter.json');
 
 function loadPersisted() {
@@ -266,18 +282,32 @@ function isWhitelisted(league) {
 
 /**
  * Gate principal usado por poller / engines / rotas.
- * - Com o filtro LIGADO (default): só passa quem está na whitelist.
- * - Com o filtro DESLIGADO: passa tudo (comportamento legado).
+ *
+ * - Filtro DESLIGADO (popularOnly=false): passa TUDO, inclusive base/amador.
+ * - Filtro LIGADO + modo 'exclude-only' (DEFAULT): passa qualquer liga adulta
+ *   profissional; bloqueia SOMENTE categorias não-profissionais (EXCLUDE_RX:
+ *   U15-U23, youth, reservas, times B, feminino, amador, amistosos de clubes).
+ * - Filtro LIGADO + modo 'whitelist' (legado): só passa WHITELIST_IDS/NAME_RULES.
  */
 function shouldAllow(match) {
   if (!popularOnly) return true;
-  if (!match) return false;
   // Aceita tanto um match ({ league: {...} }) quanto um objeto league direto.
   // Só trata `match` como league se NÃO for claramente um match (sem home/away).
   let league = null;
-  if (match.league && typeof match.league === 'object') league = match.league;
-  else if (match.home == null && match.away == null) league = match;
-  return isWhitelisted(league);
+  if (match) {
+    if (match.league && typeof match.league === 'object') league = match.league;
+    else if (match.home == null && match.away == null) league = match;
+  }
+
+  if (FILTER_MODE === 'whitelist') {
+    if (!match) return false;
+    return isWhitelisted(league);
+  }
+
+  // exclude-only: qualquer liga profissional adulta passa; só bloqueia as
+  // categorias não-profissionais definidas em EXCLUDE_RX. Liga ausente é
+  // tratada como não-excluída (não derruba jogo por metadado faltando).
+  return !isExcluded(league);
 }
 
 /**
@@ -314,4 +344,5 @@ module.exports = {
   setPopularOnly,
   listWhitelist,
   envDefault: ENV_DEFAULT,
+  filterMode: FILTER_MODE,
 };

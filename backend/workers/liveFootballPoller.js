@@ -945,6 +945,30 @@ class LiveFootballPoller {
         if (boot.applied > 0) {
           console.log('[LIVE DEBUG] minimal stats bootstrap (local, zero API)', boot);
         }
+        // ============================================================
+        // [PIPELINE TRACE] — TEMPORÁRIO (diagnóstico Poller=11/Enricher=0).
+        // Mostra quantos jogos o poller está ENTREGANDO ao enricher neste
+        // tick + o estado dos gates que podem zerar o enrichment.
+        // Remover depois do diagnóstico (grep "[PIPELINE TRACE]").
+        // Desligue sem editar código com PIPELINE_TRACE=false.
+        // ============================================================
+        if (String(process.env.PIPELINE_TRACE ?? 'true').toLowerCase() !== 'false') {
+          let safe = null;
+          try { safe = apiFootball.isSafeMode?.() ?? null; } catch (_) {}
+          let ratio = null;
+          try { ratio = apiFootball.remainingRatio?.() ?? null; } catch (_) {}
+          const enr = getEnricher();
+          console.log(
+            `[PIPELINE TRACE] poller→enricher | liveMatches=${matches.length} ` +
+            `handedToEnricher=${matches.length} minimalBootstrapped=${boot.applied}/${boot.candidates} ` +
+            `safeMode=${safe} remainingRatio=${ratio != null ? ratio.toFixed(3) : 'n/a'} ` +
+            `enricherEnabled=${enr.snapshot?.().enabled} enricherRunning=${enr.snapshot?.().running} ` +
+            `apiConfigured=${apiFootball.isConfigured?.() ?? 'n/a'} fromStale=${!!fromStale}`
+          );
+          if (safe === true) {
+            console.warn('[PIPELINE TRACE] ⚠ SAFE-MODE ATIVO — enricher NÃO chamará /fixtures/statistics (Enricher fica 0). Causa típica: API_FOOTBALL_RATE_PER_DAY desalinhado com o plano real.');
+          }
+        }
         getEnricher().bootstrapTop(matches);
       } catch (_) { /* enricher opcional */ }
 

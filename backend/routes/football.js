@@ -868,6 +868,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     res.json({
       ok: true,
       popularOnly: leagueWhitelist.isPopularOnly(),
+      mode: leagueWhitelist.filterMode,
       default: leagueWhitelist.envDefault,
       count: leagueWhitelist.WHITELIST_IDS.size,
       leagues: leagueWhitelist.listWhitelist(),

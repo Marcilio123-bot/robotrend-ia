@@ -229,9 +229,13 @@
     if (toggle) toggle.checked = !!data.popularOnly;
     if (countEl) countEl.textContent = data.count ?? '—';
     if (stateEl) {
-      stateEl.textContent = data.popularOnly
-        ? `ATIVADO — apenas ${data.count} ligas populares geram sinais`
-        : 'DESATIVADO — todas as ligas (inclui amistosos / base / divisões inferiores)';
+      if (!data.popularOnly) {
+        stateEl.textContent = 'DESATIVADO — todas as ligas (inclui amistosos / base / divisões inferiores)';
+      } else if (data.mode === 'whitelist') {
+        stateEl.textContent = `ATIVADO (whitelist) — apenas ${data.count} ligas populares geram sinais`;
+      } else {
+        stateEl.textContent = 'ATIVADO (exclude-only) — todas as ligas profissionais adultas ao vivo; bloqueia base/reserva/feminino/amador/amistosos de clubes';
+      }
       stateEl.className = data.popularOnly ? 'pos' : 'warn';
       stateEl.style.fontFamily = "'JetBrains Mono', monospace";
       stateEl.style.fontSize = '11px';
