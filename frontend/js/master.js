@@ -258,9 +258,17 @@
   }
 
   async function loadApiUsage() {
+    const note = $('mu-note');
     try {
       const d = await RobotrendAuth.api('/api/admin/api-usage');
-      if (!d || !d.ok) return;
+      if (!d || typeof d !== 'object' || d.ok !== true) {
+        const hint = typeof d === 'string'
+          ? `Resposta não-JSON (${d.slice(0, 80)}…) — rota /api/admin/api-usage pode não estar no deploy.`
+          : `Resposta inválida: ok=${d?.ok ?? 'ausente'} — verifique deploy do backend.`;
+        console.warn('[loadApiUsage]', hint, d);
+        if (note) note.textContent = hint;
+        return;
+      }
       const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
       set('mu-today', fmtNum(d.callsToday));
       set('mu-hour', fmtNum(d.callsLastHour));
@@ -285,7 +293,6 @@
       muBarChart($('mu-chart-hourly'), d.charts?.hourly, '#06b6d4', 8);
       muBarChart($('mu-chart-daily'), d.charts?.daily, '#a855f7', 10);
 
-      const note = $('mu-note');
       if (note) {
         const limit = d.credits?.limit;
         note.textContent = limit
@@ -293,8 +300,12 @@
           : 'Limite ainda não reportado pela API — usando rate-limiter local.';
       }
     } catch (e) {
-      const note = $('mu-note');
-      if (note) note.textContent = `Falha ao carregar consumo: ${e.message}`;
+      console.warn('[loadApiUsage] erro', e.status, e.message, e.payload);
+      if (note) {
+        note.textContent = e.status === 404
+          ? 'Endpoint /api/admin/api-usage não encontrado (404) — faça deploy do backend com apiUsageTracker.'
+          : `Falha ao carregar consumo: HTTP ${e.status || '?'} — ${e.message}`;
+      }
     }
   }
 

@@ -1,37 +1,28 @@
 /* Robotrend IA — Service Worker
    ---------------------------------------------------------------
-   v6.5.0 — Bump para invalidar cache de dashboard.js (guard master),
-            saas-nav.js (sidebar Cliente/Master) e index.html
-            (snapshot master). Estratégia mantida:
-     - Navegações HTML  → NETWORK-ONLY
-     - Assets estáticos → Cache-first com expulsão automática no bump
+   A VERSION é injetada pelo servidor (backend/server.js → rota
+   /service-worker.js) substituindo o placeholder __ASSET_VERSION__
+   pelo ASSET_VERSION (versão do app + hash do conteúdo dos assets).
+
+   Consequência: a cada deploy em que QUALQUER asset muda, o nome do
+   CacheStorage muda → o handler `activate` purga todos os caches
+   antigos → nenhum JS/CSS velho sobrevive ao deploy.
+
+   Estratégia:
+     - Navegações HTML  → NETWORK-ONLY (HTML nunca é cacheado; sempre
+       traz as URLs já versionadas — ?v=ASSET_VERSION)
+     - Assets estáticos → Cache-first. Como as URLs são versionadas,
+       cada deploy referencia uma URL nova → cache-miss → download
+       fresco. URLs idênticas (sem mudança) reaproveitam o cache.
      - API/Socket.io    → bypass total
 */
-const VERSION = 'v6.6.1';
+const VERSION = '__ASSET_VERSION__';
 const CACHE_STATIC = `robotrend-static-${VERSION}`;
 
-// Apenas assets estáticos (não-HTML). HTML é sempre network-only.
-const STATIC_SHELL = [
-  '/output.css',
-  '/style.css',
-  '/manifest.json',
-  '/js/auth.js',
-  '/js/auth-guard.js',
-  '/js/saas-nav.js',
-  '/js/pwa.js',
-  '/js/payments.js',
-  '/js/user-state.js',
-  '/js/upgrade-celebration.js',
-  '/js/promo-banner.js',
-  '/js/dashboard.js',
-];
-
 self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE_STATIC)
-      .then((c) => c.addAll(STATIC_SHELL).catch(() => {}))
-      .catch(() => {})
-  );
+  // Não pré-cacheamos URLs fixas: os assets são versionados (?v=hash) e
+  // entram no cache sob demanda já com a URL correta da versão atual.
+  // Pré-cachear URLs sem versão só geraria cópias órfãs/obsoletas.
   self.skipWaiting();
 });
 

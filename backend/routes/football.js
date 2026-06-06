@@ -1832,8 +1832,20 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     noStore(res);
 
     let usage;
-    try { usage = require('../services/apiUsageTracker').snapshot(); }
-    catch (e) { usage = { error: e.message, callsToday: 0, callsLastHour: 0, byEndpoint: [], charts: { hourly: [], daily: [] }, avgDaily: 0, todayProjected: 0 }; }
+    try {
+      usage = require('../services/apiUsageTracker').snapshot();
+    } catch (e) {
+      console.error('[API USAGE] snapshot() falhou:', e.message, e.stack);
+      usage = {
+        error: e.message,
+        callsToday: 0, callsLastHour: 0,
+        pollerToday: 0, enricherToday: 0, routeToday: 0, otherToday: 0,
+        todayBySource: {},
+        byEndpoint: [], charts: { hourly: [], daily: [] },
+        avgDaily: 0, todayProjected: 0, completeDaysSampled: 0,
+        totalSinceBoot: 0, generatedAt: new Date().toISOString(),
+      };
+    }
 
     const status = af.status?.() || {};
     const quota = status.quota || {};

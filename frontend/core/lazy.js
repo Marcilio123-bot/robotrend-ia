@@ -23,13 +23,31 @@
 
   const cache = new Map(); // src -> Promise
 
+  /**
+   * Aplica cache busting nos scripts carregados sob demanda, usando o selo
+   * window.__ASSET_VERSION__ injetado pelo servidor no HTML. Mantém a mesma
+   * política dos <script> estáticos: cada deploy → URL nova → download fresco.
+   */
+  function versioned(src) {
+    try {
+      if (!src || src.charAt(0) !== '/') return src; // só assets locais root-relative
+      if (/[?&]v=/.test(src)) return src;            // já versionado
+      const v = window.__ASSET_VERSION__;
+      if (!v) return src;
+      return src + (src.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(v);
+    } catch (_) {
+      return src;
+    }
+  }
+
   function script(src, attrs = {}) {
     if (cache.has(src)) return cache.get(src);
+    const finalSrc = versioned(src);
     const p = new Promise((resolve, reject) => {
-      const existing = document.querySelector(`script[src="${src}"]`);
+      const existing = document.querySelector(`script[src="${finalSrc}"]`);
       if (existing) return resolve(existing);
       const s = document.createElement('script');
-      s.src = src;
+      s.src = finalSrc;
       s.defer = true;
       Object.entries(attrs).forEach(([k, v]) => s.setAttribute(k, v));
       s.onload = () => resolve(s);

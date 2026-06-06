@@ -72,6 +72,7 @@ const results = require('./results');
 const beta = require('./beta');
 const watchdog = require('./watchdog');
 const ml = require('./ml');
+const { ASSET_VERSION } = require('./version');
 
 const log = logger.child({ module: 'server' });
 
@@ -120,6 +121,52 @@ app.use(metrics.httpMetricsMiddleware);
 
 const frontendDir = path.join(__dirname, '..', 'frontend');
 
+/* ============================================================
+   CACHE BUSTING — versionamento automático de assets
+   ------------------------------------------------------------
+   Injeta ?v=<ASSET_VERSION> em TODOS os assets locais (JS/CSS)
+   referenciados no HTML servido. Como ASSET_VERSION deriva de um
+   hash do conteúdo dos assets, cada deploy real gera URLs novas →
+   navegador e service worker são forçados a baixar a versão nova,
+   sem depender de "limpar dados do site" manualmente.
+
+   O HTML é sempre servido com no-store (já garantido abaixo), então
+   cada carregamento traz as URLs versionadas mais recentes. Resultado:
+     <script src="/js/master.js?v=5.0.0-ab12cd34"></script>
+
+   Também expõe window.__ASSET_VERSION__ para os loaders dinâmicos
+   (frontend/core/lazy.js) versionarem scripts carregados sob demanda.
+   ============================================================ */
+const ASSET_REWRITE_RE =
+  /\b(src|href)=("|')(\/(?:js|core|layouts|realtime|components|widgets|admin)\/[^"'?]+\.js|\/(?:output|style)\.css|\/manifest\.json)\2/g;
+
+const htmlVersionCache = new Map();
+
+function stampAssetVersions(html) {
+  const stamped = html.replace(
+    ASSET_REWRITE_RE,
+    (_m, attr, quote, url) => `${attr}=${quote}${url}?v=${ASSET_VERSION}${quote}`
+  );
+  const inject = `<script>window.__ASSET_VERSION__=${JSON.stringify(ASSET_VERSION)};</script>`;
+  if (stamped.includes('</head>')) {
+    return stamped.replace('</head>', `${inject}</head>`);
+  }
+  return inject + stamped;
+}
+
+/**
+ * Lê o HTML do disco, injeta as URLs versionadas e memoiza o resultado.
+ * A versão é estável por processo (muda só em novo deploy/reinício), então
+ * o cache em memória é seguro — em dev o nodemon reinicia e recalcula.
+ */
+function renderVersionedHtml(file) {
+  if (htmlVersionCache.has(file)) return htmlVersionCache.get(file);
+  const raw = fs.readFileSync(path.join(frontendDir, file), 'utf8');
+  const out = stampAssetVersions(raw);
+  htmlVersionCache.set(file, out);
+  return out;
+}
+
 /** Rotas HTML legadas → páginas canônicas (evita 404 no menu antigo). */
 const HTML_PAGE_ALIASES = {
   'painel-estatisticas.html': 'quality.html',
@@ -151,7 +198,13 @@ const ADMIN_CLEAN_ROUTES = {
 for (const [route, file] of Object.entries(ADMIN_CLEAN_ROUTES)) {
   app.get([route, route + '.html'], (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-    res.sendFile(path.join(__dirname, '..', 'frontend', file));
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    try {
+      res.type('html').send(renderVersionedHtml(file));
+    } catch (e) {
+      res.sendFile(path.join(frontendDir, file));
+    }
   });
 }
 
@@ -178,7 +231,12 @@ function sendHtmlNoStore(res, file) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
-  res.sendFile(path.join(frontendDir, file));
+  try {
+    res.type('html').send(renderVersionedHtml(file));
+  } catch (e) {
+    // Fallback defensivo: se a leitura/stamp falhar, ainda servimos o arquivo.
+    res.sendFile(path.join(frontendDir, file));
+  }
 }
 
 for (const page of PUBLIC_PAGES) {
@@ -187,17 +245,52 @@ for (const page of PUBLIC_PAGES) {
 // Root → index
 app.get('/', (req, res) => sendHtmlNoStore(res, 'index.html'));
 
+/* ============================================================
+   SERVICE WORKER — sempre no-store + versão injetada
+   ------------------------------------------------------------
+   O SW NUNCA pode ser cacheado pelo browser (senão um SW antigo
+   continua servindo assets antigos). Servimos com no-store e
+   injetamos ASSET_VERSION no placeholder __ASSET_VERSION__: assim
+   o nome do CacheStorage do SW muda a cada deploy real, e o handler
+   `activate` purga os caches antigos automaticamente.
+   ============================================================ */
+let swSource = null;
+app.get('/service-worker.js', (req, res) => {
+  try {
+    if (swSource == null) {
+      swSource = fs.readFileSync(path.join(frontendDir, 'service-worker.js'), 'utf8')
+        .replace(/__ASSET_VERSION__/g, ASSET_VERSION);
+    }
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.type('application/javascript').send(swSource);
+  } catch (e) {
+    res.status(500).type('application/javascript').send('/* service worker indisponível */');
+  }
+});
+
 app.use(express.static(frontendDir, {
   index: false, // o handler explícito de "/" já cuida disso
   setHeaders: (res, p) => {
+    const reqUrl = (res.req && res.req.url) || '';
+    const isVersioned = /[?&]v=/.test(reqUrl);
     if (p.endsWith('service-worker.js')) {
+      // Safety net — a rota dedicada acima já trata o SW.
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     } else if (p.endsWith('.html')) {
       // Safety net: se algum HTML escapar das rotas explícitas, ainda assim no-store
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-    } else if (p.endsWith('output.css') || p.endsWith('style.css')) {
-      // Tailwind build + style do projeto — cache curto (1h) controlado pelo SW
-      res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+    } else if (/\.(?:js|css)$/i.test(p)) {
+      if (isVersioned) {
+        // URL versionada (?v=hash) → conteúdo imutável para aquela versão.
+        // Cache agressivo de 1 ano: o deploy seguinte muda a URL, não o conteúdo.
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        // Sem versão (acesso direto/legado) → cacheia mas SEMPRE revalida
+        // via ETag/Last-Modified. Garante que nunca se sirva JS/CSS antigo.
+        res.setHeader('Cache-Control', 'no-cache');
+      }
     }
   },
 }));
