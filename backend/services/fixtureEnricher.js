@@ -63,6 +63,10 @@ const AUTO_TOP           = Number(process.env.ENRICH_AUTO_TOP ?? 12);           
 const POLLER_ENRICH_TOP  = Number(process.env.POLLER_ENRICH_TOP ?? 0);
 const ENRICH_QUEUE_MAX   = Number(process.env.ENRICH_QUEUE_MAX || 40);
 const INCLUDE_EVENTS     = String(process.env.ENRICH_INCLUDE_EVENTS || 'true').toLowerCase() !== 'false';
+// Diagnóstico cru de stats live. Ligue com LIVE_STATS_DEBUG=true para imprimir
+// a resposta BRUTA de /fixtures/statistics + o objeto final mesclado em
+// match.stats. Útil para responder A) API já devolve zeros vs B) Robotrend zera.
+const LIVE_STATS_DEBUG   = String(process.env.LIVE_STATS_DEBUG || 'false').toLowerCase() === 'true';
 
 const m_req         = metrics.counter('enricher_requests_total');
 const m_skip        = metrics.counter('enricher_skipped_total');
@@ -101,6 +105,31 @@ class FixtureEnricher {
 
   /** Injeta o poller (precisamos do cache de matches para mesclar enrichment). */
   setPoller(poller) { this.poller = poller; }
+
+  /**
+   * [SAFE MODE] — imprime o estado de quota que decide entre applyEnrichment
+   * (real) e applyMinimalEnrichment (zeros). Se active=true, NENHUMA chamada
+   * /fixtures/statistics é feita → todas as partidas saem zeradas.
+   */
+  _logSafeMode(where = '') {
+    try {
+      const snap = apiFootball.safeMode ? apiFootball.safeMode() : null;
+      const active = snap ? snap.active : (apiFootball.isSafeMode?.() || false);
+      const remainingRatio = snap?.ratio ?? (apiFootball.remainingRatio?.() ?? null);
+      const dailyRemaining = snap?.quota?.dailyRemaining ?? null;
+      const dailyLimit = snap?.quota?.dailyLimit ?? null;
+      console.log('[SAFE MODE]', {
+        where,
+        active,
+        remainingRatio,
+        dailyRemaining,
+        dailyLimit,
+        bucketUsed: snap?.bucket?.dayUsed ?? null,
+        bucketLimit: snap?.bucket?.dayLimit ?? null,
+        threshold: snap?.threshold ?? null,
+      });
+    } catch (_) { /* nunca quebrar por log */ }
+  }
 
   /**
    * Intervalo de refresh aplicável a UMA fixture.
@@ -251,6 +280,7 @@ class FixtureEnricher {
       return;
     }
     if (apiFootball.isSafeMode && apiFootball.isSafeMode()) {
+      this._logSafeMode('enricher.bootstrapTop');
       if (TRACE) console.warn(`[PIPELINE TRACE] enricher.bootstrapTop SKIP safe-mode | received=${matches.length} — Enricher permanece 0.`);
       return;
     }
@@ -304,6 +334,7 @@ class FixtureEnricher {
     if (apiFootball.isSafeMode && apiFootball.isSafeMode()) {
       this.stats.skipped++;
       m_skip.inc(1, { reason: 'safe-mode' });
+      this._logSafeMode('enricher.requestEnrich');
       const match = this.poller?.getMatch?.(id);
       if (match && !match.enriched) {
         try {
@@ -330,6 +361,9 @@ class FixtureEnricher {
       return;
     }
     this.stats.lastTickAt = Date.now();
+
+    // Estado de quota a CADA tick — decide enrichment real vs zeros.
+    this._logSafeMode('enricher.tick');
 
     // SAFE-MODE: o tick periódico não dispara chamadas de API. Apenas
     // socket subscribers explícitos (via requestEnrich) podem rodar e mesmo
@@ -430,6 +464,10 @@ class FixtureEnricher {
     }
     this.inflight.add(id);
     const t0 = Date.now();
+    // [ENRICH REQUEST] — chegamos ao ponto que efetivamente chama
+    // /fixtures/statistics. Se este log NÃO aparece para um fixture, o
+    // enrichment real foi barrado ANTES (ver gates de safe-mode/cooldown).
+    console.log('[ENRICH REQUEST]', id);
     try {
       const tasks = [apiFootball.getFixtureStatistics(id)];
       if (INCLUDE_EVENTS) tasks.push(apiFootball.getFixtureEvents(id));
@@ -438,6 +476,14 @@ class FixtureEnricher {
       const [statsResp, eventsResp = []] = await Promise.all(tasks);
       if (Array.isArray(statsResp) && statsResp.length) this.stats.statsCalls200++;
       else this.stats.statsCallsEmpty++;
+
+      // [RAW STATS DATA] — resposta BRUTA de /fixtures/statistics, ANTES de
+      // qualquer normalização. Se aqui já vier [] ou valores zerados, a causa
+      // é a API (cenário A). Se vier preenchido mas o FINAL STATS sair zerado,
+      // a causa é o processamento do Robotrend (cenário B).
+      if (LIVE_STATS_DEBUG) {
+        console.log('RAW STATS DATA', id, JSON.stringify(statsResp));
+      }
 
       // [STATS FETCH] — resposta da API antes de mesclar no match.
       // Confirma 1) que /fixtures/statistics foi chamado, 2) que veio 200
@@ -506,6 +552,14 @@ class FixtureEnricher {
       applyEnrichment(match, statsResp, eventsResp);
       match.enrichedPartial = false;
 
+      // [FINAL STATS] — objeto final mesclado em match.stats, exatamente como
+      // será servido por /api/football/live. Comparar com RAW STATS DATA acima
+      // isola onde os números somem: se RAW tinha corners>0 mas FINAL=0, o bug
+      // está em applyEnrichment/statName (teamId ou type não bateu).
+      if (LIVE_STATS_DEBUG) {
+        console.log('FINAL STATS', id, JSON.stringify(match.stats));
+      }
+
       // [STAT TRACE 2/6] enricher — após o normalizer já ter mesclado em
       // match.stats. Confirma que o objeto enriquecido em cache reflete os
       // mesmos números do response cru.
@@ -517,11 +571,15 @@ class FixtureEnricher {
         });
       } catch (_) { /* defensivo */ }
 
+      // [ENRICH SUCCESS] — applyEnrichment (FULL) rodou e mesclou stats reais.
+      console.log('[ENRICH SUCCESS]', id);
       this._emitEnriched(match, id, false);
       return { ok: true, fixtureId: id };
     } catch (err) {
       // SAFE_MODE não é falha — é proteção de quota; downgrade silencioso
       const isSafeMode = err?.code === 'SAFE_MODE';
+      // [ENRICH FAILED] — caímos no fallback applyMinimalEnrichment (zeros).
+      console.log('[ENRICH FAILED]', id, err?.code || err?.message || String(err));
       if (!isSafeMode) {
         this.stats.failed++;
         this.stats.statsCallsFailed++;

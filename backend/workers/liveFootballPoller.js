@@ -592,6 +592,21 @@ class LiveFootballPoller {
     try {
       const apiRawCount = Array.isArray(raw) ? raw.length : 0;
       console.log(`[API-FOOTBALL] fixturesReturned=${apiRawCount}`);
+
+      // [RAW LIVE DATA] — fixture CRU vindo de /fixtures?live=all (sampleado
+      // p/ não inundar o log). Comprova que o endpoint LIVE não traz `statistics`
+      // inline (campo ausente) — por isso o enrichment via /fixtures/statistics
+      // é obrigatório. Ligue com LIVE_STATS_DEBUG=true.
+      if (String(process.env.LIVE_STATS_DEBUG || 'false').toLowerCase() === 'true' && apiRawCount) {
+        const sample = raw[0];
+        const fid = sample?.fixture?.id;
+        console.log('RAW LIVE DATA', fid, JSON.stringify({
+          status: sample?.fixture?.status,
+          goals: sample?.goals,
+          hasInlineStatistics: Array.isArray(sample?.statistics) && sample.statistics.length > 0,
+          statisticsField: sample?.statistics ?? null,
+        }));
+      }
       const purgedPre = this._purgeNonLiveFromCache('pre-tick');
 
       const beforeFilter = (Array.isArray(raw) ? raw : [])

@@ -149,6 +149,13 @@ const STALE_TTL_MS     = Number(process.env.API_FOOTBALL_STALE_TTL_MS || 24 * 3_
 const QUOTA_LOW_PCT    = Number(process.env.API_FOOTBALL_QUOTA_LOW_PCT  || 0.20);
 const QUOTA_SAFE_PCT   = Number(process.env.API_FOOTBALL_QUOTA_SAFE_PCT || 0.20);
 
+// ⚠️ DIAGNÓSTICO TEMPORÁRIO — API_FOOTBALL_DISABLE_SAFE_MODE=true desativa
+// completamente o SAFE-MODE: isSafeMode() sempre retorna false e o gate
+// interno de _safeMode em get() é ignorado. Serve para confirmar se o
+// bloqueio do enrichment (/fixtures/statistics) é mesmo o safe-mode/quota.
+// NÃO deixar ligado em produção — remove a proteção de estouro de quota.
+const DISABLE_SAFE_MODE = String(process.env.API_FOOTBALL_DISABLE_SAFE_MODE || 'false').toLowerCase() === 'true';
+
 const CB_THRESHOLD     = Number(process.env.API_FOOTBALL_CB_THRESHOLD  || 5);
 const CB_COOLDOWN_MS   = Number(process.env.API_FOOTBALL_CB_COOLDOWN_MS || 60_000);
 
@@ -270,6 +277,15 @@ function remainingRatio() {
 }
 
 function evaluateSafeMode() {
+  // Override de diagnóstico: nunca entra em safe-mode quando desligado por env.
+  if (DISABLE_SAFE_MODE) {
+    if (_safeMode) {
+      _safeMode = false;
+      log.warn('SAFE-MODE forçado OFF (API_FOOTBALL_DISABLE_SAFE_MODE=true)');
+      events.emit('quota:safe-mode', { active: false, ratio: remainingRatio(), forcedOff: true });
+    }
+    return;
+  }
   const ratio = remainingRatio();
   const shouldBeSafe = ratio <= QUOTA_SAFE_PCT;
   if (shouldBeSafe && !_safeMode) {
@@ -285,13 +301,23 @@ function evaluateSafeMode() {
   }
 }
 
-function isSafeMode() { return _safeMode; }
+function isSafeMode() {
+  if (DISABLE_SAFE_MODE) return false;
+  return _safeMode;
+}
 function safeModeSnapshot() {
   return {
-    active: _safeMode,
+    active: isSafeMode(),
+    rawSafeMode: _safeMode,
+    disabledByEnv: DISABLE_SAFE_MODE,
     activatedAt: _safeModeAt || null,
     threshold: QUOTA_SAFE_PCT,
     ratio: remainingRatio(),
+    remainingRatio: remainingRatio(),
+    dailyLimit: quota.dailyLimit ?? null,
+    dailyRemaining: quota.dailyRemaining ?? null,
+    dayUsed: bucket.dayUsed ?? 0,
+    dayLimit: RATE_PER_DAY,
     quota: { dailyLimit: quota.dailyLimit, dailyRemaining: quota.dailyRemaining },
     bucket: { dayUsed: bucket.dayUsed, dayLimit: RATE_PER_DAY },
   };
@@ -643,7 +669,7 @@ async function get(endpoint, params = {}, opts = {}) {
   //    pedir `opts.essential=true` (poller central) para furar o gate, mas
   //    a maioria dos endpoints (enricher, consensus, trends) devem
   //    devolver stale-cache ou nada nesse modo.
-  if (_safeMode && !opts.essential) {
+  if (_safeMode && !DISABLE_SAFE_MODE && !opts.essential) {
     const stale = await store.get(KP_STALE + key);
     if (stale) {
       m_stale_served.inc(1, { endpoint, reason: 'safe-mode' });

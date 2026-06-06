@@ -150,7 +150,18 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   router.get('/safe-mode', (req, res) => {
     noStore(res);
     const snap = af.safeMode ? af.safeMode() : { active: false };
-    res.json({ ok: true, ...snap });
+    res.json({
+      ok: true,
+      active: snap.active ?? false,
+      remainingRatio: snap.remainingRatio ?? snap.ratio ?? null,
+      dailyRemaining: snap.dailyRemaining ?? snap.quota?.dailyRemaining ?? null,
+      dailyLimit: snap.dailyLimit ?? snap.quota?.dailyLimit ?? null,
+      dayUsed: snap.dayUsed ?? snap.bucket?.dayUsed ?? null,
+      dayLimit: snap.dayLimit ?? snap.bucket?.dayLimit ?? null,
+      disabledByEnv: snap.disabledByEnv ?? false,
+      rawSafeMode: snap.rawSafeMode ?? null,
+      ...snap,
+    });
   });
 
   /* ============================================================

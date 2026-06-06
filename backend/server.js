@@ -1365,6 +1365,27 @@ async function main() {
   enricher.setPoller(footballPoller);
   try { enricher.start(); } catch (e) { log.warn('fixtureEnricher start falhou', { err: e.message }); }
 
+  // [API PLAN] — estado de quota/safe-mode no boot. No startup os headers da
+  // API ainda não chegaram (dailyLimit/Remaining=null); por isso logamos de
+  // novo ~15s depois, quando o primeiro tick do poller já populou a quota.
+  const logApiPlan = (phase) => {
+    try {
+      const snap = af.safeMode ? af.safeMode() : {};
+      console.log('[API PLAN]', {
+        phase,
+        dailyLimit: snap.dailyLimit ?? snap.quota?.dailyLimit ?? null,
+        dailyRemaining: snap.dailyRemaining ?? snap.quota?.dailyRemaining ?? null,
+        remainingRatio: snap.remainingRatio ?? snap.ratio ?? (af.remainingRatio?.() ?? null),
+        dayUsed: snap.dayUsed ?? snap.bucket?.dayUsed ?? null,
+        dayLimit: snap.dayLimit ?? snap.bucket?.dayLimit ?? null,
+        disabledByEnv: snap.disabledByEnv ?? false,
+        safeMode: af.isSafeMode ? af.isSafeMode() : null,
+      });
+    } catch (e) { console.log('[API PLAN] log falhou', e?.message); }
+  };
+  logApiPlan('boot');
+  setTimeout(() => logApiPlan('post-first-poll'), 15_000).unref?.();
+
   if (String(process.env.FOOTBALL_POLLER_ENABLED || 'true').toLowerCase() !== 'false') {
     try {
       footballPoller.start();
