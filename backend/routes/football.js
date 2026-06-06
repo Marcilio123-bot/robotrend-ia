@@ -1115,6 +1115,20 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       betSignalDebug: String(process.env.BET_SIGNAL_DEBUG || 'false').toLowerCase() === 'true',
       liveSignalDebug: String(process.env.LIVE_SIGNAL_DEBUG || '').toLowerCase() === 'true',
 
+      // [STATS COVERAGE] — resumo direto (item solicitado): a API-Football
+      // está devolvendo estatísticas para ALGUM fixture nas últimas 24h?
+      //   verdict=all-empty  → nenhuma stat chegou (plano/cobertura)
+      //   verdict=mixed      → algumas ligas têm cobertura, outras não
+      //   verdict=all-ok     → stats chegando normalmente
+      statsCoverage: statsCallDiag ? {
+        ok24h:           statsCallDiag.ok24h ?? 0,
+        empty24h:        statsCallDiag.empty24h ?? 0,
+        emptyPct24h:     statsCallDiag.emptyPct24h ?? 0,
+        verdict:         statsCallDiag.verdict ?? 'no-data-yet',
+        okFixtureIds:    statsCallDiag.okFixtureIds ?? [],
+        emptyFixtureIds: statsCallDiag.emptyFixtureIds ?? [],
+      } : null,
+
       // /fixtures/statistics — confirma se a API está sendo chamada
       // e quantas respostas 200 (com array preenchido) chegaram.
       statsApiCalls: statsCallDiag,
