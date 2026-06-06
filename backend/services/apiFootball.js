@@ -156,6 +156,10 @@ const QUOTA_SAFE_PCT   = Number(process.env.API_FOOTBALL_QUOTA_SAFE_PCT || 0.20)
 // NÃO deixar ligado em produção — remove a proteção de estouro de quota.
 const DISABLE_SAFE_MODE = String(process.env.API_FOOTBALL_DISABLE_SAFE_MODE || 'false').toLowerCase() === 'true';
 
+// Diagnóstico cru de stats (mesma flag do enricher/normalizer). Quando true,
+// imprime a resposta HTTP COMPLETA de /fixtures/statistics ([STATS HTTP RAW]).
+const LIVE_STATS_DEBUG  = String(process.env.LIVE_STATS_DEBUG || 'false').toLowerCase() === 'true';
+
 const CB_THRESHOLD     = Number(process.env.API_FOOTBALL_CB_THRESHOLD  || 5);
 const CB_COOLDOWN_MS   = Number(process.env.API_FOOTBALL_CB_COOLDOWN_MS || 60_000);
 
@@ -758,16 +762,67 @@ async function getFixturesByTeam(teamId, { last, next, season, league } = {}, op
 async function getFixtureStatistics(id, opts = {}) {
   // Contador GLOBAL de chamadas a /fixtures/statistics — independente do caller.
   // Se este número permanecer em 0, a API NUNCA é chamada (cenário ENRICH_ENABLED=false).
+  // since/empty24h/ok24h: janela diária para o relatório cobertura vs plano.
   if (!getFixtureStatistics._diag) {
-    getFixtureStatistics._diag = { calls: 0, ok: 0, empty: 0, failed: 0, safeMode: 0, lastAt: 0, lastStatus: null };
+    getFixtureStatistics._diag = {
+      calls: 0, ok: 0, empty: 0, failed: 0, safeMode: 0, lastAt: 0, lastStatus: null,
+      since: Date.now(), windowStart: Date.now(), ok24h: 0, empty24h: 0,
+      emptyFixtureIds: [], okFixtureIds: [],
+    };
   }
   const d = getFixtureStatistics._diag;
+  // Reinicia a janela de 24h.
+  if (Date.now() - d.windowStart > 24 * 3600_000) {
+    d.windowStart = Date.now(); d.ok24h = 0; d.empty24h = 0;
+    d.emptyFixtureIds = []; d.okFixtureIds = [];
+  }
   d.calls++;
   d.lastAt = Date.now();
   try {
-    const resp = await fetchResponse('fixtures/statistics', { fixture: id }, opts);
-    if (Array.isArray(resp) && resp.length) { d.ok++;    d.lastStatus = 200; }
-    else                                    { d.empty++; d.lastStatus = 'empty'; }
+    // Chamamos get() direto (em vez de fetchResponse) para inspecionar o BODY
+    // cru da API (get/parameters/results/errors/paging/response) — necessário
+    // para distinguir "[] por cobertura" de "[] por plano". O valor de retorno
+    // permanece IDÊNTICO ao que fetchResponse produzia (array de response).
+    const body = await get('fixtures/statistics', { fixture: id }, opts);
+    let resp;
+    if (body && body.__skipped) {
+      resp = emptyFixturesArray(body.__reason || 'not_configured');
+    } else {
+      resp = Array.isArray(body?.response) ? body.response : [];
+      if (body && body.__stale) Object.defineProperty(resp, '__stale', { value: true, enumerable: false });
+    }
+
+    if (Array.isArray(resp) && resp.length) { d.ok++;    d.ok24h++;    d.lastStatus = 200; }
+    else                                    { d.empty++; d.empty24h++; d.lastStatus = 'empty'; }
+
+    // [STATS HTTP RAW] — body cru da resposta HTTP. Confirma item 1/3/6:
+    // URL exata + results + errors + tamanho de response. Se results=0 e
+    // errors=[] → cobertura (a API não tem stats p/ esse fixture). Se errors
+    // contém algo tipo plan/subscription → limitação de plano.
+    try {
+      const cfg = readConfig();
+      const url = maskSecretsInUrl(buildRequestUrl(cfg.baseURL, 'fixtures/statistics', { fixture: id }));
+      const summary = {
+        fixtureId: id,
+        url,
+        httpResults: body?.results ?? null,
+        errors: body?.errors ?? null,
+        responseLength: Array.isArray(body?.response) ? body.response.length : 0,
+        teamIds: Array.isArray(body?.response) ? body.response.map((t) => t?.team?.id) : [],
+        stale: !!body?.__stale,
+        cached: !opts.force,
+      };
+      console.log('[STATS HTTP RAW]', JSON.stringify(summary));
+      if (LIVE_STATS_DEBUG) {
+        console.log('[STATS HTTP RAW FULL]', id, JSON.stringify(body));
+      }
+      // Tally legível para o item 8 (cobertura vs plano) a cada chamada.
+      if (Array.isArray(resp) && !resp.length) {
+        d.emptyFixtureIds = [...new Set([...(d.emptyFixtureIds || []), String(id)])].slice(-50);
+      } else if (resp.length) {
+        d.okFixtureIds = [...new Set([...(d.okFixtureIds || []), String(id)])].slice(-50);
+      }
+    } catch (_) { /* log defensivo */ }
 
     // [STAT TRACE 1/6] api-raw — extrai o que a API devolveu para o
     // fixture-alvo (sem normalizar). Não loga nada se o id não bater.
@@ -803,7 +858,19 @@ async function getFixtureStatistics(id, opts = {}) {
   }
 }
 getFixtureStatistics.diagSnapshot = function () {
-  return { ...(getFixtureStatistics._diag || { calls: 0, ok: 0, empty: 0, failed: 0, safeMode: 0, lastAt: 0, lastStatus: null }) };
+  const base = {
+    calls: 0, ok: 0, empty: 0, failed: 0, safeMode: 0, lastAt: 0, lastStatus: null,
+    since: null, windowStart: null, ok24h: 0, empty24h: 0, emptyFixtureIds: [], okFixtureIds: [],
+  };
+  const d = { ...base, ...(getFixtureStatistics._diag || {}) };
+  const total24h = d.ok24h + d.empty24h;
+  d.emptyPct24h = total24h ? +(d.empty24h * 100 / total24h).toFixed(1) : 0;
+  // Veredito heurístico: se TODOS retornam vazio → cobertura/plano; se misto → cobertura por liga.
+  d.verdict = total24h === 0 ? 'no-data-yet'
+    : d.ok24h === 0 ? 'all-empty (plano sem live stats OU ligas sem cobertura)'
+    : d.empty24h === 0 ? 'all-ok (stats chegando normalmente)'
+    : 'mixed (algumas ligas/fixtures sem cobertura de stats)';
+  return d;
 };
 async function getFixtureEvents(id, opts = {})        { return fetchResponse('fixtures/events',     { fixture: id }, opts); }
 async function getFixtureLineups(id, opts = {})       { return fetchResponse('fixtures/lineups',    { fixture: id }, opts); }

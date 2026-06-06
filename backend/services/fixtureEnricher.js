@@ -477,6 +477,24 @@ class FixtureEnricher {
       if (Array.isArray(statsResp) && statsResp.length) this.stats.statsCalls200++;
       else this.stats.statsCallsEmpty++;
 
+      // [ENRICH CONTEXT] — contexto do fixture (item 2): liga/season/source.
+      // Como /fixtures/statistics só recebe `fixture=<id>`, leagueId/season NÃO
+      // vão na request — vêm do match. Útil p/ cruzar fixtures vazios com a liga
+      // (descobrir se a cobertura de stats falha sempre nas MESMAS competições).
+      try {
+        const ctxMatch = this.poller?.getMatch?.(id);
+        console.log('[ENRICH CONTEXT]', {
+          fixtureId: id,
+          leagueId: ctxMatch?.league?.id ?? null,
+          leagueName: ctxMatch?.league?.name ?? null,
+          country: ctxMatch?.league?.country ?? null,
+          season: ctxMatch?.league?.season ?? null,
+          source: ctxMatch?.flags?.source || ctxMatch?.provider || null,
+          minute: ctxMatch?.minute ?? null,
+          statsRespLength: Array.isArray(statsResp) ? statsResp.length : 0,
+        });
+      } catch (_) { /* defensivo */ }
+
       // [RAW STATS DATA] — resposta BRUTA de /fixtures/statistics, ANTES de
       // qualquer normalização. Se aqui já vier [] ou valores zerados, a causa
       // é a API (cenário A). Se vier preenchido mas o FINAL STATS sair zerado,
