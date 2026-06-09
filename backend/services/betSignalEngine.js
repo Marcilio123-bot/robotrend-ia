@@ -218,6 +218,50 @@ function probToOdd(p) {
   return Math.round((100 / p) * 100) / 100;
 }
 
+/* ============================================================
+   TETO DE CONFIANÇA ANCORADO NA PROBABILIDADE DO RESULTADO
+   ------------------------------------------------------------
+   `confidence` (exibido como "IA") mede a QUALIDADE do sinal, mas vinha
+   crescendo só com minuto + disponibilidade de dados — DESACOPLADA da
+   probabilidade real do palpite. Isso gerava sinais Premium (IA>=70) em
+   apostas perto de cara-ou-coroa (ex.: Under 2.5 gols com Prob=56% e
+   IA=87%, ou Over de escanteios com Prob~35%).
+
+   Aqui derivamos um TETO para a confiança a partir da probabilidade do
+   resultado RECOMENDADO (não da distância para 50%): quanto menor a
+   chance real de o palpite vencer, menor o teto de IA. A `odd justa`
+   continua = 1/probability (inalterada). A âncora SÓ REDUZ a confiança,
+   nunca aumenta — então mercados com prob alta (ex.: cartões 70-90%)
+   não são afetados.
+
+     prob 50% -> teto 60   (cara-ou-coroa: nunca Premium)
+     prob 56% -> teto ~67  (Free)
+     prob 60% -> teto ~72  (Premium marginal)
+     prob 67% -> teto ~80
+     prob>=75 -> teto ~90+
+   ============================================================ */
+const CONF_ANCHOR_BASE  = Number(process.env.BET_SIGNAL_CONF_ANCHOR_BASE  || 60);
+const CONF_ANCHOR_SLOPE = Number(process.env.BET_SIGNAL_CONF_ANCHOR_SLOPE || 1.2);
+
+function outcomeConfidenceCeiling(prob) {
+  return clamp(CONF_ANCHOR_BASE + (n(prob) - 50) * CONF_ANCHOR_SLOPE, 35, 95);
+}
+
+/**
+ * Aplica o teto ancorado à confiança do candidato (mutação in-place).
+ * Preserva o valor pré-âncora em `modelConfidence` para auditoria.
+ */
+function anchorConfidence(c) {
+  if (!c || !Number.isFinite(Number(c.probability))) return c;
+  const ceil = outcomeConfidenceCeiling(c.probability);
+  if (Number(c.confidence) > ceil) {
+    c.modelConfidence = c.confidence;
+    c.confidence = Math.round(ceil);
+    c.confidenceAnchored = true;
+  }
+  return c;
+}
+
 function canFire(key) {
   const now = Date.now();
   const last = cooldowns.get(key) || 0;
@@ -344,6 +388,96 @@ function baselineXG(m) {
 }
 
 /* ============================================================
+   TEMPO DE ESCANTEIOS — intensidade RECENTE vs. acumulada
+   ------------------------------------------------------------
+   O modelo antigo projetava escanteios só pelo ACUMULADO (total/min),
+   ignorando se o jogo acelerou ou desacelerou nos últimos minutos
+   (queixa do produto: "considera apenas o acumulado da partida e não a
+   intensidade dos últimos minutos").
+
+   Mantemos um histórico curto em memória por fixture (minuto, escanteios,
+   ataques perigosos) e derivamos:
+     - recentRate : escanteios/min na janela recente (~15min)
+     - accel      : recentRate vs. acumulado (>0 acelerando, <0 esfriando)
+     - dangAccel  : tendência de ataques perigosos recentes
+   A taxa efetiva mistura acumulado + recente (peso maior no recente quando
+   há janela suficiente) com um nudge por ataques perigosos recentes.
+   ZERO chamadas externas — usa só os dados já no cache do poller.
+   ============================================================ */
+const CORNER_TEMPO_WINDOW_MIN = Number(process.env.BET_SIGNAL_CORNER_TEMPO_WINDOW_MIN || 15);
+const cornerTempoState = new Map(); // fixtureId -> [{ min, corners, dang }]
+
+function recordCornerSample(m) {
+  const id = String(m.fixtureId || m.id || 'x');
+  const min = Math.max(1, n(m.minute));
+  const corners = n(m.stats?.corners?.home) + n(m.stats?.corners?.away);
+  const dang = n(m.stats?.dangerousAttacks?.home) + n(m.stats?.dangerousAttacks?.away);
+  let arr = cornerTempoState.get(id);
+  if (!arr) { arr = []; cornerTempoState.set(id, arr); }
+  const last = arr[arr.length - 1];
+  if (!last || min > last.min) {
+    arr.push({ min, corners, dang });
+    if (arr.length > 60) arr.shift();
+  } else {
+    // Mesmo minuto (tick repetido, ou Over+Under no mesmo tick): atualiza in-place.
+    last.corners = corners;
+    last.dang = dang;
+  }
+  return arr;
+}
+
+/**
+ * Dinâmica de escanteios a partir do acumulado + janela recente.
+ * Retorna { overallRate, recentRate, effRate, accel, dangAccel, recentSpan, wRecent }.
+ * `effRate` é a taxa/min a ser usada na projeção (substitui total/min).
+ */
+function cornerTempo(m, overallRate) {
+  const arr = recordCornerSample(m);
+  const min = Math.max(1, n(m.minute));
+  const totalCorners = n(m.stats?.corners?.home) + n(m.stats?.corners?.away);
+  const totalDang = n(m.stats?.dangerousAttacks?.home) + n(m.stats?.dangerousAttacks?.away);
+
+  // Sample de referência ~WINDOW minutos atrás (ou o mais antigo disponível).
+  let ref = null;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (min - arr[i].min >= CORNER_TEMPO_WINDOW_MIN) { ref = arr[i]; break; }
+  }
+  if (!ref && arr.length >= 2 && arr[0].min < min) ref = arr[0];
+
+  let recentRate = overallRate;
+  let recentSpan = 0;
+  let dangAccel = 0;
+  if (ref && min > ref.min) {
+    recentSpan = min - ref.min;
+    recentRate = Math.max(0, (totalCorners - ref.corners) / recentSpan);
+    const dangOverall = totalDang / min;
+    const dangRecent = Math.max(0, (totalDang - ref.dang) / recentSpan);
+    if (dangOverall > 0) dangAccel = (dangRecent - dangOverall) / dangOverall;
+  }
+
+  const accel = overallRate > 0 ? (recentRate - overallRate) / overallRate : 0;
+
+  // Peso do recente cresce com o tamanho da janela observada.
+  const wRecent = recentSpan >= 12 ? 0.55 : recentSpan >= 7 ? 0.40 : recentSpan >= 4 ? 0.25 : 0;
+  let effRate = overallRate * (1 - wRecent) + recentRate * wRecent;
+
+  // Nudge por ataques perigosos recentes (jogo esquentando empurra a taxa
+  // p/ cima; esfriando, p/ baixo). Limitado para não dominar a projeção.
+  const dangNudge = clamp(dangAccel, -0.4, 0.4) * 0.30;
+  effRate = Math.max(0, effRate * (1 + dangNudge));
+
+  return {
+    overallRate: +overallRate.toFixed(4),
+    recentRate: +recentRate.toFixed(4),
+    effRate: +effRate.toFixed(4),
+    accel: +accel.toFixed(3),
+    dangAccel: +dangAccel.toFixed(3),
+    recentSpan,
+    wRecent,
+  };
+}
+
+/* ============================================================
    1) CORNERS — Over X.5 escanteios
    Lógica: extrapola o ritmo atual, escolhe a linha X.5 cuja projeção
    resulta em P(over) na zona 45–55% (= odd 1.80–2.20).
@@ -351,6 +485,7 @@ function baselineXG(m) {
      - minuto avançado (mais sinal, menos ruído)
      - ritmo já elevado (>= 0.20/min)
      - ataques dos DOIS lados (pressão balanceada)
+     - intensidade recente alinhada à direção (acelerando p/ Over)
    ============================================================ */
 function computeCornersBet(m) {
   const min = Math.max(1, n(m.minute));
@@ -397,9 +532,12 @@ function computeCornersBet(m) {
      ============================================================ */
   let rate;
   let rateSource;
+  let tempo = null;
   if (total > 0) {
-    rate = total / min;
-    rateSource = 'observed';
+    const overallRate = total / min;
+    tempo = cornerTempo(m, overallRate);
+    rate = tempo.effRate;
+    rateSource = tempo.recentSpan >= 4 ? 'observed+recent' : 'observed';
   } else if (n(m.perMinute?.corners) > 0) {
     rate = n(m.perMinute.corners);
     rateSource = 'perMinute';
@@ -472,6 +610,12 @@ function computeCornersBet(m) {
     if (tied)        confidence += 5;
     if (min >= 65)   confidence += 5;
   }
+  // Aceleração/desaceleração recente: um Over só é confiável se o jogo NÃO
+  // estiver esfriando. Jogo esquentando reforça; esfriando, penaliza.
+  if (tempo && tempo.recentSpan >= 5) {
+    if (tempo.accel <= -0.25)      confidence -= 8;
+    else if (tempo.accel >= 0.25)  confidence += 5;
+  }
   confidence = clamp(confidence, 0, 95);
 
   return {
@@ -481,8 +625,9 @@ function computeCornersBet(m) {
     confidence,
     oddEstimated: probToOdd(probability),
     justification:
-      `${total} escanteios em ${min}′ (${rate.toFixed(2)}/min, fonte=${rateSource}) → projeção ${projected.toFixed(1)}. ` +
-      `Ataques ${dangH}/${dangA}, pressão ${Math.round(pressure)}.`,
+      `${total} escanteios em ${min}′ (${rate.toFixed(2)}/min${tempo ? `, recente ${tempo.recentRate.toFixed(2)}/min` : ''}, fonte=${rateSource}) → projeção ${projected.toFixed(1)}. ` +
+      `Ataques ${dangH}/${dangA}, pressão ${Math.round(pressure)}.` +
+      (tempo ? ` Tendência: ${tempo.accel >= 0.1 ? 'acelerando' : tempo.accel <= -0.1 ? 'desacelerando' : 'estável'}.` : ''),
     extras: {
       target: best.target,
       currentCorners: total,
@@ -491,6 +636,7 @@ function computeCornersBet(m) {
       rateSource,
       sigma: +sigma.toFixed(2),
       advanced,
+      tempo: tempo || null,
     },
   };
 }
@@ -521,12 +667,15 @@ function computeCornersUnderBet(m) {
 
   if (remaining < 5) return null;
 
-  // RATE — idêntico ao Over (mesma fonte/baseline)
+  // RATE — idêntico ao Over (mesma fonte/baseline + intensidade recente)
   let rate;
   let rateSource;
+  let tempo = null;
   if (total > 0) {
-    rate = total / min;
-    rateSource = 'observed';
+    const overallRate = total / min;
+    tempo = cornerTempo(m, overallRate);
+    rate = tempo.effRate;
+    rateSource = tempo.recentSpan >= 4 ? 'observed+recent' : 'observed';
   } else if (n(m.perMinute?.corners) > 0) {
     rate = n(m.perMinute.corners);
     rateSource = 'perMinute';
@@ -590,6 +739,12 @@ function computeCornersUnderBet(m) {
     if (tied)        confidence += 5;
     if (min >= 65)   confidence += 5;
   }
+  // Aceleração/desaceleração recente — INVERSA do Over: um Under só é
+  // confiável se o jogo NÃO estiver esquentando. Esfriando reforça.
+  if (tempo && tempo.recentSpan >= 5) {
+    if (tempo.accel >= 0.25)       confidence -= 8;
+    else if (tempo.accel <= -0.25) confidence += 5;
+  }
   confidence = clamp(confidence, 0, 95);
 
   return {
@@ -599,8 +754,9 @@ function computeCornersUnderBet(m) {
     confidence,
     oddEstimated: probToOdd(probability),
     justification:
-      `${total} escanteios em ${min}′ (${rate.toFixed(2)}/min, fonte=${rateSource}) → projeção ${projected.toFixed(1)}. ` +
-      `Ataques ${dangH}/${dangA}, pressão ${Math.round(pressure)}.`,
+      `${total} escanteios em ${min}′ (${rate.toFixed(2)}/min${tempo ? `, recente ${tempo.recentRate.toFixed(2)}/min` : ''}, fonte=${rateSource}) → projeção ${projected.toFixed(1)}. ` +
+      `Ataques ${dangH}/${dangA}, pressão ${Math.round(pressure)}.` +
+      (tempo ? ` Tendência: ${tempo.accel >= 0.1 ? 'acelerando' : tempo.accel <= -0.1 ? 'desacelerando' : 'estável'}.` : ''),
     extras: {
       target: best.target,
       currentCorners: total,
@@ -610,6 +766,7 @@ function computeCornersUnderBet(m) {
       sigma: +sigma.toFixed(2),
       advanced,
       direction: 'under',
+      tempo: tempo || null,
     },
   };
 }
@@ -944,15 +1101,25 @@ function _cardsModel(m) {
   const foulCardRate = foulsRate * CARDS_FOUL_TO_CARD;
   const earliness = clamp(1 - min / 90, 0, 1);
   const wObs = clamp(0.55 * (1 - earliness) + 0.25, 0, 1);
-  const wFoul = 0.30;
+  // BUGFIX: o peso de faltas (0.30) só entra quando HÁ dado de faltas. Antes,
+  // jogos sem o stat de faltas multiplicavam foulCardRate=0 por 0.30, o que
+  // DILUÍA a taxa para baixo e subestimava λ restante → Under superestimado
+  // (ex.: 2 cartões aos 67' viravam ~84% Under). Sem faltas, esse peso é
+  // redistribuído para observado + baseline.
+  const wFoul = hasFoulData ? 0.30 : 0;
   const wBase = Math.max(0, 1 - wObs - wFoul);
-  const rate = obsRate * wObs + foulCardRate * wFoul + CARDS_BASELINE_PER_MIN * wBase;
+  let rate = obsRate * wObs + foulCardRate * wFoul + CARDS_BASELINE_PER_MIN * wBase;
+  // Piso de propensão: um jogo que JÁ mostrou cartões demonstrou um ritmo que
+  // não deve ser projetado para perto de zero. Garante rate >= 85% do observado.
+  if (hasCardData) rate = Math.max(rate, obsRate * 0.85);
 
-  // Escalonamento tardio + modificadores de contexto.
+  // Escalonamento tardio + modificadores de contexto. Cartões aceleram de
+  // forma marcante na reta final (faltas táticas, tempo perdido, tensão).
   let lateFactor = 1;
-  if (min >= 60) lateFactor += 0.20;
-  if (min >= 75) lateFactor += 0.20;
-  if (min >= 85) lateFactor += 0.15;
+  if (min >= 60) lateFactor += 0.25;
+  if (min >= 70) lateFactor += 0.15;
+  if (min >= 80) lateFactor += 0.20;
+  if (min >= 88) lateFactor += 0.15;
   let ctxFactor = 1 + rivalry * 0.25;
   if (pressure >= 55) ctxFactor += 0.08;
   if (refAvg) ctxFactor *= clamp(refAvg / 4.2, 0.7, 1.6);
@@ -1361,6 +1528,11 @@ function premiumInsight(c, m, scoreInfo) {
     const totalDang = dangH + dangA;
     const dir = c.market === 'cornersUnder' ? 'Under' : 'Over';
     parts.push(`📊 ${totalCorners} escanteios em ${min}′ (ritmo ${(totalCorners / Math.max(min, 1) * 90).toFixed(1)}/90′) — alvo ${dir}`);
+    const tempo = c.extras?.tempo;
+    if (tempo && tempo.recentSpan >= 5) {
+      const trend = tempo.accel >= 0.1 ? '📈 jogo acelerando' : tempo.accel <= -0.1 ? '📉 jogo desacelerando' : '➡️ ritmo estável';
+      parts.push(`${trend} (recente ${(tempo.recentRate * 90).toFixed(1)}/90′ vs. acumulado ${(tempo.overallRate * 90).toFixed(1)}/90′)`);
+    }
     if (c.market === 'corners') {
       if (totalDang >= 60) parts.push(`⚡ Pressão ofensiva alta: ${totalDang} ataques perigosos`);
       if (sotH + sotA >= 8) parts.push(`🎯 ${sotH + sotA} chutes no alvo — ataques produtivos`);
@@ -1723,8 +1895,12 @@ function processMatch(m) {
       tickDecisions.push(decision);
       continue;
     }
+    // Âncora de confiança: limita a IA pela probabilidade real do palpite
+    // ANTES de qualquer gate (low-confidence / tier Premium) ou log, para que
+    // sinais de baixa viabilidade não sejam classificados como Premium.
+    anchorConfidence(c);
     recordMarketFunnel(market, 'candidate');
-    console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=CANDIDATE conf=${c.confidence} prob=${c.probability} odd=${c.oddEstimated} pred="${c.prediction}"`);
+    console.log(`${marketTag(c.market)} fixtureId=${sigStats.fixtureId} ${m.home} x ${m.away} result=CANDIDATE conf=${c.confidence}${c.confidenceAnchored ? `(âncora←${c.modelConfidence})` : ''} prob=${c.probability} odd=${c.oddEstimated} pred="${c.prediction}"`);
 
     if (PIPELINE_LOG) {
       console.log(`[LIVE PIPELINE] candidate ${market} | conf=${c.confidence} | prob=${c.probability} | odd=${c.oddEstimated} | ${c.prediction}`);
@@ -2493,6 +2669,10 @@ module.exports = {
     computeOver25Bet, computeUnder25Bet,
     computeWinBet,
     probToOdd, poisson, premiumInsight,
+    // Âncora de confiança (IA) à probabilidade do resultado.
+    outcomeConfidenceCeiling, anchorConfidence,
+    // Tempo/intensidade recente de escanteios.
+    cornerTempo, recordCornerSample,
     // Cartões (Over/Under) — expostos para auditoria/testes.
     _cardsModel, resolveCardsWinner, cardsAnalysisScore, cardsRivalryIndex,
     CARDS_LINES, CARDS_MIN_CONFIDENCE, CARDS_MIN_SCORE, CARDS_MARKETS,
