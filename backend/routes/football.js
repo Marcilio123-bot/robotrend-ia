@@ -53,6 +53,8 @@ const { getPoller } = require('../workers/liveFootballPoller');
 const { getEnricher } = require('../services/fixtureEnricher');
 const { normalizeFixture, statName, ensureAllMinimal } = require('../services/fixtureNormalizer');
 const { logger } = require('../logger');
+// Gating por plano (FREE x PREMIUM) — análise ao vivo é Premium.
+const signalAccess = require('../signalAccess');
 
 const log = logger.child({ module: 'football-routes' });
 
@@ -318,7 +320,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     res.json({
       ok: true,
       count: matches.length,
-      matches,
+      // Validação obrigatória por plano: FREE só recebe dados básicos da partida.
+      matches: signalAccess.projectMatchesForUser(matches, isPremiumRequester(req)),
       generatedAt: new Date().toISOString(),
       safeMode: af.isSafeMode?.() || false,
       meta: buildLiveMeta(allLive, matches),
@@ -357,7 +360,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       ok: true,
       mode: 'scanner',
       count: matches.length,
-      matches,
+      // Validação obrigatória por plano: FREE só recebe dados básicos da partida.
+      matches: signalAccess.projectMatchesForUser(matches, isPremiumRequester(req)),
       generatedAt: new Date().toISOString(),
       safeMode: af.isSafeMode?.() || false,
       meta: buildLiveMeta(allLive, matches),
@@ -418,7 +422,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
         bttsPct: Math.round((bttsCount / total) * 100),
       } : null,
       leagues: Array.from(allLeagues.values()).sort((a,b) => b.count - a.count),
-      matches: filtered,
+      // Validação obrigatória por plano: FREE só recebe dados básicos da partida.
+      matches: signalAccess.projectMatchesForUser(filtered, isPremiumRequester(req)),
       meta: buildLiveMeta(matches, filtered),
       consensus: { mode: consensus.CONSENSUS_MODE },
     });
@@ -440,9 +445,12 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     res.write(`retry: 5000\n\n`);
     res.write(`event: hello\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
 
+    // Validação obrigatória por plano: FREE só recebe dados básicos da partida.
+    const streamIsPremium = isPremiumRequester(req);
+
     // envia snapshot inicial
     res.write(`event: tick\ndata: ${JSON.stringify({
-      matches: poller.getMatches(),
+      matches: signalAccess.projectMatchesForUser(poller.getMatches(), streamIsPremium),
       generatedAt: new Date().toISOString(),
       source: 'snapshot',
     })}\n\n`);
@@ -452,13 +460,26 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
         res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
       } catch (_) { /* client fechou */ }
     };
-    const onTick     = send('tick');
-    const onUpdate   = send('match:update');
-    const onUpsert   = send('match:upsert');
+    // Projeta eventos de partida (tick / match:*) conforme o plano antes de enviar.
+    const sendTick = (payload) => {
+      const projected = streamIsPremium
+        ? payload
+        : { ...payload, matches: signalAccess.projectMatchesForUser(payload?.matches, false) };
+      try { res.write(`event: tick\ndata: ${JSON.stringify(projected)}\n\n`); } catch (_) {}
+    };
+    const sendMatchEvt = (event) => (payload) => {
+      const projected = signalAccess.projectMatchEventPayload(payload, streamIsPremium);
+      try { res.write(`event: ${event}\ndata: ${JSON.stringify(projected)}\n\n`); } catch (_) {}
+    };
+    const onTick     = sendTick;
+    const onUpdate   = sendMatchEvt('match:update');
+    const onUpsert   = sendMatchEvt('match:upsert');
     const onRemove   = send('match:remove');
-    const onGoal     = send('fixture:goal');
-    const onCorner   = send('fixture:corner');
-    const onCard     = send('fixture:card');
+    // Eventos factuais do placar (gol/escanteio/cartão) — básicos, com match sanitizado.
+    const onGoal     = sendMatchEvt('fixture:goal');
+    const onCorner   = sendMatchEvt('fixture:corner');
+    const onCard     = sendMatchEvt('fixture:card');
+    // Pressão e BTTS-near são PROBABILIDADES AVANÇADAS (Premium) — só para premium.
     const onPressure = send('fixture:pressure');
     const onBtts     = send('fixture:btts-near');
 
@@ -469,8 +490,10 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     events.on('fixture:goal',      onGoal);
     events.on('fixture:corner',    onCorner);
     events.on('fixture:card',      onCard);
-    events.on('fixture:pressure',  onPressure);
-    events.on('fixture:btts-near', onBtts);
+    if (streamIsPremium) {
+      events.on('fixture:pressure',  onPressure);
+      events.on('fixture:btts-near', onBtts);
+    }
 
     // heartbeat para evitar proxies fecharem por idle
     const hb = setInterval(() => { try { res.write(`: ping ${Date.now()}\n\n`); } catch {} }, 15_000);
@@ -484,8 +507,10 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       events.off('fixture:goal',      onGoal);
       events.off('fixture:corner',    onCorner);
       events.off('fixture:card',      onCard);
-      events.off('fixture:pressure',  onPressure);
-      events.off('fixture:btts-near', onBtts);
+      if (streamIsPremium) {
+        events.off('fixture:pressure',  onPressure);
+        events.off('fixture:btts-near', onBtts);
+      }
     });
   });
 
@@ -510,13 +535,17 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
 
     // SAFE-MODE: serve só o que estiver no cache do poller. Não dispara
     // nenhuma chamada nova de stats/events/lineups/odds/predictions.
+    // Análise ao vivo é Premium: FREE recebe partida básica (sem IA) e nunca
+    // predictions/odds calculadas.
+    const fxIsPremium = isPremiumRequester(req);
+
     const safeMode = af.isSafeMode && af.isSafeMode();
     if (safeMode) {
       const cached = poller.getMatch(id);
       return res.json({
         ok: true,
         safeMode: true,
-        fixture: cached || null,
+        fixture: signalAccess.projectMatchForUser(cached || null, fxIsPremium),
         statistics: cached?.stats ? [cached.stats] : null,
         events: cached?.events || null,
         lineups: null,
@@ -546,12 +575,14 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     }
     res.json({
       ok: true,
-      fixture,
+      fixture: signalAccess.projectMatchForUser(fixture, fxIsPremium),
       statistics: stats,
       events,
       lineups,
-      predictions,
-      odds,
+      // predictions/odds calculadas são Premium.
+      predictions: fxIsPremium ? predictions : null,
+      odds: fxIsPremium ? odds : null,
+      ...(fxIsPremium ? {} : { locked: true, upgrade: true, message: signalAccess.LIVE_UPGRADE_MESSAGE }),
     });
   }));
 
@@ -588,7 +619,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     res.json({ ok: true, prediction: data[0] || null });
   }));
 
-  router.get('/odds', asyncHandler(async (req, res) => {
+  router.get('/odds', gatePremiumFeature('premium_odds'), asyncHandler(async (req, res) => {
     noStore(res);
     const data = await af.getOdds({
       fixture:   req.query.fixture,
@@ -601,7 +632,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     res.json({ ok: true, count: data.length, odds: data });
   }));
 
-  router.get('/odds/live', asyncHandler(async (req, res) => {
+  router.get('/odds/live', gatePremiumFeature('premium_odds'), asyncHandler(async (req, res) => {
     noStore(res);
     const data = await af.getOddsLive({
       fixture: req.query.fixture,
@@ -613,7 +644,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   /**
    * Bundle de odds — extrai BTTS, Over/Under, Match Winner, Asian Corners.
    */
-  router.get('/odds/bundle/:fixtureId', asyncHandler(async (req, res) => {
+  router.get('/odds/bundle/:fixtureId', gatePremiumFeature('premium_odds'), asyncHandler(async (req, res) => {
     noStore(res);
     const fixtureId = req.params.fixtureId;
     const [oddsLive, oddsPre] = await Promise.all([
@@ -807,7 +838,10 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     const markets = req.query.markets || null;          // CSV: corners,goals,btts,cards,pressure
     const minConfidence = Number(req.query.minConfidence || 0);
     const sinceMs = req.query.sinceMs ? Number(req.query.sinceMs) : 0;
-    const signals = signalsEngine.listRecent({ limit, type, markets, minConfidence, sinceMs });
+    const raw = signalsEngine.listRecent({ limit, type, markets, minConfidence, sinceMs });
+    // Validação obrigatória por plano: FREE só vê sinais FREE.
+    const signalAccess = require('../signalAccess');
+    const signals = signalAccess.projectSignalsForUser(raw, isPremiumRequester(req));
     res.json({ ok: true, count: signals.length, signals, engine: signalsEngine.snapshot() });
   }));
 
@@ -824,6 +858,21 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
    */
   router.get('/signals/board', (req, res) => {
     noStore(res);
+    // Análise ao vivo (recomendações de entrada da IA) é PREMIUM.
+    if (!isPremiumRequester(req)) {
+      return res.json({
+        ok: true,
+        locked: true,
+        upgrade: true,
+        currentTier: 'free',
+        count: 0,
+        total: 0,
+        enriched: 0,
+        signals: [],
+        message: signalAccess.LIVE_UPGRADE_MESSAGE,
+        generatedAt: new Date().toISOString(),
+      });
+    }
     const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
     const prefs = {
       markets: req.query.markets ? String(req.query.markets).split(',').map((s) => s.trim()).filter(Boolean) : [],
@@ -930,16 +979,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     }
   }
 
-  function stripForFree(s) {
-    const out = { ...s };
-    delete out.premiumInsight;
-    delete out.betScore;
-    delete out.scoreBreakdown;
-    delete out.extras;
-    out.justification = 'Análise completa disponível no plano Premium.';
-    out.locked = true;
-    return out;
-  }
+  // (gating por plano centralizado em backend/signalAccess.js)
 
   /**
    * GET /api/football/bet-signals
@@ -963,10 +1003,10 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     signals = signals.filter((s) => ALLOWED_MARKETS.has(s.market));
 
     if (!isPrem) {
-      // FREE: filtra para mostrar apenas sinais 'free' (tier='free') e remove detalhes
-      signals = signals
-        .filter((s) => s.tier !== 'premium')
-        .map(stripForFree);
+      // FREE: sinais PREMIUM viram placeholder de upgrade (nenhum dado preditivo
+      // vaza) e sinais FREE perdem só a análise profunda. Fonte única: signalAccess.
+      const signalAccess = require('../signalAccess');
+      signals = signalAccess.projectSignalsForUser(signals, false);
     }
 
     res.json({
@@ -1041,6 +1081,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
 
   router.get('/bet-signals/diag', diagAuth, (req, res) => {
     noStore(res);
+    const signalAccessDiag = require('../signalAccess');
     let engineSnap = null, pollerSnap = null, apiStatus = null, recentList = [];
     try { engineSnap = betSignalEngine.snapshot(); } catch (e) { engineSnap = { error: e.message }; }
     try { pollerSnap = poller.snapshot(); }         catch (e) { pollerSnap = { error: e.message }; }
@@ -1174,18 +1215,30 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       lastTickFunnel: engineSnap?.lastTickSummary || null,
       funnelTotals:   engineSnap?.funnelTotals   || null,
 
-      lastSignalSample: lastSignal ? {
-        market: lastSignal.market,
-        prediction: lastSignal.prediction,
-        confidence: lastSignal.confidence,
-        odd: lastSignal.oddEstimated,
-        tier: lastSignal.tier,
-        match: lastSignal.match
-          ? `${lastSignal.match.home} x ${lastSignal.match.away}`
-          : null,
-        minute: lastSignal.match?.minute,
-        createdAt: lastSignal.createdAt,
-      } : null,
+      // Amostra diagnóstica do último sinal. Conteúdo preditivo só é revelado
+      // a quem tem acesso premium/admin (ou via METRICS_TOKEN). FREE vê apenas
+      // metadados não sensíveis — nunca o palpite/odd de um sinal premium.
+      lastSignalSample: lastSignal ? (() => {
+        const tokenOk = process.env.METRICS_TOKEN
+          && String(req.query.token || req.get('x-metrics-token') || '') === String(process.env.METRICS_TOKEN);
+        const reveal = tokenOk || isPremiumRequester(req) || !signalAccessDiag.isPremiumSignal(lastSignal);
+        const base = {
+          market: lastSignal.market,
+          tier: lastSignal.tier,
+          createdAt: lastSignal.createdAt,
+        };
+        if (!reveal) return { ...base, locked: true };
+        return {
+          ...base,
+          prediction: lastSignal.prediction,
+          confidence: lastSignal.confidence,
+          odd: lastSignal.oddEstimated,
+          match: lastSignal.match
+            ? `${lastSignal.match.home} x ${lastSignal.match.away}`
+            : null,
+          minute: lastSignal.match?.minute,
+        };
+      })() : null,
 
       process: {
         pid: process.pid,
@@ -1711,7 +1764,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     res.json({
       ok: true,
       count: matches.length,
-      matches,
+      // Validação obrigatória por plano: FREE só recebe dados básicos da partida.
+      matches: signalAccess.projectMatchesForUser(matches, isPremiumRequester(req)),
       poller: snap,
       safeMode: apiStatus.safeMode || null,
       reason,

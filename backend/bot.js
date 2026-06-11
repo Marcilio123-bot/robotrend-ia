@@ -20,6 +20,7 @@ const { logger } = require('./logger');
 const metrics = require('./metrics');
 const freshness = require('./freshness');
 const footballEvents = require('./services/footballEvents');
+const signalAccess = require('./signalAccess');
 
 const SCAN_INTERVAL = Number(process.env.LIVE_SCAN_INTERVAL_MS || 15000);
 const BASE_MIN_SCORE = Number(process.env.SIGNAL_MIN_SCORE || 80);
@@ -66,8 +67,8 @@ class RobotrendBot {
       const analysis = analyzeLiveMatch(legacy, { history });
       this.lastMatches[idx] = legacy;
       this.lastAnalyses[idx] = analysis;
-      this.io.emit('matches:update', [legacy]);
-      this.io.emit('analyses:update', this.lastAnalyses);
+      signalAccess.broadcastMatchesToRoot(this.io, 'matches:update', [legacy]);
+      signalAccess.broadcastAnalysesToRoot(this.io, 'analyses:update', this.lastAnalyses);
     };
     footballEvents.on('match:enriched', this._onMatchEnriched);
   }
@@ -304,8 +305,8 @@ class RobotrendBot {
 
     console.log(`[MATCH ENGINE] only real-time API data rendered (${safe.length} matches)`);
 
-    this.io.emit('matches:update', this.lastMatches);
-    this.io.emit('analyses:update', this.lastAnalyses);
+    signalAccess.broadcastMatchesToRoot(this.io, 'matches:update', this.lastMatches);
+    signalAccess.broadcastAnalysesToRoot(this.io, 'analyses:update', this.lastAnalyses);
 
     for (const { match, analysis } of safe) {
       if (!analysis.shouldSignal) continue;
@@ -349,7 +350,9 @@ class RobotrendBot {
 
       const saved = await db.saveSignal(analysis, null);
       const tg = await sendSignal(analysis);
-      this.io.emit('signal:new', { ...saved, telegram: tg });
+      // Broadcast tier-aware: usuários FREE não recebem sinais premium (apenas
+      // placeholder de upgrade). Substitui io.emit() direto, que vazava p/ todos.
+      signalAccess.broadcastSignalToRoot(this.io, 'signal:new', { ...saved, telegram: tg });
       metrics.recordSignal();
       this.log.info('signal emitted', {
         match: `${match.home} x ${match.away}`,

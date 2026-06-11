@@ -54,6 +54,7 @@ const { buildAdminRoutes } = require('./admin');
 const { buildMasterRoutes } = require('./master');
 const { buildAnalyticsRoutes } = require('./analytics');
 const { buildAnnouncementRoutes } = require('./announcements');
+const signalAccess = require('./signalAccess');
 const subscription = require('./subscription');
 const { buildFootballRoutes } = require('./routes/football');
 const footballHistory = require('./services/footballHistory');
@@ -570,7 +571,10 @@ app.get('/api/signals',
     const requested = Number(req.query.limit || 50);
     const limit = Math.min(requested, cap);
 
-    const signals = await db.listSignals(limit, null);
+    const rawSignals = await db.listSignals(limit, null);
+    // Validação obrigatória por plano: FREE nunca recebe sinais PREMIUM.
+    const canSeePremium = isAdmin || sub.hasPaidAccess;
+    const signals = signalAccess.projectSignalsForUser(rawSignals, canSeePremium);
     res.json({
       signals,
       meta: { limit, cap, plan, isAdmin },
@@ -758,7 +762,8 @@ app.post('/api/signals/test',
       __test: true,
     };
     const tg = await sendSignal(testPayload);
-    io.emit('signal:new', { ...testPayload, telegram: tg });
+    // Broadcast tier-aware: usuários FREE não recebem o conteúdo premium do teste.
+    signalAccess.broadcastSignalToRoot(io, 'signal:new', { ...testPayload, telegram: tg });
     metrics.recordSignal();
     res.json({ ok: true, telegram: tg, signal: testPayload });
   }
@@ -1100,18 +1105,21 @@ io.on('connection', async (socket) => {
   socket.emit('hello', { service: 'Robotrend IA', socketId: socket.id, user: socket.user || null });
 
   const snap = bot.snapshot();
+  // Validação obrigatória por plano: projeta análise ao vivo conforme o plano.
+  const socketIsPremium = signalAccess.isPremiumUser(socket.user);
   socket.emit('system:status', bot.systemStatus());
-  socket.emit('matches:update', snap.matches);
-  socket.emit('analyses:update', snap.analyses);
+  socket.emit('matches:update', signalAccess.projectMatchesForUser(snap.matches, socketIsPremium));
+  socket.emit('analyses:update', signalAccess.projectAnalysesForUser(snap.analyses, socketIsPremium));
   socket.emit('stats:update', await db.getStats());
-  socket.emit('signals:list', await db.listSignals(20));
+  socket.emit('signals:list', signalAccess.projectSignalsForUser(await db.listSignals(20), socketIsPremium));
   // Snapshot do betSignalEngine (painel "Sinais em tempo real" / #live-signals).
   try {
     const betRecent = betSignalEngine.listRecent({ limit: 12, minConfidence: 0 });
-    socket.emit('bet-signals:list', betRecent);
-    console.log('[LIVE SOCKET EMIT] bet-signals:list', { count: betRecent.length, socketId: socket.id });
-    if (betRecent.length) {
-      log.debug('ws bet-signals:list snapshot', { count: betRecent.length, socketId: socket.id });
+    const projected = signalAccess.projectSignalsForUser(betRecent, socketIsPremium);
+    socket.emit('bet-signals:list', projected);
+    console.log('[LIVE SOCKET EMIT] bet-signals:list', { count: projected.length, premium: socketIsPremium, socketId: socket.id });
+    if (projected.length) {
+      log.debug('ws bet-signals:list snapshot', { count: projected.length, socketId: socket.id });
     }
   } catch (e) {
     log.warn('ws bet-signals:list snapshot falhou', { err: e.message });

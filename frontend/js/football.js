@@ -1871,11 +1871,34 @@
   }
 
   function miniMatchCardHTML(m) {
+    const corners = m.stats?.corners?.total ?? '—';
+    const shots = m.stats?.shots?.total ?? '—';
+
+    // Análise ao vivo é Premium: FREE vê apenas dados básicos + chamada de upgrade.
+    if (m.premiumLocked) {
+      return `
+      <article class="sig-mini-card sig-mini-locked" data-mid="${escapeHtml(String(m.id))}">
+        <header>
+          <span class="lg">${escapeHtml(m.league?.fullName || m.league?.name || '')}</span>
+          <span class="mn">${m.minute || 0}'</span>
+        </header>
+        <div class="tt">
+          <span class="tm">${escapeHtml(m.home || '—')}</span>
+          <span class="sc">${m.score?.home ?? 0} – ${m.score?.away ?? 0}</span>
+          <span class="tm rt">${escapeHtml(m.away || '—')}</span>
+        </div>
+        <div class="kpis">
+          <div><span>Esc</span><strong>${corners}</strong></div>
+          <div><span>Fin</span><strong>${shots}</strong></div>
+        </div>
+        <footer><span class="sig-mini-pill warn">🔒 Análise IA no Premium</span></footer>
+      </article>
+    `;
+    }
+
     const press = Math.round(m.perMinute?.pressureIndex || 0);
     const mom = m.momentum || { home: 50, away: 50 };
     const btts = Math.round(m.bttsLikelihood || 0);
-    const corners = m.stats?.corners?.total ?? '—';
-    const shots = m.stats?.shots?.total ?? '—';
     const top = topSignalFor(m.id);
     const sigPill = top
       ? `<span class="sig-mini-pill ok">${top.classification?.emoji || '⚡'} ${top.confidence}%</span>`
@@ -2283,9 +2306,8 @@
         </div>`;
         return;
       }
-      const mom = m.momentum || { home: 50, away: 50 };
-      const btts = Math.round(m.bttsLikelihood || 0);
-      root.innerHTML =
+      // Stat bars factuais do placar (básicos) — disponíveis para todos.
+      const factualStats =
         statBar('Posse',           m.stats.possession.home, m.stats.possession.away) +
         statBar('Escanteios',      m.stats.corners.home,    m.stats.corners.away) +
         statBar('Chutes',          m.stats.shots.home,      m.stats.shots.away) +
@@ -2293,7 +2315,25 @@
         statBar('Ataques perig.',  m.stats.dangerousAttacks.home, m.stats.dangerousAttacks.away) +
         statBar('Ataques',         m.stats.attacks.home,    m.stats.attacks.away) +
         statBar('Amarelos',        m.stats.cards.yellow.home, m.stats.cards.yellow.away) +
-        statBar('Vermelhos',       m.stats.cards.red.home,    m.stats.cards.red.away) +
+        statBar('Vermelhos',       m.stats.cards.red.home,    m.stats.cards.red.away);
+
+      // Bloco de PROBABILIDADES AVANÇADAS / Momentum / BTTS — Premium.
+      if (m.premiumLocked) {
+        root.innerHTML = factualStats +
+          `<div style="margin-top:10px;padding:14px;background:var(--surface);border:1px dashed var(--border);border-radius:10px;font-size:12px;color:var(--muted);text-align:center">
+            <div style="font-size:20px;margin-bottom:6px">🔒</div>
+            <strong style="color:var(--text)">Análise avançada da IA é Premium</strong><br>
+            Pressão IA, momentum, escanteios/min e BTTS likelihood disponíveis no plano Premium.
+            <div style="margin-top:10px">
+              <a href="/account.html" class="best-bet-cta" style="display:inline-block;padding:8px 14px;border-radius:8px;background:var(--accent,#22c55e);color:#06210f;font-weight:700;text-decoration:none">Fazer upgrade</a>
+            </div>
+          </div>`;
+        return;
+      }
+
+      const mom = m.momentum || { home: 50, away: 50 };
+      const btts = Math.round(m.bttsLikelihood || 0);
+      root.innerHTML = factualStats +
         statBar('Momentum',        mom.home,                mom.away) +
         `<div style="margin-top:10px;padding:10px;background:var(--surface);border-radius:8px;font-size:11px;color:var(--muted)">
           <strong style="color:var(--text)">🔥 Pressão IA:</strong> ${(m.perMinute?.pressureIndex || 0).toFixed(1)}<br>

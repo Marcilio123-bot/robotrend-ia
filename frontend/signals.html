@@ -163,6 +163,26 @@
 
     function card(s) {
       const meta = MARKETS[s.market] || { label: s.market || '—', accent: '#14b85e' };
+      // Sinal Premium bloqueado para FREE: o backend removeu todo o conteúdo.
+      // Renderizamos um card de upgrade, sem palpite/odd/confiança/times.
+      if (s.locked === true) {
+        return `
+          <article class="signal-card" style="border-left-color:#ffb547;opacity:.9;">
+            <div class="flex items-center justify-between">
+              <span style="font-size:11px; padding:3px 10px; border-radius:999px; background:#6b728022; color:#9ca3af; font-weight:800; letter-spacing:.06em;">
+                🔒 ${(meta.label || 'SINAL').toUpperCase()} · PREMIUM
+              </span>
+              <span class="text-[11px] font-mono" style="color: var(--muted);">${fmtTime(s.createdAt)}</span>
+            </div>
+            <div class="pred" style="color:#ffb547;font-size:16px;margin-top:10px;">Sinal exclusivo Premium</div>
+            <div class="text-[12px] mt-2" style="color: var(--muted); line-height:1.5;">
+              ${s.message || 'Faça upgrade para desbloquear a análise completa.'}
+            </div>
+            <button onclick="if(window.virarPremium){window.virarPremium();}else{location.href='/account.html';}" style="margin-top:12px;width:100%;padding:9px;border-radius:8px;border:1px solid #ffb547;background:rgba(255,181,71,.12);color:#ffb547;font-weight:700;cursor:pointer;">
+              Virar Premium →
+            </button>
+          </article>`;
+      }
       const prob = s.probability ?? s.confidence ?? 0;
       const conf = s.confidence ?? 0;
       const odd = s.oddEstimated ?? s.odd ?? null;

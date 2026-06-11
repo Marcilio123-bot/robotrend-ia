@@ -344,15 +344,34 @@
 
   function matchCardHTML(match, a) {
     const sc = match.score || { home: 0, away: 0 };
+    const locked = a?.premiumLocked || match.premiumLocked;
     const cls = a?.classification ? levelClass(a.classification.level) : 'warm';
-    const sug = a?.suggestion ? `<div class="suggestion-pill">${esc(a.suggestion)}</div>` : '';
-    const oddRisk = a
+    const sug = (!locked && a?.suggestion) ? `<div class="suggestion-pill">${esc(a.suggestion)}</div>` : '';
+    const oddRisk = (a && !locked)
       ? `<div class="flex items-center gap-1.5 mt-2 flex-wrap">
            ${classBadge(a.classification)}
            ${riskBadge(a.risk)}
            ${a.odd ? `<span class="badge">~${esc(a.odd)}</span>` : ''}
          </div>`
       : '';
+    // Análise ao vivo (pressão/IA/odds/sugestão) é Premium. FREE vê só o básico.
+    const analysisSection = locked
+      ? `<div class="verdict mt-3" style="background:var(--surface);border:1px dashed var(--border);text-align:center">
+           <span>🔒 Análise IA disponível no Premium</span>
+           <a href="/account.html" class="meter" style="text-decoration:none;color:var(--accent,#22c55e);font-weight:700">Upgrade</a>
+         </div>`
+      : `<div class="mt-3">
+          <div class="flex items-center justify-between text-[11px]" style="color: var(--muted);">
+            <span>Pressão</span><span style="color: var(--text)">${esc(a?.pressure ?? 0)}/100</span>
+          </div>
+          <div class="progress mt-1"><span style="width:${Number(a?.pressure ?? 0)}%"></span></div>
+        </div>
+        <div class="verdict ${verdictClass(a?.verdict)} mt-3">
+          <span>${esc(a?.verdict || 'Analisando…')}</span>
+          <span class="meter">IA ${esc(a?.confidence ?? 0)}%</span>
+        </div>
+        ${oddRisk}
+        ${sug}`;
     return `
       <article class="match-card ${cls}" data-id="${esc(match.id)}" data-sig="${cardSignature(match, a)}">
         <div class="flex items-center justify-between">
@@ -372,18 +391,7 @@
           <div class="stat"><div class="k">🟨</div><div class="v">${esc(match.yellowCards ?? 0)}</div></div>
           <div class="stat"><div class="k">🟥</div><div class="v">${esc(match.redCards ?? 0)}</div></div>
         </div>
-        <div class="mt-3">
-          <div class="flex items-center justify-between text-[11px]" style="color: var(--muted);">
-            <span>Pressão</span><span style="color: var(--text)">${esc(a?.pressure ?? 0)}/100</span>
-          </div>
-          <div class="progress mt-1"><span style="width:${Number(a?.pressure ?? 0)}%"></span></div>
-        </div>
-        <div class="verdict ${verdictClass(a?.verdict)} mt-3">
-          <span>${esc(a?.verdict || 'Analisando…')}</span>
-          <span class="meter">IA ${esc(a?.confidence ?? 0)}%</span>
-        </div>
-        ${oddRisk}
-        ${sug}
+        ${analysisSection}
       </article>
     `;
   }
@@ -590,7 +598,7 @@
           </div>
           <span class="text-[11px]" style="color: var(--muted); font-family: 'JetBrains Mono', monospace;">${time}</span>
         </div>
-        <div class="text-sm font-bold mb-1">${escapeHtml(matchTxt)}</div>
+        ${isLocked ? '' : `<div class="text-sm font-bold mb-1">${escapeHtml(matchTxt)}</div>
         <div class="text-[11px] mb-3" style="color: var(--muted);">${escapeHtml(league)} · ${minute}'</div>
         <div class="text-lg font-extrabold mb-2" style="color: ${accent};">${escapeHtml(s.prediction || s.suggestion || '—')}</div>
         <div class="grid ${score != null ? 'grid-cols-4' : 'grid-cols-3'} gap-2 text-center mt-3">
@@ -611,7 +619,7 @@
             <div class="font-mono font-bold">${score}</div>
           </div>` : ''}
         </div>
-        ${cardsLinesHtml}
+        ${cardsLinesHtml}`}
         ${insightHtml}
       </article>
     `;
@@ -664,6 +672,23 @@
    */
   function analysisPreviewCardHTML(match, a) {
     const sc = match.score || { home: 0, away: 0 };
+    const locked = a?.premiumLocked || match.premiumLocked;
+    if (locked) {
+      return `
+      <article class="saas-card" style="border-left:3px solid #06b6d4;opacity:.92;">
+        <div class="flex items-center justify-between mb-2">
+          <span class="badge live" style="background:rgba(6,182,212,.18); color:#06b6d4; border:1px solid rgba(6,182,212,.30);">Análise IA</span>
+          <span class="text-[11px]" style="color: var(--muted); font-family:'JetBrains Mono', monospace;">${esc(match.minute || 0)}'</span>
+        </div>
+        <div class="text-sm font-bold mb-1">${esc(match.home)} <span style="color:var(--muted);">×</span> ${esc(match.away)}</div>
+        <div class="text-[11px] mb-3" style="color: var(--muted);">${esc(match.league || 'Live')} · ${esc(sc.home)}–${esc(sc.away)}</div>
+        <div class="mt-2 text-[12px]" style="color: var(--text-2); line-height:1.5; text-align:center;">
+          🔒 Análise completa da IA (pressão, confiança, odds e recomendações) é <strong>Premium</strong>.
+          <div style="margin-top:8px"><a href="/account.html" class="badge" style="background:var(--accent,#22c55e);color:#06210f;font-weight:800;text-decoration:none">Fazer upgrade</a></div>
+        </div>
+      </article>
+    `;
+    }
     const conf = a?.confidence ?? 0;
     const press = a?.pressure ?? 0;
     const verdict = a?.verdict || 'IA em análise…';
@@ -1100,19 +1125,30 @@
       if (lastBetSignals.length > 20) lastBetSignals.length = 20;
       renderBetSignals();
 
-      const teamsTxt = `${signal.match?.home || signal.home} × ${signal.match?.away || signal.away}`;
-      if (isPrem) {
+      // Sinal premium bloqueado para FREE: o backend já removeu todo o conteúdo
+      // preditivo (palpite, odd, confiança, times). Mostramos só o upgrade.
+      const isLocked = signal.locked === true;
+      if (isLocked) {
         pushToast({
-          title: `💎 ${marketLabel(signal.market)} · ${signal.confidence}%`,
-          body: `${teamsTxt}<br/><b>${signal.prediction}</b> · odd ~${signal.oddEstimated}<br/><small style="opacity:.7">${signal.premiumInsight || ''}</small>`,
-        });
-        notify(teamsTxt, `${signal.prediction} · IA ${signal.confidence}%`);
-      } else {
-        pushToast({
-          title: `${marketLabel(signal.market)} · sinal disponível`,
-          body: `${teamsTxt}<br/><b>${signal.prediction}</b><br/><small style="opacity:.7">🔒 Análise IA completa no Premium.</small>`,
+          title: '💎 Sinal Premium disponível',
+          body: '🔒 Faça upgrade para desbloquear a análise completa da IA.',
           accent: 'warn',
         });
+      } else {
+        const teamsTxt = `${signal.match?.home || signal.home} × ${signal.match?.away || signal.away}`;
+        if (isPrem) {
+          pushToast({
+            title: `💎 ${marketLabel(signal.market)} · ${signal.confidence}%`,
+            body: `${teamsTxt}<br/><b>${signal.prediction}</b> · odd ~${signal.oddEstimated}<br/><small style="opacity:.7">${signal.premiumInsight || ''}</small>`,
+          });
+          notify(teamsTxt, `${signal.prediction} · IA ${signal.confidence}%`);
+        } else {
+          pushToast({
+            title: `${marketLabel(signal.market)} · sinal disponível`,
+            body: `${teamsTxt}<br/><b>${signal.prediction}</b><br/><small style="opacity:.7">🔒 Análise IA completa no Premium.</small>`,
+            accent: 'warn',
+          });
+        }
       }
     } else {
       // legacy signal payload

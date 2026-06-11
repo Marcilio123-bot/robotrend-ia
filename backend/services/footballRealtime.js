@@ -27,6 +27,8 @@ const metrics = require('./metrics');
 const { getPoller } = require('../workers/liveFootballPoller');
 const { getEnricher } = require('./fixtureEnricher');
 const { logger } = require('../logger');
+// Fonte única de verdade para o gating por plano (FREE x PREMIUM) — sinais E análise ao vivo.
+const signalAccess = require('../signalAccess');
 
 // Implementação real preenchida no primeiro attachFootballRealtime();
 // fora dele responde com contadores zerados para o /diag não quebrar.
@@ -184,8 +186,9 @@ function attachFootballRealtime(io, opts = {}) {
     });
 
     const snapshotMatches = poller.getMatches();
+    // Validação obrigatória por plano: FREE recebe apenas dados básicos da partida.
     socket.emit('tick', {
-      matches: snapshotMatches,
+      matches: signalAccess.projectMatchesForUser(snapshotMatches, signalAccess.isPremiumUser(socket.user)),
       generatedAt: new Date().toISOString(),
       source: 'snapshot',
       poller: poller.snapshot(),
@@ -207,7 +210,8 @@ function attachFootballRealtime(io, opts = {}) {
             // Se já estava enriquecida e em cache, manda direto o snapshot
             const m = poller.getMatch(payload.id);
             if (m?.enriched) {
-              socket.emit('match:enriched', { match: m, fixtureId: Number(payload.id), ts: m.enrichedAt });
+              const projected = signalAccess.projectMatchForUser(m, signalAccess.isPremiumUser(socket.user));
+              socket.emit('match:enriched', { match: projected, fixtureId: Number(payload.id), ts: m.enrichedAt });
             } else if (!r?.ok) {
               socket.emit('match:enrich-fail', { fixtureId: Number(payload.id), reason: r?.reason || 'unknown' });
             }
@@ -263,9 +267,55 @@ function attachFootballRealtime(io, opts = {}) {
     w_emit.hit();
   }
 
+  /**
+   * Emite um evento de PARTIDA (match:upsert/update/enriched) respeitando o
+   * plano de CADA socket da room. PREMIUM recebe a análise completa; FREE
+   * recebe apenas dados básicos da partida (sem probabilidades/IA/odds/insights).
+   */
+  function emitMatchTiered(room, eventName, payload) {
+    const sockets = ns.adapter.rooms.get(room);
+    if (sockets && sockets.size) {
+      let freePayload = null;
+      for (const sid of sockets) {
+        const s = ns.sockets.get(sid);
+        if (!s) continue;
+        if (isPremiumSocket(s)) {
+          s.emit(eventName, payload);
+        } else {
+          if (freePayload === null) freePayload = signalAccess.projectMatchEventPayload(payload, false);
+          s.emit(eventName, freePayload);
+        }
+      }
+    }
+    m_emit_total.inc(1, { event: eventName });
+    w_emit.hit();
+  }
+
+  /** Snapshot `tick` tier-aware: FREE recebe matches sem dados premium. */
+  function emitTickTiered(payload) {
+    const sockets = ns.adapter.rooms.get('lobby');
+    if (sockets && sockets.size) {
+      let freePayload = null;
+      for (const sid of sockets) {
+        const s = ns.sockets.get(sid);
+        if (!s) continue;
+        if (isPremiumSocket(s)) {
+          s.emit('tick', payload);
+        } else {
+          if (freePayload === null) {
+            freePayload = { ...payload, matches: signalAccess.projectMatchesForUser(payload?.matches, false) };
+          }
+          s.emit('tick', freePayload);
+        }
+      }
+    }
+    m_emit_total.inc(1, { event: 'tick' });
+    w_emit.hit();
+  }
+
   events.on('tick', (payload) => {
     if (!allow()) { m_emit_dropped.inc(1, { event: 'tick' }); return; }
-    emitTo('lobby', 'tick', payload);
+    emitTickTiered(payload);
   });
 
   // [STAT TRACE 5/6] socket-emit — chamado uma única vez por evento.
@@ -299,9 +349,9 @@ function attachFootballRealtime(io, opts = {}) {
     if (!allow()) { m_emit_dropped.inc(1, { event: 'match:upsert' }); return; }
     traceSocketEmit(match, 'match:upsert');
     emitCounters['match:upsert']++;
-    emitTo('lobby', 'match:upsert', { match });
-    const fr = fixtureRoom(match); if (fr) emitTo(fr, 'match:upsert', { match });
-    const lr = leagueRoom(match);  if (lr) emitTo(lr, 'match:upsert', { match });
+    emitMatchTiered('lobby', 'match:upsert', { match });
+    const fr = fixtureRoom(match); if (fr) emitMatchTiered(fr, 'match:upsert', { match });
+    const lr = leagueRoom(match);  if (lr) emitMatchTiered(lr, 'match:upsert', { match });
   });
 
   events.on('match:update', ({ match, prev, deltas }) => {
@@ -309,9 +359,9 @@ function attachFootballRealtime(io, opts = {}) {
     traceSocketEmit(match, 'match:update');
     emitCounters['match:update']++;
     const payload = { match, prev: lite(prev), deltas };
-    emitTo('lobby', 'match:update', payload);
-    const fr = fixtureRoom(match); if (fr) emitTo(fr, 'match:update', payload);
-    const lr = leagueRoom(match);  if (lr) emitTo(lr, 'match:update', payload);
+    emitMatchTiered('lobby', 'match:update', payload);
+    const fr = fixtureRoom(match); if (fr) emitMatchTiered(fr, 'match:update', payload);
+    const lr = leagueRoom(match);  if (lr) emitMatchTiered(lr, 'match:update', payload);
   });
 
   // Exposto para o /diag — qtde acumulada e por evento.
@@ -328,16 +378,34 @@ function attachFootballRealtime(io, opts = {}) {
     }
   });
 
-  // Eventos pontuais (gols, escanteios, cartões, pressão) — filtrados pelas prefs do socket
+  // Eventos pontuais (gols, escanteios, cartões, pressão) — filtrados pelas prefs
+  // do socket E por plano:
+  //   - fixture:goal/corner/card → factuais do placar (básicos). Match sanitizado p/ FREE.
+  //   - fixture:pressure/btts-near → PROBABILIDADES AVANÇADAS (Premium). FREE não recebe.
   ['fixture:goal','fixture:corner','fixture:card','fixture:pressure','fixture:btts-near']
     .forEach((evt) => {
+      const premiumOnly = (evt === 'fixture:pressure' || evt === 'fixture:btts-near');
       events.on(evt, (payload) => {
         const market = EVENT_MARKET_TAG[evt];
         const opts = { market };
-        // Fixture/league room: enriquece com market p/ filtragem por socket
-        emitFiltered(ns, 'lobby', evt, payload, opts);
-        const fr = fixtureRoom(payload.match); if (fr) emitFiltered(ns, fr, evt, payload, opts);
-        const lr = leagueRoom(payload.match);  if (lr) emitFiltered(ns, lr, evt, payload, opts);
+        const freePayload = premiumOnly ? null : signalAccess.projectMatchEventPayload(payload, false);
+        const rooms = ['lobby'];
+        const fr = fixtureRoom(payload.match); if (fr) rooms.push(fr);
+        const lr = leagueRoom(payload.match);  if (lr) rooms.push(lr);
+        let filtered = 0;
+        for (const room of rooms) {
+          const sockets = ns.adapter.rooms.get(room);
+          if (!sockets) continue;
+          for (const sid of sockets) {
+            const s = ns.sockets.get(sid);
+            if (!s) continue;
+            if (!prefsAllow(s.data?.prefs, opts)) { filtered++; continue; }
+            const prem = isPremiumSocket(s);
+            if (premiumOnly && !prem) continue; // FREE nunca recebe probabilidade avançada
+            s.emit(evt, prem ? payload : freePayload);
+          }
+        }
+        if (filtered) m_prefs_filter.inc(filtered, { event: evt });
         m_emit_total.inc(1, { event: evt });
         w_emit.hit();
       });
@@ -360,7 +428,8 @@ function attachFootballRealtime(io, opts = {}) {
   events.on('circuit:close',(p) => emitAdminOnly('circuit:close', p));
   events.on('poller:error', (p) => emitAdminOnly('poller:error', p));
 
-  // Sinais automáticos (gerados pelo signalsEngine) — filtrados por prefs
+  // Sinais automáticos (gerados pelo signalsEngine) — filtrados por prefs E por
+  // plano: alertas de nível PREMIUM NÃO são enviados a usuários FREE.
   events.on('signal:fire', (signal) => {
     // signal.markets é array; usamos o principal (signal.market) p/ filtragem
     const opts = {
@@ -368,9 +437,25 @@ function attachFootballRealtime(io, opts = {}) {
       confidence: signal.confidence,
       profile: inferSignalProfile(signal),
     };
-    emitFiltered(ns, 'lobby', 'signal:fire', signal, opts);
+    const premiumSig = signalAccess.isPremiumSignal(signal);
+    const rooms = ['lobby'];
     const fr = `fixture:${signal.matchId}`;
-    if (fr) emitFiltered(ns, fr, 'signal:fire', signal, opts);
+    if (fr) rooms.push(fr);
+    const seen = new Set();
+    for (const room of rooms) {
+      const sockets = ns.adapter.rooms.get(room);
+      if (!sockets) continue;
+      for (const sid of sockets) {
+        if (seen.has(sid)) continue;
+        seen.add(sid);
+        const s = ns.sockets.get(sid);
+        if (!s) continue;
+        if (!prefsAllow(s.data?.prefs, opts)) continue;
+        // FREE não recebe alerta premium (oculta o sinal por completo).
+        if (premiumSig && !isPremiumSocket(s)) continue;
+        s.emit('signal:fire', signal);
+      }
+    }
     m_emit_total.inc(1, { event: 'signal:fire', market: signal.market || 'unknown' });
     w_emit.hit();
   });
@@ -398,31 +483,21 @@ function attachFootballRealtime(io, opts = {}) {
   try { betEngineCfg = require('./betSignalEngine').config || betEngineCfg; } catch (_) {}
 
   function isPremiumSocket(sock) {
-    const u = sock?.user;
-    if (!u) return false;
-    const role = String(u.role || '').toLowerCase();
-    const plan = String(u.plan || '').toUpperCase();
-    return role === 'admin' || role === 'owner' || role === 'premium'
-        || plan === 'PREMIUM' || plan === 'VIP' || plan === 'PRO' || plan === 'TRIAL';
+    return signalAccess.isPremiumUser(sock?.user);
   }
 
-  function stripForFree(signal) {
-    // FREE recebe sinal mas SEM o "molho" premium (insight rico, score, breakdown)
-    const out = { ...signal };
-    delete out.premiumInsight;
-    delete out.betScore;
-    delete out.scoreBreakdown;
-    delete out.extras; // sem detalhes de modelo
-    out.justification = 'Acesse o plano Premium para ver a análise completa da IA.';
-    out.locked = true;
-    return out;
-  }
-
-  function emitTieredToSockets(room, evt, signal) {
+  /**
+   * Emite um sinal respeitando o plano de CADA socket da room:
+   *   - PREMIUM           → sinal completo, imediato
+   *   - FREE + sinal premium → placeholder de upgrade (nada preditivo vaza)
+   *   - FREE + sinal free → conteúdo sem insight premium, com delay (edge premium)
+   */
+  function emitTieredToSockets(room, evt, signal, seen) {
     const sockets = ns.adapter.rooms.get(room);
     if (!sockets) return;
-    const premiumPayload = signal;
-    const freePayload = stripForFree(signal);
+    const premiumSig = signalAccess.isPremiumSignal(signal);
+    const lockedPayload = premiumSig ? signalAccess.lockPremiumSignal(signal) : null;
+    const freePayload = premiumSig ? null : signalAccess.stripFreeInsight(signal);
     const opts = {
       market: signal.market,
       confidence: signal.confidence,
@@ -432,15 +507,16 @@ function attachFootballRealtime(io, opts = {}) {
     };
 
     for (const sid of sockets) {
+      if (seen) { if (seen.has(sid)) continue; seen.add(sid); }
       const s = ns.sockets.get(sid);
       if (!s) continue;
       if (!prefsAllow(s.data?.prefs, opts)) continue;
-      const isPrem = isPremiumSocket(s);
-      if (isPrem) {
-        // Premium: imediato + payload completo
-        s.emit(evt, premiumPayload);
+      if (isPremiumSocket(s)) {
+        s.emit(evt, signal);
+      } else if (premiumSig) {
+        // FREE NUNCA recebe sinal premium — apenas o placeholder de upgrade.
+        s.emit(evt, lockedPayload);
       } else {
-        // Free: payload reduzido + delay
         setTimeout(() => {
           try { s.connected && s.emit(evt, freePayload); } catch (_) {}
         }, betEngineCfg.FREE_DELAY_MS || 8000);
@@ -454,22 +530,28 @@ function attachFootballRealtime(io, opts = {}) {
       market: signal?.market,
       confidence: signal?.confidence,
       matchId: signal?.matchId,
+      tier: signal?.tier,
       empty: !signal || (!signal.market && !signal.prediction),
     });
-    emitTieredToSockets('lobby', 'signal:new', signal);
+    const seen = new Set();
+    emitTieredToSockets('lobby', 'signal:new', signal, seen);
     const fr = `fixture:${signal.matchId}`;
-    if (fr) emitTieredToSockets(fr, 'signal:new', signal);
+    if (fr) emitTieredToSockets(fr, 'signal:new', signal, seen);
 
-    // Broadcast no root io para clients legacy (dashboard.js) — também tier-aware
+    // Broadcast no root io para clients legacy (dashboard.js) — também tier-aware.
+    // FREE recebe placeholder de upgrade quando o sinal é premium; nunca o conteúdo.
+    const premiumSig = signalAccess.isPremiumSignal(signal);
     try {
-      for (const [sid, s] of io.sockets.sockets) {
+      for (const [, s] of io.sockets.sockets) {
         if (!s) continue;
-        const isPrem = isPremiumSocket(s);
-        if (isPrem) {
+        if (isPremiumSocket(s)) {
           s.emit('signal:new', signal);
+        } else if (premiumSig) {
+          s.emit('signal:new', signalAccess.lockPremiumSignal(signal));
         } else {
+          const freePayload = signalAccess.stripFreeInsight(signal);
           setTimeout(() => {
-            try { s.connected && s.emit('signal:new', stripForFree(signal)); } catch (_) {}
+            try { s.connected && s.emit('signal:new', freePayload); } catch (_) {}
           }, betEngineCfg.FREE_DELAY_MS || 8000);
         }
       }
@@ -511,11 +593,11 @@ function attachFootballRealtime(io, opts = {}) {
   // Enrichment incremental (statistics + events + momentum + BTTS likelihood)
   events.on('match:enriched', ({ match, fixtureId, ts }) => {
     const payload = { match, fixtureId, ts };
-    emitTo('lobby', 'match:enriched', payload);
+    emitMatchTiered('lobby', 'match:enriched', payload);
     const fr = fixtureRoom(match) || `fixture:${fixtureId}`;
-    if (fr) emitTo(fr, 'match:enriched', payload);
+    if (fr) emitMatchTiered(fr, 'match:enriched', payload);
     const lr = leagueRoom(match);
-    if (lr) emitTo(lr, 'match:enriched', payload);
+    if (lr) emitMatchTiered(lr, 'match:enriched', payload);
   });
   events.on('match:enrich-fail', (payload) => {
     const fr = `fixture:${payload.fixtureId}`;
