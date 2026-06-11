@@ -12,6 +12,7 @@
 const crypto = require('crypto');
 const bruteforce = require('./bruteforce');
 const onboarding = require('./onboarding');
+const analytics = require('./analytics');
 const { logger } = require('./logger');
 
 let bcrypt;
@@ -133,6 +134,8 @@ function requireAuth(db) {
       }
       req.user = sanitizeUser(user);
       req.subscription = subscription.resolveSubscriptionState(req.user);
+      // Registra "último acesso" (throttled, fire-and-forget — não bloqueia).
+      analytics.touch(db, req.user.id);
       next();
     } catch (err) {
       // Falha em DB/rede/pool → encaminha ao errorHandler global (devolve
@@ -413,6 +416,9 @@ function buildAuthRoutes(app, db) {
         });
       }
       if (bruteforceEnabled) bruteforce.recordSuccess(bfKey);
+
+      // Analytics: incrementa total de logins + carimba último acesso.
+      try { await db.recordLogin(user.id); } catch (e) { logger.warn('recordLogin falhou', { err: e.message }); }
 
       const token = signToken({ sub: user.id, role: user.role, plan: user.plan });
       setAuthCookie(res, token);

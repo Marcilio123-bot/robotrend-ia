@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <title>Analytics de Usuários · Robotrend IA Master</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .ua-filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+    .ua-filter {
+      padding:7px 14px; border-radius:999px; background:var(--surface-2, #11241a);
+      color:var(--text-2, #9fb4a8); font-size:12px; font-weight:700; cursor:pointer;
+      border:1px solid var(--line, #1d3a2a); transition:all .15s ease;
+    }
+    .ua-filter:hover { color:var(--text, #e6f4ec); }
+    .ua-filter.active { background:var(--brand-soft, rgba(20,184,94,.14)); border-color:var(--brand, #14b85e); color:var(--brand, #14b85e); }
+    .ua-search { max-width:280px; }
+    .ua-plan-pill { font-size:11px; font-weight:800; padding:3px 10px; border-radius:999px; letter-spacing:.04em; }
+    .ua-plan-premium { background:rgba(251,191,36,.16); color:#fbbf24; }
+    .ua-plan-free { background:rgba(148,163,184,.16); color:#94a3b8; }
+    .ua-num { font-family:'JetBrains Mono', monospace; font-weight:700; }
+    .ua-inactive td { opacity:.62; }
+    .ua-table td, .ua-table th { white-space:nowrap; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="admin-analytics"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">▲ Analytics de Usuários</h1>
+          <p class="saas-page-sub">Atividade, engajamento e conversão por usuário</p>
+        </div>
+        <div class="saas-page-actions">
+          <span class="saas-status-pill ok">MASTER</span>
+        </div>
+      </header>
+
+      <!-- KPIs -->
+      <section class="saas-kpis">
+        <div class="saas-kpi"><div class="saas-kpi-label">Total de usuários</div><div class="saas-kpi-value" id="kpi-total">—</div><div class="saas-kpi-foot">cadastrados</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Ativos hoje</div><div class="saas-kpi-value" id="kpi-today" style="color:#22c55e;">—</div><div class="saas-kpi-foot">acessaram hoje</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">Ativos 7 dias</div><div class="saas-kpi-value" id="kpi-7d" style="color:#06b6d4;">—</div><div class="saas-kpi-foot">última semana</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">💎 Premium</div><div class="saas-kpi-value" id="kpi-premium" style="color:#fbbf24;">—</div><div class="saas-kpi-foot">assinantes pagos</div></div>
+        <div class="saas-kpi"><div class="saas-kpi-label">🆓 Gratuitos</div><div class="saas-kpi-value" id="kpi-free" style="color:#94a3b8;">—</div><div class="saas-kpi-foot">plano FREE</div></div>
+      </section>
+
+      <!-- Filtros -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Usuários</div>
+          <input id="ua-search" type="search" class="input-field ua-search" placeholder="Buscar e-mail ou nome…" />
+        </div>
+        <div class="ua-filters">
+          <button class="ua-filter active" data-filter="">Todos</button>
+          <button class="ua-filter" data-filter="active">Mais ativos</button>
+          <button class="ua-filter" data-filter="inactive">Inativos +7 dias</button>
+          <button class="ua-filter" data-filter="premium">Premium</button>
+          <button class="ua-filter" data-filter="free">Gratuitos</button>
+        </div>
+
+        <div class="saas-card" style="padding:0; overflow:auto;">
+          <table class="w-full text-sm ua-table">
+            <thead><tr class="table-head">
+              <th class="py-3 px-4 text-left">Usuário</th>
+              <th class="py-3 px-4 text-left">Data de Cadastro</th>
+              <th class="py-3 px-4 text-left">Último Acesso</th>
+              <th class="py-3 px-4 text-right">Logins</th>
+              <th class="py-3 px-4 text-right">Jogos Analisados</th>
+              <th class="py-3 px-4 text-right">Sinais Visualizados</th>
+              <th class="py-3 px-4 text-left">Plano</th>
+            </tr></thead>
+            <tbody id="ua-body"><tr><td colspan="7" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+        <div id="ua-count" class="mt-2 text-xs" style="color:var(--muted);"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/admin-analytics.js"></script>
+</body>
+</html>

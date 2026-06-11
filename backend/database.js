@@ -253,6 +253,24 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_admin_logs_target ON admin_logs(target_user_id);
     `,
   },
+  {
+    // Analytics por usuário — contadores agregados + carimbos de atividade.
+    //   last_login_at         → último login bem-sucedido
+    //   last_seen_at          → última atividade autenticada (qualquer request)
+    //   login_count           → total de logins
+    //   games_analyzed_count  → quantos jogos o usuário abriu para analisar
+    //   signals_viewed_count  → quantos sinais o usuário visualizou
+    name: '005_user_analytics',
+    sql: `
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS games_analyzed_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS signals_viewed_count INTEGER NOT NULL DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at);
+      CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login_at);
+    `,
+  },
 ];
 
 async function init() {
@@ -354,6 +372,11 @@ async function createUser({ email, name, passwordHash, plan = 'FREE', role = 'us
       subscriptionStatus: 'active',
       expiresAt: null,
       createdAt: new Date().toISOString(),
+      lastLoginAt: null,
+      lastSeenAt: null,
+      loginCount: 0,
+      gamesAnalyzedCount: 0,
+      signalsViewedCount: 0,
     };
     mem.users.set(id, user);
     mem.usersByEmail.set(email, id);
@@ -536,6 +559,11 @@ function mapUserRow(r) {
     resetToken: r.reset_token, resetTokenExpires: Number(r.reset_expires),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    lastLoginAt: r.last_login_at || null,
+    lastSeenAt: r.last_seen_at || null,
+    loginCount: Number(r.login_count || 0),
+    gamesAnalyzedCount: Number(r.games_analyzed_count || 0),
+    signalsViewedCount: Number(r.signals_viewed_count || 0),
   };
 }
 
@@ -733,6 +761,196 @@ async function adminOverview() {
 }
 
 /* ============================================================
+   USER ANALYTICS
+   ------------------------------------------------------------
+   Contadores agregados por usuário (login, jogos analisados,
+   sinais visualizados) + carimbos de atividade. Eventos são
+   registrados automaticamente nos hooks de login / view / análise.
+   ============================================================ */
+
+/** Colunas de contador permitidas para incremento (anti-SQL-injection). */
+const METRIC_COLUMNS = {
+  games_analyzed_count: 'gamesAnalyzedCount',
+  signals_viewed_count: 'signalsViewedCount',
+};
+
+/** Registra um login bem-sucedido: incrementa total e atualiza carimbos. */
+async function recordLogin(userId) {
+  if (!userId) return;
+  const now = new Date().toISOString();
+  if (!useDatabase) {
+    const u = mem.users.get(userId);
+    if (!u) return;
+    u.loginCount = (u.loginCount || 0) + 1;
+    u.lastLoginAt = now;
+    u.lastSeenAt = now;
+    return;
+  }
+  await pool.query(
+    `UPDATE users
+       SET login_count = login_count + 1,
+           last_login_at = NOW(),
+           last_seen_at = NOW()
+     WHERE id = $1`,
+    [userId]
+  );
+}
+
+/** Atualiza apenas o "último acesso" (chamado de forma throttled no auth). */
+async function touchLastSeen(userId) {
+  if (!userId) return;
+  if (!useDatabase) {
+    const u = mem.users.get(userId);
+    if (u) u.lastSeenAt = new Date().toISOString();
+    return;
+  }
+  await pool.query(`UPDATE users SET last_seen_at = NOW() WHERE id = $1`, [userId]);
+}
+
+/**
+ * Incrementa um contador de uso (games_analyzed_count | signals_viewed_count).
+ * Também atualiza last_seen_at, já que um evento de uso é uma forma de acesso.
+ */
+async function incrementUserMetric(userId, column, delta = 1) {
+  if (!userId) return;
+  if (!METRIC_COLUMNS[column]) {
+    throw new Error(`métrica inválida: ${column}`);
+  }
+  const step = Math.max(0, Math.min(1000, Number(delta) || 0));
+  if (!step) return;
+  if (!useDatabase) {
+    const u = mem.users.get(userId);
+    if (!u) return;
+    const camel = METRIC_COLUMNS[column];
+    u[camel] = (u[camel] || 0) + step;
+    u.lastSeenAt = new Date().toISOString();
+    return;
+  }
+  await pool.query(
+    `UPDATE users SET ${column} = ${column} + $2, last_seen_at = NOW() WHERE id = $1`,
+    [userId, step]
+  );
+}
+
+/** Classifica um usuário como premium (qualquer plano pago). */
+function isPremiumPlan(plan) {
+  return String(plan || 'FREE').toUpperCase() !== 'FREE';
+}
+
+/** KPIs do painel de analytics: totais e atividade recente. */
+async function analyticsSummary() {
+  if (!useDatabase) {
+    const all = Array.from(mem.users.values());
+    const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+    const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
+    const seen = (u) => (u.lastSeenAt ? new Date(u.lastSeenAt).getTime() : 0);
+    return {
+      totalUsers: all.length,
+      activeToday: all.filter((u) => seen(u) >= startToday.getTime()).length,
+      active7d: all.filter((u) => seen(u) >= sevenDaysAgo).length,
+      premiumUsers: all.filter((u) => isPremiumPlan(u.plan)).length,
+      freeUsers: all.filter((u) => !isPremiumPlan(u.plan)).length,
+    };
+  }
+  const { rows } = await pool.query(`
+    SELECT
+      COUNT(*)::int AS total_users,
+      COUNT(*) FILTER (WHERE last_seen_at >= date_trunc('day', NOW()))::int AS active_today,
+      COUNT(*) FILTER (WHERE last_seen_at >= NOW() - INTERVAL '7 days')::int AS active_7d,
+      COUNT(*) FILTER (WHERE UPPER(COALESCE(plan,'FREE')) <> 'FREE')::int AS premium_users,
+      COUNT(*) FILTER (WHERE UPPER(COALESCE(plan,'FREE')) = 'FREE')::int AS free_users
+    FROM users
+  `);
+  const r = rows[0];
+  return {
+    totalUsers: r.total_users,
+    activeToday: r.active_today,
+    active7d: r.active_7d,
+    premiumUsers: r.premium_users,
+    freeUsers: r.free_users,
+  };
+}
+
+/** Mapeia um usuário para a linha exibida na tabela de analytics. */
+function mapAnalyticsRow(u) {
+  return {
+    id: u.id,
+    name: u.name || (u.email ? String(u.email).split('@')[0] : '—'),
+    email: u.email,
+    plan: u.plan || 'FREE',
+    role: u.role || 'user',
+    isPremium: isPremiumPlan(u.plan),
+    createdAt: u.createdAt || u.created_at || null,
+    lastSeenAt: u.lastSeenAt ?? u.last_seen_at ?? null,
+    lastLoginAt: u.lastLoginAt ?? u.last_login_at ?? null,
+    loginCount: Number(u.loginCount ?? u.login_count ?? 0),
+    gamesAnalyzedCount: Number(u.gamesAnalyzedCount ?? u.games_analyzed_count ?? 0),
+    signalsViewedCount: Number(u.signalsViewedCount ?? u.signals_viewed_count ?? 0),
+  };
+}
+
+/**
+ * Lista usuários para a tabela de analytics, com filtros:
+ *   filter = 'active'   → mais ativos (ordena por uso total desc)
+ *            'inactive' → inativos há mais de 7 dias
+ *            'premium'  → apenas planos pagos
+ *            'free'     → apenas plano FREE
+ *            (vazio)    → todos, mais recentes primeiro
+ */
+async function analyticsUsers({ filter = '', q = '', limit = 200 } = {}) {
+  const f = String(filter || '').toLowerCase();
+  const search = String(q || '').trim().toLowerCase();
+  const cap = Math.max(1, Math.min(1000, Number(limit) || 200));
+
+  if (!useDatabase) {
+    let list = Array.from(mem.users.values()).map(mapAnalyticsRow);
+    if (search) {
+      list = list.filter((u) =>
+        String(u.email || '').toLowerCase().includes(search) ||
+        String(u.name || '').toLowerCase().includes(search)
+      );
+    }
+    const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
+    const seen = (u) => (u.lastSeenAt ? new Date(u.lastSeenAt).getTime() : 0);
+    const usageScore = (u) => u.loginCount + u.gamesAnalyzedCount + u.signalsViewedCount;
+    if (f === 'premium') list = list.filter((u) => u.isPremium);
+    else if (f === 'free') list = list.filter((u) => !u.isPremium);
+    else if (f === 'inactive') list = list.filter((u) => seen(u) < sevenDaysAgo);
+
+    if (f === 'active') list.sort((a, b) => usageScore(b) - usageScore(a));
+    else if (f === 'inactive') list.sort((a, b) => seen(a) - seen(b));
+    else list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    return list.slice(0, cap);
+  }
+
+  const clauses = [];
+  const vals = [];
+  let i = 1;
+  if (search) {
+    clauses.push(`(LOWER(email) LIKE $${i} OR LOWER(COALESCE(name,'')) LIKE $${i})`);
+    vals.push(`%${search}%`);
+    i++;
+  }
+  if (f === 'premium') clauses.push(`UPPER(COALESCE(plan,'FREE')) <> 'FREE'`);
+  else if (f === 'free') clauses.push(`UPPER(COALESCE(plan,'FREE')) = 'FREE'`);
+  else if (f === 'inactive') clauses.push(`(last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '7 days')`);
+
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  let orderBy;
+  if (f === 'active') orderBy = `ORDER BY (login_count + games_analyzed_count + signals_viewed_count) DESC, last_seen_at DESC NULLS LAST`;
+  else if (f === 'inactive') orderBy = `ORDER BY last_seen_at ASC NULLS FIRST`;
+  else orderBy = `ORDER BY created_at DESC`;
+
+  vals.push(cap);
+  const { rows } = await pool.query(
+    `SELECT * FROM users ${where} ${orderBy} LIMIT $${i}`,
+    vals
+  );
+  return rows.map(mapUserRow).map(mapAnalyticsRow);
+}
+
+/* ============================================================
    SUBSCRIPTIONS / PAYMENTS
    ============================================================ */
 async function upsertSubscription(userId, sub) {
@@ -815,6 +1033,8 @@ module.exports = {
   saveSignal, listSignals, countTodaySignalsForUser, recordResult,
   // stats / admin
   getStats, bumpMonitored, adminOverview,
+  // user analytics
+  recordLogin, touchLastSeen, incrementUserMetric, analyticsSummary, analyticsUsers,
   // subs / payments
   upsertSubscription, savePayment, listPayments, findPaymentByExternalId,
   isPostgres: () => useDatabase,

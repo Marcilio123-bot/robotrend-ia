@@ -127,6 +127,7 @@
   <script src="/js/upgrade-celebration.js"></script>
   <script src="/js/pwa.js"></script>
   <script src="/js/saas-nav.js"></script>
+  <script src="/js/analytics-tracker.js"></script>
   <script>
   (function () {
     'use strict';
@@ -198,6 +199,11 @@
         grid.innerHTML = `<div class="col-span-full saas-card saas-empty">Sem sinais para esse mercado ainda.</div>`;
       } else {
         grid.innerHTML = filtered.map(card).join('');
+        // Analytics: registra os sinais efetivamente exibidos ao usuário.
+        try {
+          const ids = filtered.map((s) => s.id || `${s.matchId || s.home}-${s.market}-${s.createdAt}`);
+          window.RobotrendTrack?.signal(ids);
+        } catch (_) {}
       }
       renderKpis(filtered);
     }

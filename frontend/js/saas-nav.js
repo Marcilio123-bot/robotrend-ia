@@ -68,6 +68,7 @@
         { id: 'master',         label: 'Gestão Master',  icon: '◉', href: '/master' },
         { id: 'admin',          label: 'Dashboard',      icon: '▣', href: '/admin' },
         { id: 'admin-users',    label: 'Usuários',       icon: '◇', href: '/admin/users' },
+        { id: 'admin-analytics',label: 'Analytics',      icon: '▲', href: '/admin/analytics' },
         { id: 'admin-finance',  label: 'Financeiro',     icon: '◈', href: '/admin/finance' },
         { id: 'admin-system',   label: 'Sistema',        icon: '⚙', href: '/admin/system' },
         { id: 'admin-ops',      label: 'Operacional IA', icon: '▤', href: '/ops/live' },

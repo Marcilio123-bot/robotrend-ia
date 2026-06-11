@@ -2177,6 +2177,8 @@
       state.socket.emit('subscribe', { type: 'fixture', id });
       state.runtime.subsFixtures.add(id);
     }
+    // Analytics: abrir um jogo para ver a análise = "jogo analisado".
+    try { window.RobotrendTrack?.game(id); } catch (_) {}
     renderMatches();
     renderDetail();
   }
