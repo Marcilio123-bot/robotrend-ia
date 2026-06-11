@@ -138,6 +138,8 @@ const mem = {
   signals: [],
   subscriptions: new Map(), // userId -> sub
   payments: [],
+  announcements: [],        // comunicados (avisos) — modo in-memory
+  announcementSeq: 0,
   stats: { monitored: 0 },
 };
 
@@ -269,6 +271,22 @@ const MIGRATIONS = [
       ALTER TABLE users ADD COLUMN IF NOT EXISTS signals_viewed_count INTEGER NOT NULL DEFAULT 0;
       CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at);
       CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login_at);
+    `,
+  },
+  {
+    // Comunicados/avisos exibidos a todos os usuários ao entrar no sistema.
+    name: '006_announcements',
+    sql: `
+      CREATE TABLE IF NOT EXISTS announcements (
+        id          SERIAL PRIMARY KEY,
+        title       TEXT NOT NULL,
+        message     TEXT NOT NULL,
+        active      BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(active);
+      CREATE INDEX IF NOT EXISTS idx_announcements_created ON announcements(created_at DESC);
     `,
   },
 ];
@@ -951,6 +969,99 @@ async function analyticsUsers({ filter = '', q = '', limit = 200 } = {}) {
 }
 
 /* ============================================================
+   ANNOUNCEMENTS (avisos / comunicados)
+   ------------------------------------------------------------
+   Comunicados criados pelo admin no painel Master. Quando
+   active=true, são exibidos a todos os usuários ao entrar.
+   ============================================================ */
+function mapAnnouncementRow(r) {
+  return {
+    id: r.id,
+    title: r.title,
+    message: r.message,
+    active: r.active == null ? true : !!r.active,
+    createdAt: r.created_at || r.createdAt || null,
+    updatedAt: r.updated_at || r.updatedAt || null,
+  };
+}
+
+async function createAnnouncement({ title, message, active = true }) {
+  if (!useDatabase) {
+    const now = new Date().toISOString();
+    const row = {
+      id: ++mem.announcementSeq,
+      title, message,
+      active: !!active,
+      created_at: now,
+      updated_at: now,
+    };
+    mem.announcements.unshift(row);
+    return mapAnnouncementRow(row);
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO announcements (title, message, active) VALUES ($1,$2,$3) RETURNING *`,
+    [title, message, !!active]
+  );
+  return mapAnnouncementRow(rows[0]);
+}
+
+async function listAnnouncements({ activeOnly = false, limit = 100 } = {}) {
+  const cap = Math.max(1, Math.min(500, Number(limit) || 100));
+  if (!useDatabase) {
+    let list = mem.announcements.slice();
+    if (activeOnly) list = list.filter((a) => a.active);
+    return list.slice(0, cap).map(mapAnnouncementRow);
+  }
+  const where = activeOnly ? `WHERE active = TRUE` : ``;
+  const { rows } = await pool.query(
+    `SELECT * FROM announcements ${where} ORDER BY created_at DESC LIMIT $1`,
+    [cap]
+  );
+  return rows.map(mapAnnouncementRow);
+}
+
+async function updateAnnouncement(id, patch = {}) {
+  const numId = Number(id);
+  if (!useDatabase) {
+    const a = mem.announcements.find((x) => x.id === numId);
+    if (!a) return null;
+    if (typeof patch.title === 'string') a.title = patch.title;
+    if (typeof patch.message === 'string') a.message = patch.message;
+    if (typeof patch.active === 'boolean') a.active = patch.active;
+    a.updated_at = new Date().toISOString();
+    return mapAnnouncementRow(a);
+  }
+  const map = { title: 'title', message: 'message', active: 'active' };
+  const sets = [];
+  const vals = [];
+  let i = 1;
+  for (const [k, v] of Object.entries(patch)) {
+    if (map[k] !== undefined) { sets.push(`${map[k]}=$${i++}`); vals.push(v); }
+  }
+  if (!sets.length) {
+    const { rows } = await pool.query(`SELECT * FROM announcements WHERE id=$1`, [numId]);
+    return rows[0] ? mapAnnouncementRow(rows[0]) : null;
+  }
+  vals.push(numId);
+  const { rows } = await pool.query(
+    `UPDATE announcements SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${i} RETURNING *`,
+    vals
+  );
+  return rows[0] ? mapAnnouncementRow(rows[0]) : null;
+}
+
+async function deleteAnnouncement(id) {
+  const numId = Number(id);
+  if (!useDatabase) {
+    const before = mem.announcements.length;
+    mem.announcements = mem.announcements.filter((x) => x.id !== numId);
+    return mem.announcements.length < before;
+  }
+  const { rowCount } = await pool.query(`DELETE FROM announcements WHERE id=$1`, [numId]);
+  return rowCount > 0;
+}
+
+/* ============================================================
    SUBSCRIPTIONS / PAYMENTS
    ============================================================ */
 async function upsertSubscription(userId, sub) {
@@ -1035,6 +1146,8 @@ module.exports = {
   getStats, bumpMonitored, adminOverview,
   // user analytics
   recordLogin, touchLastSeen, incrementUserMetric, analyticsSummary, analyticsUsers,
+  // announcements (avisos)
+  createAnnouncement, listAnnouncements, updateAnnouncement, deleteAnnouncement,
   // subs / payments
   upsertSubscription, savePayment, listPayments, findPaymentByExternalId,
   isPostgres: () => useDatabase,

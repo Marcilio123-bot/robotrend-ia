@@ -53,6 +53,7 @@ const { buildPaymentRoutes } = require('./payments');
 const { buildAdminRoutes } = require('./admin');
 const { buildMasterRoutes } = require('./master');
 const { buildAnalyticsRoutes } = require('./analytics');
+const { buildAnnouncementRoutes } = require('./announcements');
 const subscription = require('./subscription');
 const { buildFootballRoutes } = require('./routes/football');
 const footballHistory = require('./services/footballHistory');
@@ -190,6 +191,7 @@ const ADMIN_CLEAN_ROUTES = {
   '/admin':            'admin.html',
   '/admin/users':      'admin-users.html',
   '/admin/analytics':  'admin-analytics.html',
+  '/admin/avisos':     'admin-avisos.html',
   '/admin/finance':    'admin-finance.html',
   '/admin/system':     'admin-system.html',
   '/admin/backtest':   'admin-backtest.html',
@@ -226,7 +228,7 @@ const PUBLIC_PAGES = [
   'results.html', 'quality.html', 'backtest.html',
   'admin.html', 'admin-football.html', 'admin-ops.html',
   'admin-users.html', 'admin-finance.html', 'admin-system.html', 'admin-backtest.html',
-  'admin-analytics.html',
+  'admin-analytics.html', 'admin-avisos.html',
   'account.html', 'master.html',
 ];
 
@@ -872,6 +874,7 @@ buildFootballRoutes(app, auth.requireAuth, db, auth.requireAdmin, io);
 buildAdminRoutes(app, db, auth.requireAuth, auth.requireAdmin);
 buildMasterRoutes(app, db, auth.requireAuth, auth.requireAdmin);
 buildAnalyticsRoutes(app, db, auth.requireAuth, auth.requireAdmin);
+buildAnnouncementRoutes(app, db, auth.requireAuth, auth.requireAdmin);
 
 /* ============================================================
    /api/admin/ops — central operacional (Operacional IA)

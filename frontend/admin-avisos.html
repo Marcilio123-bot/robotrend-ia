@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <title>Avisos · Robotrend IA Master</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .av-status { font-size:11px; font-weight:800; padding:3px 10px; border-radius:999px; letter-spacing:.04em; }
+    .av-on { background:rgba(34,197,94,.16); color:#22c55e; }
+    .av-off { background:rgba(148,163,184,.16); color:#94a3b8; }
+    .av-msg { color:var(--muted); font-size:13px; line-height:1.5; white-space:pre-wrap; max-width:520px; }
+    .av-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .av-btn {
+      font-size:12px; font-weight:700; padding:6px 12px; border-radius:8px;
+      border:1px solid var(--line); background:var(--surface-2,#11241a);
+      color:var(--text,#e6f4ec); cursor:pointer; transition:all .15s ease;
+    }
+    .av-btn:hover { border-color:var(--brand,#14b85e); color:var(--brand,#14b85e); }
+    .av-btn.danger:hover { border-color:#ef4444; color:#ef4444; }
+    textarea.input-field { min-height:96px; resize:vertical; font-family:inherit; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="admin-avisos"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">◔ Avisos</h1>
+          <p class="saas-page-sub">Comunicados exibidos a todos os usuários ao entrar no sistema</p>
+        </div>
+        <div class="saas-page-actions">
+          <span class="saas-status-pill ok">MASTER</span>
+        </div>
+      </header>
+
+      <!-- Criar / editar aviso -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title" id="form-title">+ Novo aviso</div>
+        </div>
+        <div class="saas-card">
+          <form id="form-announcement" class="grid grid-cols-1 gap-3">
+            <input type="hidden" id="av-id" value="" />
+            <div>
+              <label class="text-xs uppercase tracking-wider font-bold" style="color:var(--muted);">Título</label>
+              <input id="av-title" type="text" required maxlength="120" class="input-field w-full mt-1" placeholder="Ex.: Manutenção programada" />
+            </div>
+            <div>
+              <label class="text-xs uppercase tracking-wider font-bold" style="color:var(--muted);">Mensagem</label>
+              <textarea id="av-message" required maxlength="2000" class="input-field w-full mt-1" placeholder="Texto do comunicado…"></textarea>
+            </div>
+            <div class="flex items-center gap-2">
+              <input id="av-active" type="checkbox" checked style="width:18px;height:18px;accent-color:#14b85e;" />
+              <label for="av-active" class="text-sm font-bold" style="color:var(--text);">Ativo (visível para os usuários)</label>
+            </div>
+            <div class="flex gap-3">
+              <button type="submit" class="btn-primary justify-center py-3 px-6" id="av-submit">+ Criar aviso</button>
+              <button type="button" class="av-btn" id="av-cancel" style="display:none;">Cancelar edição</button>
+            </div>
+          </form>
+          <div id="av-feedback" class="mt-3 text-sm" style="display:none;"></div>
+        </div>
+      </section>
+
+      <!-- Lista de avisos -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Comunicados</div>
+          <div style="color:var(--muted); font-size:12px;"><span id="av-count">0</span> aviso(s)</div>
+        </div>
+        <div class="saas-card" style="padding:0; overflow:auto;">
+          <table class="w-full text-sm">
+            <thead><tr class="table-head">
+              <th class="py-3 px-4 text-left">Título</th>
+              <th class="py-3 px-4 text-left">Mensagem</th>
+              <th class="py-3 px-4 text-left">Status</th>
+              <th class="py-3 px-4 text-left">Criado em</th>
+              <th class="py-3 px-4 text-left">Ações</th>
+            </tr></thead>
+            <tbody id="av-body"><tr><td colspan="5" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/admin-avisos.js"></script>
+</body>
+</html>
