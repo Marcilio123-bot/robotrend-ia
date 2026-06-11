@@ -333,7 +333,7 @@
         if (isPrem && !d.renewRequired && d.subscriptionStatus !== 'expired') {
           ctaZone.innerHTML = `
             <a href="/" class="btn-primary justify-center" style="text-align:center; padding: 12px 24px;">Ir para o dashboard →</a>
-            <span class="text-xs" style="color: var(--muted); text-align: center;">Premium ${plan === 'VIP' ? '365' : '180'} dias por ciclo</span>
+            <span class="text-xs" style="color: var(--muted); text-align: center;">${plan === 'VIP' ? 'VIP · 365 dias por ciclo' : 'Premium mensal · cobrança recorrente · cancele quando quiser'}</span>
           `;
         } else if (isPrem && (d.renewRequired || d.subscriptionStatus === 'expired')) {
           ctaZone.innerHTML = `
@@ -343,13 +343,13 @@
         } else {
           ctaZone.innerHTML = `
             <div class="promo-pill" style="margin-bottom:8px;">
-              <span class="promo-pill-badge">OFERTA</span>
-              <span class="promo-pill-text">De <s>R$ ${fmtBRL(499.99)}</s> por <b>R$ ${fmtBRL(199.99)}</b></span>
+              <span class="promo-pill-badge">PREMIUM</span>
+              <span class="promo-pill-text">Plano Premium mensal · <b>R$ ${fmtBRL(79.90)}/mês</b></span>
             </div>
             <button type="button" id="cta-upgrade" class="btn-primary justify-center" style="padding: 14px 28px; font-weight: 800;">
-              🚀 Virar Premium — R$ ${fmtBRL(199.99)} (promo)
+              🚀 Assinar Premium — R$ ${fmtBRL(79.90)}/mês
             </button>
-            <span class="text-xs" style="color: var(--muted); text-align: center;">PIX ou cartão · liberação imediata</span>
+            <span class="text-xs" style="color: var(--muted); text-align: center;">Acesso completo · cancele quando quiser</span>
           `;
           $('#cta-upgrade').addEventListener('click', () => {
             window.virarPremium({ button: $('#cta-upgrade') });

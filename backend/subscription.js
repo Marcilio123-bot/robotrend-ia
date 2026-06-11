@@ -22,11 +22,12 @@ const STATUS = {
 
 const PAID_PLANS = new Set(['PREMIUM', 'VIP', 'PRO']);
 
-/** Dias de validade por plano (pagamento ou renovação admin). */
+/** Dias de validade por ciclo de cobrança (pagamento ou renovação admin).
+ *  Premium é mensal recorrente (30 dias por ciclo). */
 const PLAN_DURATION_DAYS = {
-  PREMIUM: 180,
-  VIP: 365,
-  PRO: 180,
+  PREMIUM: Number(process.env.PLAN_PREMIUM_DURATION_DAYS || 30),
+  VIP: Number(process.env.PLAN_VIP_DURATION_DAYS || 365),
+  PRO: Number(process.env.PLAN_PREMIUM_DURATION_DAYS || 30),
 };
 
 function normalizePlan(plan) {
@@ -269,7 +270,8 @@ async function unblockUser(db, userId, { adminId, adminEmail } = {}) {
 }
 
 /**
- * Renova assinatura: Premium +180d, VIP +365d (acumula a partir do maior entre agora e expiresAt).
+ * Renova assinatura: Premium +30d (mensal), VIP +365d (legado).
+ * Acumula a partir do maior entre agora e expiresAt.
  */
 async function renewSubscription(db, userId, { adminId, adminEmail, plan: planOverride } = {}) {
   const user = await db.findUserById(userId);

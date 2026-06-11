@@ -336,7 +336,7 @@ async function provisionUserFromPayment(db, payload) {
     });
   }
 
-  // Assinatura: Premium +180d, VIP +365d
+  // Assinatura: Premium mensal (+30d por ciclo), VIP +365d (legado)
   let subRecord = null;
   try {
     user = await subSvc.activateSubscription(db, user.id, {
@@ -704,7 +704,7 @@ function buildPaymentRoutes(app, db, requireAuth) {
          name:     "Nome Cliente",         // opcional
          provider: "stripe" | "mercadopago" | "pix" | "manual",
          externalId: "evt_xxx",
-         amount:   199.99,
+         amount:   79.90,
          status:   "approved"              // só processa se aprovado
        }
 

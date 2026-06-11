@@ -40,9 +40,9 @@ const PLANS = {
   PREMIUM: {
     id: 'PREMIUM',
     label: 'Premium',
-    priceBRL: Number(process.env.PLAN_PREMIUM_PRICE_BRL || 199.99),
-    fullPriceBRL: Number(process.env.PLAN_PREMIUM_FULL_PRICE_BRL || 499.99),
-    isPromo: true,
+    priceBRL: Number(process.env.PLAN_PREMIUM_PRICE_BRL || 79.9),
+    billingCycle: 'monthly',
+    recurring: true,
     dailySignals: Number(process.env.PLAN_PREMIUM_DAILY_SIGNALS || 999),
     features: {
       live: true,
@@ -60,7 +60,10 @@ function getPlan(planId) {
 }
 
 function listPlans() {
-  return Object.values(PLANS);
+  // Oferta pública: modelo 100% mensal — apenas Free + Premium (R$ 79,90/mês).
+  // VIP permanece definido para compatibilidade com assinantes legados/admin,
+  // mas não é mais ofertado nas telas de planos.
+  return [PLANS.FREE, PLANS.PREMIUM];
 }
 
 /**

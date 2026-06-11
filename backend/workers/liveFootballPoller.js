@@ -406,13 +406,18 @@ class LiveFootballPoller {
   }
 
   _recordSuccess() {
-    if (this.consecutiveFailures) {
+    if (this.consecutiveFailures || this.lastFallbackReason) {
       log.info('poller recuperado — voltando ao intervalo base', {
         afterFailures: this.consecutiveFailures,
+        clearedFallbackReason: this.lastFallbackReason || null,
       });
     }
     this.consecutiveFailures = 0;
     this.lastError = null;
+    // CRÍTICO: uma tick LIVE bem-sucedida (mesmo com 0 jogos) significa que a API
+    // respondeu OK. Limpa o fallbackReason para que health() volte a 'healthy' e
+    // o painel NÃO trate "resposta vazia" como "API indisponível/sem quota".
+    this.lastFallbackReason = null;
     this.lastSuccessAt = Date.now();
     this.stats.ticksSuccess++;
   }

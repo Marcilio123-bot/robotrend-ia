@@ -39,10 +39,9 @@ Admin pré-criado: `admin@robotrend.local` / `admin123` (troque em produção!)
 - Rate-limit em rotas de auth (10 req/min)
 - Admin bootstrap automático no boot
 
-### 💳 SaaS multi-tier
+### 💳 SaaS — assinatura mensal
 - **FREE** — 3 sinais/dia, live + BTTS básico
-- **VIP** (R$ 49,90/mês) — 30 sinais/dia, Over 2.5, alertas Telegram
-- **PREMIUM** (R$ 199,99/mês — promo de R$ 499,99) — sinais ilimitados, API REST, histórico 1 ano
+- **PREMIUM** (R$ 79,90/mês — assinatura mensal recorrente, cancele quando quiser) — sinais ilimitados, API REST, histórico 1 ano
 - Middleware `requireFeature('over25')` e `dailySignalLimiter` automáticos
 
 ### 💰 Pagamentos
@@ -223,10 +222,10 @@ JWT_SECRET=...                      # use openssl rand -hex 64
 BOOTSTRAP_ADMIN_EMAIL=admin@robotrend.local
 BOOTSTRAP_ADMIN_PASSWORD=admin123
 
-# Planos
+# Planos (Premium = assinatura mensal recorrente)
 PLAN_VIP_PRICE_BRL=49.90
-PLAN_PREMIUM_PRICE_BRL=199.99
-PLAN_PREMIUM_FULL_PRICE_BRL=499.99
+PLAN_PREMIUM_PRICE_BRL=79.90
+PLAN_PREMIUM_DURATION_DAYS=30
 
 # Pagamentos (opcionais)
 STRIPE_SECRET_KEY=

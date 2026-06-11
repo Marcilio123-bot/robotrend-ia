@@ -26,8 +26,8 @@
   if (meEl) meEl.textContent = `${me.email} · ADMIN`;
   document.getElementById('btn-logout')?.addEventListener('click', RobotrendAuth.logout);
 
-  // Preço promo do PREMIUM (usado para estimativa de receita FREE→PREMIUM)
-  const PREMIUM_PRICE = 199.99;
+  // Preço mensal do PREMIUM (usado para estimativa de receita FREE→PREMIUM)
+  const PREMIUM_PRICE = 79.90;
 
   /** Helper defensivo: páginas admin sub-rota nem sempre tem todos os IDs. */
   function setText(id, val) {

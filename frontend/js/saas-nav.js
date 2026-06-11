@@ -209,12 +209,12 @@
     return `
       <div class="saas-upgrade-card">
         <div class="promo-pill" style="margin-bottom:8px;">
-          <span class="promo-pill-badge">OFERTA</span>
-          <span class="promo-pill-text">De <s>R$ 499,99</s> por <b>R$ 199,99</b></span>
+          <span class="promo-pill-badge">PREMIUM</span>
+          <span class="promo-pill-text">Plano Premium mensal · <b>R$ 79,90/mês</b></span>
         </div>
         <div class="saas-upgrade-title">💎 Desbloqueie o Premium</div>
-        <div class="saas-upgrade-desc">Sinais sem delay, Melhor Aposta do Momento e análise IA completa.</div>
-        <button type="button" class="saas-upgrade-btn" id="saas-upgrade-btn">Virar Premium — R$ 199,99 →</button>
+        <div class="saas-upgrade-desc">Sinais sem delay, Melhor Aposta do Momento e análise IA completa. Cancele quando quiser.</div>
+        <button type="button" class="saas-upgrade-btn" id="saas-upgrade-btn">Assinar Premium — R$ 79,90/mês →</button>
       </div>
     `;
   }

@@ -196,6 +196,12 @@
    * quando o socket vem vazio. NUNCA limpa lastMatches; só substitui
    * quando o REST traz algo útil, evitando piscadas no painel.
    */
+  // Motivos técnicos que representam ERRO/indisponibilidade REAL da API.
+  // "no-live-matches" e "poller-warming-up" NÃO entram aqui — não são erro.
+  const REAL_API_ERROR_REASONS = new Set([
+    'data-unavailable', 'safe-mode', 'circuit-open', 'quota-exhausted',
+  ]);
+
   async function loadLiveFromApi() {
     try {
       const headers = {};
@@ -203,33 +209,51 @@
       if (tok) headers.Authorization = 'Bearer ' + tok;
       const r = await fetch('/api/football/live', { headers, credentials: 'include' });
       window.RobotrendHeartbeat?.markRestActivity('/api/football/live', r.status);
-      if (!r.ok) return;
+
+      // 1) ERRO REAL DA API — falha de transporte/HTTP (401/403/timeout/5xx).
+      if (!r.ok) {
+        if (!lastMatches.length) { setDataUnavailableBanner(true); renderEmptyState(); }
+        return;
+      }
       const data = await r.json();
+      // Backend sinalizou explicitamente falha (ok:false) → erro real.
+      if (data && data.ok === false) {
+        if (!lastMatches.length) { setDataUnavailableBanner(true); renderEmptyState(); }
+        return;
+      }
+
       const mapped = (data.matches || []).map(mapApiMatchToDashboard).filter(Boolean);
       const safe = filterValidMatches(mapped);
+
+      // 2) CASO NORMAL SEM JOGOS — response.ok=true e matches=[] NÃO é erro.
+      //    O backend só marca REAL_API_ERROR_REASONS quando há indisponibilidade
+      //    de verdade (sem chave, breaker aberto, quota zerada, safe-mode).
       if (!safe.length) {
-        // REST devolveu 0 jogos válidos. Se o socket também não trouxe nada,
-        // o painel está realmente vazio — re-avalia o banner de indisponibilidade.
-        if (!lastMatches.length) {
-          setDataUnavailableBanner(true);
-          renderEmptyState();
+        const isRealError = REAL_API_ERROR_REASONS.has(data?.reason);
+        if (isRealError) {
+          if (!lastMatches.length) { setDataUnavailableBanner(true); renderEmptyState(); }
+        } else {
+          // Resposta vazia legítima: API funcionando, apenas sem jogos ao vivo.
+          setDataUnavailableBanner(false);
+          if (!lastMatches.length) renderNoLiveGames();
         }
         return;
       }
+
+      // 3) CASO NORMAL COM JOGOS — merge e renderiza.
       // Merge com lastMatches (socket pode ter trazido matches que o REST
       // ainda não devolveu, e vice-versa). Dedup por ID, versão mais nova vence.
       lastMatches = mergeMatchesById(lastMatches, safe);
       setText('#kpi-live', String(lastMatches.length));
-      // Houve dados reais → esconde banner.
       setDataUnavailableBanner(false);
       scheduleRender();
     } catch (_) { /* offline */ }
   }
 
   /**
-   * Estado vazio: pinta a área de matches com a mensagem oficial.
-   * O renderMatches() padrão é resiliente a lastMatches=[] mas precisa de
-   * um placeholder explícito para o usuário entender o que aconteceu.
+   * Estado de ERRO REAL: pinta a área de matches com a mensagem de
+   * indisponibilidade. Usado SOMENTE quando a API está realmente indisponível
+   * (sem chave, breaker aberto, quota zerada) — NUNCA para resposta vazia.
    */
   function renderEmptyState() {
     const root = document.querySelector('#matches') || document.querySelector('[data-matches-mount]');
@@ -240,6 +264,22 @@
       '<div style="font-size:15px; font-weight:600; margin-bottom:6px;">Dados indisponíveis no momento.</div>' +
       '<div class="text-sm" style="opacity:.7;">' +
       'Aguardando resposta da API-Football. O painel atualiza automaticamente quando houver dados reais.' +
+      '</div></div>';
+  }
+
+  /**
+   * Estado NORMAL sem jogos: a API respondeu OK, apenas não há partidas ao
+   * vivo agora. NÃO é erro — não mostra banner de indisponibilidade.
+   */
+  function renderNoLiveGames() {
+    const root = document.querySelector('#matches') || document.querySelector('[data-matches-mount]');
+    if (!root) return;
+    if (lastMatches.length > 0) return;
+    root.innerHTML =
+      '<div class="saas-card" style="text-align:center; padding:32px; opacity:.85;">' +
+      '<div style="font-size:15px; font-weight:600; margin-bottom:6px;">Nenhum jogo ao vivo no momento.</div>' +
+      '<div class="text-sm" style="opacity:.7;">' +
+      'Assim que uma partida ao vivo começar, ela aparece aqui automaticamente.' +
       '</div></div>';
   }
 

@@ -292,6 +292,33 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     };
   }
 
+  /**
+   * Classifica POR QUE não há jogos, separando ERRO REAL da API de
+   * "sem jogos ao vivo agora" (resposta vazia legítima).
+   *   - null               → há jogos (não é caso de erro)
+   *   - 'no-live-matches'   → API respondeu OK, apenas não há jogos agora
+   *   - 'poller-warming-up' → poller ainda não rodou a primeira tick
+   *   - 'safe-mode' | 'circuit-open' | 'quota-exhausted' | 'data-unavailable'
+   *                         → ERRO/indisponibilidade REAL
+   *
+   * IMPORTANTE: resposta vazia (matches.length === 0) com poller saudável NUNCA
+   * vira 'data-unavailable'/'quota-exhausted' — isso é 'no-live-matches'.
+   */
+  function computeLiveReason(matchCount) {
+    if (matchCount > 0) return null;
+    const apiStatus = af.status?.() || {};
+    const snap = poller.snapshot?.() || {};
+    if (apiStatus.safeMode?.active) return 'safe-mode';
+    if (apiStatus.breaker?.state === 'OPEN') return 'circuit-open';
+    if ((apiStatus.quota?.dailyRemaining ?? 1) <= 0) return 'quota-exhausted';
+    if (snap.lastFallbackReason === 'api_not_configured' || !af.isConfigured?.()) return 'data-unavailable';
+    // Só consideramos indisponível se o poller está REALMENTE degradado AGORA
+    // (falhas consecutivas em curso). Uma tick OK com 0 jogos limpa esse estado.
+    if (snap.health === 'degraded') return 'data-unavailable';
+    if (!snap.lastTickAt) return 'poller-warming-up';
+    return 'no-live-matches';
+  }
+
   router.get('/live', asyncHandler(async (req, res) => {
     noStore(res);
     const allLive = await liveMatches();
@@ -324,6 +351,8 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       matches: signalAccess.projectMatchesForUser(matches, isPremiumRequester(req)),
       generatedAt: new Date().toISOString(),
       safeMode: af.isSafeMode?.() || false,
+      // reason distingue ERRO REAL de "sem jogos ao vivo agora" (resposta vazia OK).
+      reason: computeLiveReason(matches.length),
       meta: buildLiveMeta(allLive, matches),
       consensus: { mode: consensus.CONSENSUS_MODE },
     });
@@ -1748,19 +1777,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     const matches = poller.getMatches();
     const snap = poller.snapshot();
     const apiStatus = af.status();
-    let reason = null;
-    if (!matches.length) {
-      if (apiStatus.safeMode?.active) reason = 'safe-mode';
-      else if (apiStatus.breaker?.state === 'OPEN') reason = 'circuit-open';
-      else if ((apiStatus.quota?.dailyRemaining ?? 1) <= 0) reason = 'quota-exhausted';
-      else if (
-        snap.lastFallbackReason === 'api_not_configured' ||
-        !af.isConfigured?.()
-      ) reason = 'data-unavailable';
-      else if (snap.health === 'degraded') reason = 'data-unavailable';
-      else if (!snap.lastTickAt) reason = 'poller-warming-up';
-      else reason = 'no-live-matches';
-    }
+    const reason = computeLiveReason(matches.length);
     res.json({
       ok: true,
       count: matches.length,

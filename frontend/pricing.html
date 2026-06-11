@@ -64,10 +64,10 @@
         </div>
         <div class="mb-3">
           <button id="btn-virar-premium" class="btn-primary w-full justify-center py-3" style="font-weight:800;font-size:15px">
-            🚀 Pagar com Mercado Pago — <span id="btn-mp-price">R$ 199,99</span> (promo)
+            🚀 Assinar com Mercado Pago — <span id="btn-mp-price">R$ 79,90</span>/mês
           </button>
           <div class="text-xs mt-2 text-center" style="color: var(--muted);">
-            Aprovação automática · Premium liberado em segundos · PIX ou cartão
+            Cobrança mensal · Premium liberado em segundos · Cancele quando quiser
           </div>
         </div>
         <div class="grid grid-cols-2 gap-2 mb-4 text-xs">
@@ -126,7 +126,6 @@
         plans.forEach(p => { basePriceByPlan[p.id] = p.priceBRL; });
         grid.innerHTML = plans.map((p, i) => {
           const isPremium = p.id === 'PREMIUM';
-          const isPromo = !!p.isPromo && Number(p.fullPriceBRL) > Number(p.priceBRL);
           const featured = isPremium || p.id === 'VIP';
           const features = [
             p.features.live ? '✅ Análise ao vivo' : '❌ Análise ao vivo',
@@ -138,27 +137,16 @@
           ];
           const priceBlock = p.priceBRL === 0
             ? `<div class="text-4xl font-extrabold mt-1">Grátis</div>`
-            : isPromo
-              ? `
-                <div class="flex items-baseline gap-2 mt-1">
-                  <span class="text-base font-bold line-through" style="color: var(--muted); opacity:.7;">R$ ${fmtBRL(p.fullPriceBRL)}</span>
-                  <span class="badge hot" style="background:#fde047; color:#7c2d12;">-${Math.round((1 - p.priceBRL/p.fullPriceBRL)*100)}%</span>
-                </div>
-                <div class="text-4xl font-extrabold mt-1" style="color: var(--brand);">R$ ${fmtBRL(p.priceBRL)}</div>
-                <div class="text-xs" style="color: var(--muted);">/ mês · oferta limitada</div>
-              `
-              : `
+            : `
                 <div class="text-4xl font-extrabold mt-1">R$ ${fmtBRL(p.priceBRL)}</div>
-                <div class="text-xs" style="color: var(--muted);">/ mês</div>
+                <div class="text-xs" style="color: var(--muted);">/ mês · cobrança recorrente</div>
               `;
           const ctaLabel = p.id === 'FREE'
             ? 'Começar grátis'
-            : isPromo
-              ? `Assinar por R$ ${fmtBRL(p.priceBRL)} (promo) →`
-              : `Assinar ${p.label} →`;
+            : `Assinar ${p.label} — R$ ${fmtBRL(p.priceBRL)}/mês →`;
           return `
             <div class="rounded-2xl p-6 border ${featured ? 'pricing-featured' : ''}" style="background: var(--card-bg); border-color: ${featured ? 'var(--brand)' : 'var(--line)'}; ${featured ? 'box-shadow: var(--shadow-glow); transform: scale(1.02);' : ''}">
-              ${isPromo ? '<div class="badge hot mb-2" style="background:#dc2626; color:#fff;">💥 OFERTA LIMITADA</div>' : (featured ? '<div class="badge hot mb-2">⭐ MAIS POPULAR</div>' : '')}
+              ${featured ? '<div class="badge hot mb-2">⭐ Plano Premium mensal</div>' : ''}
               <div class="text-xs uppercase tracking-widest" style="color: var(--muted);">${p.label}</div>
               ${priceBlock}
               <ul class="mt-4 space-y-2 text-sm" style="color: var(--text-2);">
@@ -190,7 +178,7 @@
         return;
       }
       currentPlan = plan;
-      const price = basePriceByPlan[plan] || 199.99;
+      const price = basePriceByPlan[plan] || 79.90;
       const priceEl = document.getElementById('btn-mp-price');
       if (priceEl) priceEl.textContent = 'R$ ' + fmtBRL(price);
       document.getElementById('payment-modal').classList.remove('hidden');

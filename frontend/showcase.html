@@ -239,6 +239,11 @@
       gap: 20px;
       align-items: stretch;
     }
+    .plans-grid-single {
+      max-width: 420px;
+      margin: 0 auto;
+      grid-template-columns: 1fr;
+    }
     .plan-card {
       position: relative;
       background: var(--card-bg);
@@ -500,63 +505,29 @@
     <section class="showcase-section" id="plans">
       <div class="section-head">
         <div class="section-eyebrow" data-i18n="plans.eyebrow">Planos</div>
-        <h2 class="section-title" data-i18n="plans.title">Escolha o tempo de acesso ideal para você</h2>
+        <h2 class="section-title" data-i18n="plans.title">Plano Premium mensal</h2>
         <p class="section-sub" data-i18n="plans.sub">
-          Todos os planos incluem 100% dos recursos. A diferença é só o tempo de acesso — quanto mais longo, menor o custo mensal.
+          Acesso completo a 100% dos recursos por uma assinatura mensal simples. Cancele quando quiser.
         </p>
       </div>
 
-      <div class="plans-grid">
+      <div class="plans-grid plans-grid-single">
 
-        <!-- STARTER -->
-        <article class="plan-card">
-          <div class="plan-name" data-i18n="plans.starter.name">STARTER</div>
-          <div class="plan-term" data-i18n="plans.starter.term">3 meses de acesso</div>
-          <div class="plan-price">
-            <span class="plan-price-amount" data-i18n="plans.starter.price">R$ 239,70</span>
-          </div>
-          <div class="plan-equiv" data-i18n="plans.starter.equiv">Equivalente a R$ 79,90/mês</div>
-          <ul class="plan-features">
-            <li data-i18n="plans.starter.f1">Sinais BTTS ao vivo</li>
-            <li data-i18n="plans.starter.f2">Over e Under Escanteios</li>
-            <li data-i18n="plans.starter.f4">Dashboard em tempo real</li>
-            <li data-i18n="plans.starter.f5">Alertas instantâneos</li>
-          </ul>
-          <a href="/register.html?plan=starter" class="plan-cta" data-i18n="plans.cta">Começar Agora</a>
-        </article>
-
-        <!-- PRO -->
-        <article class="plan-card">
-          <div class="plan-name" data-i18n="plans.pro.name">PRO</div>
-          <div class="plan-term" data-i18n="plans.pro.term">6 meses de acesso</div>
-          <div class="plan-price">
-            <span class="plan-price-amount" data-i18n="plans.pro.price">R$ 389,40</span>
-          </div>
-          <div class="plan-equiv" data-i18n="plans.pro.equiv">Equivalente a R$ 64,90/mês · economize 19%</div>
-          <ul class="plan-features">
-            <li data-i18n="plans.pro.f1">Tudo do STARTER</li>
-            <li data-i18n="plans.pro.f2">Estatísticas avançadas completas</li>
-            <li data-i18n="plans.pro.f3">Filtros por campeonato</li>
-            <li data-i18n="plans.pro.f4">Histórico estendido de sinais</li>
-            <li data-i18n="plans.pro.f5">Suporte prioritário</li>
-          </ul>
-          <a href="/register.html?plan=pro" class="plan-cta" data-i18n="plans.cta">Começar Agora</a>
-        </article>
-
-        <!-- PREMIUM (featured) -->
+        <!-- PREMIUM (único plano) -->
         <article class="plan-card plan-featured">
-          <span class="plan-badge" data-i18n="plans.premium.badge">Melhor Oferta</span>
+          <span class="plan-badge" data-i18n="plans.premium.badge">Plano Premium mensal</span>
           <div class="plan-name" data-i18n="plans.premium.name">PREMIUM</div>
-          <div class="plan-term" data-i18n="plans.premium.term">12 meses de acesso</div>
+          <div class="plan-term" data-i18n="plans.premium.term">Assinatura mensal · cancele quando quiser</div>
           <div class="plan-price">
-            <span class="plan-price-amount" data-i18n="plans.premium.price">R$ 598,80</span>
+            <span class="plan-price-amount" data-i18n="plans.premium.price">R$ 79,90</span>
+            <span class="plan-price-suffix" data-i18n="plans.premium.cycle">/mês</span>
           </div>
-          <div class="plan-equiv" data-i18n="plans.premium.equiv">Equivalente a R$ 49,90/mês · economize 38%</div>
+          <div class="plan-equiv" data-i18n="plans.premium.equiv">Acesso completo por R$ 79,90/mês · cobrança recorrente</div>
           <ul class="plan-features">
-            <li data-i18n="plans.premium.f1">Tudo do PRO</li>
-            <li data-i18n="plans.premium.f2">Acesso 12 meses contínuos</li>
-            <li data-i18n="plans.premium.f3">Melhor custo-benefício</li>
-            <li data-i18n="plans.premium.f4">Acesso antecipado a novos mercados</li>
+            <li data-i18n="plans.premium.f1">Sinais BTTS, Over e Under Escanteios ao vivo</li>
+            <li data-i18n="plans.premium.f2">Estatísticas avançadas completas</li>
+            <li data-i18n="plans.premium.f3">Filtros por campeonato e histórico estendido</li>
+            <li data-i18n="plans.premium.f4">Alertas instantâneos e acesso antecipado a novos mercados</li>
             <li data-i18n="plans.premium.f5">Suporte VIP em PT, EN e ES</li>
           </ul>
           <a href="/register.html?plan=premium" class="plan-cta" data-i18n="plans.cta">Começar Agora</a>
@@ -621,34 +592,18 @@
         },
         plans: {
           eyebrow: 'Planos',
-          title: 'Escolha o tempo de acesso ideal para você',
-          sub: 'Todos os planos incluem 100% dos recursos. A diferença é só o tempo de acesso — quanto mais longo, menor o custo mensal.',
+          title: 'Plano Premium mensal',
+          sub: 'Acesso completo a 100% dos recursos por uma assinatura mensal simples. Cancele quando quiser.',
           cta: 'Começar Agora',
-          starter: {
-            name: 'STARTER', term: '3 meses de acesso',
-            price: 'R$ 239,70', equiv: 'Equivalente a R$ 79,90/mês',
-            f1: 'Sinais BTTS ao vivo',
-            f2: 'Over e Under Escanteios',
-            f4: 'Dashboard em tempo real',
-            f5: 'Alertas instantâneos'
-          },
-          pro: {
-            name: 'PRO', term: '6 meses de acesso',
-            price: 'R$ 389,40', equiv: 'Equivalente a R$ 64,90/mês · economize 19%',
-            f1: 'Tudo do STARTER',
-            f2: 'Estatísticas avançadas completas',
-            f3: 'Filtros por campeonato',
-            f4: 'Histórico estendido de sinais',
-            f5: 'Suporte prioritário'
-          },
           premium: {
-            name: 'PREMIUM', term: '12 meses de acesso',
-            price: 'R$ 598,80', equiv: 'Equivalente a R$ 49,90/mês · economize 38%',
-            badge: 'Melhor Oferta',
-            f1: 'Tudo do PRO',
-            f2: 'Acesso 12 meses contínuos',
-            f3: 'Melhor custo-benefício',
-            f4: 'Acesso antecipado a novos mercados',
+            name: 'PREMIUM', term: 'Assinatura mensal · cancele quando quiser',
+            price: 'R$ 79,90', cycle: '/mês',
+            equiv: 'Acesso completo por R$ 79,90/mês · cobrança recorrente',
+            badge: 'Plano Premium mensal',
+            f1: 'Sinais BTTS, Over e Under Escanteios ao vivo',
+            f2: 'Estatísticas avançadas completas',
+            f3: 'Filtros por campeonato e histórico estendido',
+            f4: 'Alertas instantâneos e acesso antecipado a novos mercados',
             f5: 'Suporte VIP em PT, EN e ES'
           }
         },
@@ -686,34 +641,18 @@
         },
         plans: {
           eyebrow: 'Plans',
-          title: 'Choose the access length that fits you',
-          sub: 'All plans include 100% of the features. The only difference is the access period — the longer it is, the lower the monthly cost.',
+          title: 'Monthly Premium plan',
+          sub: 'Full access to 100% of the features with one simple monthly subscription. Cancel anytime.',
           cta: 'Try Now',
-          starter: {
-            name: 'STARTER', term: '3 months access',
-            price: 'US$ 117', equiv: 'Equivalent to US$ 39/month',
-            f1: 'Live BTTS signals',
-            f2: 'Over and Under Corners',
-            f4: 'Real-time dashboard',
-            f5: 'Instant alerts'
-          },
-          pro: {
-            name: 'PRO', term: '6 months access',
-            price: 'US$ 189', equiv: 'Equivalent to US$ 32/month · save 19%',
-            f1: 'Everything in STARTER',
-            f2: 'Full advanced statistics',
-            f3: 'League filters',
-            f4: 'Extended signal history',
-            f5: 'Priority support'
-          },
           premium: {
-            name: 'PREMIUM', term: '12 months access',
-            price: 'US$ 297', equiv: 'Equivalent to US$ 25/month · save 38%',
-            badge: 'Best Value',
-            f1: 'Everything in PRO',
-            f2: '12 months of continuous access',
-            f3: 'Best price-to-value ratio',
-            f4: 'Early access to new markets',
+            name: 'PREMIUM', term: 'Monthly subscription · cancel anytime',
+            price: 'R$ 79.90', cycle: '/mo',
+            equiv: 'Full access for R$ 79.90/month · recurring billing',
+            badge: 'Monthly Premium plan',
+            f1: 'Live BTTS, Over and Under Corners signals',
+            f2: 'Full advanced statistics',
+            f3: 'League filters and extended history',
+            f4: 'Instant alerts and early access to new markets',
             f5: 'VIP support in EN, PT and ES'
           }
         },
@@ -751,34 +690,18 @@
         },
         plans: {
           eyebrow: 'Planes',
-          title: 'Elige el tiempo de acceso ideal para ti',
-          sub: 'Todos los planes incluyen el 100% de las funciones. La diferencia es solo el tiempo de acceso — cuanto más largo, menor el costo mensual.',
+          title: 'Plan Premium mensual',
+          sub: 'Acceso completo al 100% de las funciones con una suscripción mensual simple. Cancela cuando quieras.',
           cta: 'Probar Ahora',
-          starter: {
-            name: 'STARTER', term: '3 meses de acceso',
-            price: 'US$ 57', equiv: 'Equivalente a US$ 19/mes',
-            f1: 'Señales BTTS en vivo',
-            f2: 'Over y Under Córners',
-            f4: 'Dashboard en tiempo real',
-            f5: 'Alertas instantáneas'
-          },
-          pro: {
-            name: 'PRO', term: '6 meses de acceso',
-            price: 'US$ 89', equiv: 'Equivalente a US$ 15/mes · ahorra 19%',
-            f1: 'Todo lo del STARTER',
-            f2: 'Estadísticas avanzadas completas',
-            f3: 'Filtros por liga',
-            f4: 'Historial extendido de señales',
-            f5: 'Soporte prioritario'
-          },
           premium: {
-            name: 'PREMIUM', term: '12 meses de acceso',
-            price: 'US$ 139', equiv: 'Equivalente a US$ 12/mes · ahorra 38%',
-            badge: 'Mejor Oferta',
-            f1: 'Todo lo del PRO',
-            f2: '12 meses de acceso continuo',
-            f3: 'Mejor relación precio-valor',
-            f4: 'Acceso anticipado a nuevos mercados',
+            name: 'PREMIUM', term: 'Suscripción mensual · cancela cuando quieras',
+            price: 'R$ 79,90', cycle: '/mes',
+            equiv: 'Acceso completo por R$ 79,90/mes · cobro recurrente',
+            badge: 'Plan Premium mensual',
+            f1: 'Señales BTTS, Over y Under Córners en vivo',
+            f2: 'Estadísticas avanzadas completas',
+            f3: 'Filtros por liga e historial extendido',
+            f4: 'Alertas instantáneas y acceso anticipado a nuevos mercados',
             f5: 'Soporte VIP en ES, PT e EN'
           }
         },
