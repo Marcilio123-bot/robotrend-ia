@@ -43,15 +43,21 @@ const UPGRADE_MESSAGE = 'Sinal exclusivo Premium. Faça upgrade para desbloquear
  */
 function isPremiumUser(user) {
   if (!user) return false;
-  try {
-    if (subscription && typeof subscription.isAdminUser === 'function' && subscription.isAdminUser(user)) {
-      return true;
-    }
-    if (subscription && typeof subscription.resolveSubscriptionState === 'function') {
+  // Fonte de verdade: o módulo de assinatura resolve EXPIRAÇÃO/bloqueio.
+  // Um assinante expirado (now > expiresAt) NÃO é premium — mesmo que
+  // user.plan ainda seja 'PREMIUM'. Confiamos no resolver e NÃO caímos
+  // no fallback ingênuo por plano (que causava "Premium infinito").
+  if (subscription && typeof subscription.resolveSubscriptionState === 'function') {
+    try {
+      if (typeof subscription.isAdminUser === 'function' && subscription.isAdminUser(user)) {
+        return true;
+      }
       const st = subscription.resolveSubscriptionState(user);
-      if (st && st.isPremium) return true;
-    }
-  } catch (_) { /* usa fallback abaixo */ }
+      return !!(st && st.isPremium);
+    } catch (_) { /* módulo falhou em runtime → fallback abaixo */ }
+  }
+  // Fallback APENAS quando o módulo de assinatura está indisponível
+  // (não há como avaliar expiração — degrada para checagem por plano/role).
   const role = String(user.role || '').toLowerCase();
   const plan = String(user.plan || '').toUpperCase();
   return role === 'admin' || role === 'owner' || role === 'master' || role === 'super_admin' || role === 'premium'

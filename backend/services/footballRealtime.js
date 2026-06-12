@@ -141,6 +141,8 @@ function attachFootballRealtime(io, opts = {}) {
   const db = opts.db || null;
   const auth = opts.auth || null;
   if (db && auth) {
+    let subMod = null;
+    try { subMod = require('../subscription'); } catch (_) { subMod = null; }
     ns.use(async (socket, next) => {
       try {
         const token = socket.handshake.auth?.token
@@ -148,8 +150,23 @@ function attachFootballRealtime(io, opts = {}) {
         if (token) {
           const payload = auth.verifyToken(token);
           if (payload?.sub) {
-            const u = await db.findUserById(payload.sub);
-            if (u) socket.user = { id: u.id, plan: u.plan, role: u.role, email: u.email };
+            let u = await db.findUserById(payload.sub);
+            if (u) {
+              // Detecta/persiste expiração no connect e propaga campos de
+              // assinatura para que isPremiumSocket() avalie EXPIRAÇÃO por emit.
+              if (subMod && typeof subMod.syncSubscriptionStatus === 'function') {
+                try { u = await subMod.syncSubscriptionStatus(db, u); } catch (_) { /* snapshot */ }
+              }
+              socket.user = {
+                id: u.id,
+                plan: u.plan,
+                role: u.role,
+                email: u.email,
+                expiresAt: u.expiresAt || null,
+                subscriptionStatus: u.subscriptionStatus || null,
+                blocked: u.blocked === true || u.active === false,
+              };
+            }
           }
         }
       } catch (_) { /* anônimo OK */ }

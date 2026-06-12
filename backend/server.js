@@ -74,6 +74,7 @@ const backtest = require('./backtest');
 const results = require('./results');
 const beta = require('./beta');
 const watchdog = require('./watchdog');
+const subscriptionExpiry = require('./workers/subscriptionExpiry');
 const ml = require('./ml');
 const { ASSET_VERSION } = require('./version');
 
@@ -1092,8 +1093,23 @@ io.use(async (socket, next) => {
   if (token) {
     const payload = auth.verifyToken(token);
     if (payload?.sub) {
-      const u = await db.findUserById(payload.sub);
-      if (u) socket.user = { id: u.id, plan: u.plan, role: u.role, email: u.email };
+      let u = await db.findUserById(payload.sub);
+      if (u) {
+        // Sincroniza/persiste status de assinatura no connect (detecta expiração).
+        try { u = await subscription.syncSubscriptionStatus(db, u); } catch (_) { /* segue com snapshot */ }
+        // IMPORTANTE: inclui expiresAt/subscriptionStatus/blocked para que
+        // signalAccess.isPremiumUser() avalie EXPIRAÇÃO a cada broadcast.
+        // Sem esses campos, um assinante expirado seria tratado como premium.
+        socket.user = {
+          id: u.id,
+          plan: u.plan,
+          role: u.role,
+          email: u.email,
+          expiresAt: u.expiresAt || null,
+          subscriptionStatus: u.subscriptionStatus || null,
+          blocked: u.blocked === true || u.active === false,
+        };
+      }
     }
   }
   next();
@@ -1418,6 +1434,9 @@ async function main() {
   startCleanupJob();
   startAdaptiveLoop();
   try { watchdog.start(); } catch (e) { log.warn('watchdog start falhou', { err: e.message }); }
+  // Downgrade automático de assinaturas expiradas (boot + varredura periódica).
+  try { subscriptionExpiry.start(db, { emitToUser }); }
+  catch (e) { log.warn('subscriptionExpiry start falhou', { err: e.message }); }
 
   probeOptionalDns(bootReport).catch((e) => {
     log.warn('DNS probe pós-boot falhou (não fatal)', { err: e.message });

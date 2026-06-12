@@ -447,6 +447,72 @@ async function repairDegradedPrivilegedUsers(db) {
   return { repaired };
 }
 
+/**
+ * Varredura de expiração — downgrade automático de assinaturas vencidas.
+ * ---------------------------------------------------------------------
+ * Roda no boot e periodicamente (worker). Para todo usuário pago cujo
+ * `expiresAt` já passou e que ainda NÃO está marcado como expirado:
+ *   - subscriptionStatus = 'expired'  (corta hasPaidAccess/isPremium)
+ *   - role 'premium' → 'user'         (defesa extra; preserva admin/owner/master)
+ *
+ * O campo `plan` é preservado (modelo "lapsed") para permitir renovação
+ * mensal sem perder o histórico do tier. O acesso efetivo cai para FREE
+ * imediatamente, pois todo gate (REST + socket) consulta o status/expiração.
+ *
+ * Idempotente: usuários já 'expired' são ignorados. Admins nunca são tocados.
+ *
+ * @param {object} [opts]
+ * @param {function} [opts.onExpire]  callback(userId, user) por usuário rebaixado
+ * @returns {Promise<{ expired: number, scanned: number }>}
+ */
+async function expireSubscriptions(db, opts = {}) {
+  const onExpire = typeof opts.onExpire === 'function' ? opts.onExpire : null;
+  const now = Date.now();
+  let users;
+  try {
+    users = await db.listUsers(50_000);
+  } catch (err) {
+    log.warn('expireSubscriptions: listUsers falhou', { err: err.message });
+    return { expired: 0, scanned: 0 };
+  }
+  let expired = 0;
+  for (const u of users) {
+    if (isAdminUser(u) || isPrivilegedAdminEmail(u?.email)) continue;
+    const plan = normalizePlan(u.plan);
+    if (!isPaidPlan(plan)) continue;
+    if (!u.expiresAt) continue; // sem data → tratado pela migração; não expira aqui
+    const exp = new Date(u.expiresAt).getTime();
+    if (!Number.isFinite(exp) || exp >= now) continue; // ainda válido
+    if (String(u.subscriptionStatus || '').toLowerCase() === STATUS.EXPIRED) continue; // já expirado
+    if (u.blocked === true) continue; // bloqueado tem fluxo próprio
+
+    const patch = { subscriptionStatus: STATUS.EXPIRED };
+    // Reseta role degradado 'premium' → 'user' (NUNCA toca admin/owner/master).
+    if (String(u.role || '').toLowerCase() === 'premium') patch.role = 'user';
+    try {
+      await db.updateUser(u.id, patch);
+      expired++;
+      log.info('assinatura expirada — acesso Premium revogado automaticamente', {
+        userId: u.id, email: u.email, plan, expiresAt: u.expiresAt,
+      });
+      if (onExpire) {
+        try { onExpire(u.id, u); } catch (_) { /* notificação não-crítica */ }
+      }
+    } catch (err) {
+      const missingCol = err?.code === '42703' || /column.*does not exist/i.test(String(err?.message || ''));
+      if (missingCol) {
+        log.warn('expireSubscriptions: colunas de assinatura ausentes — rode a migração 004', { err: err.message });
+        break;
+      }
+      log.warn('expireSubscriptions: updateUser falhou', { userId: u.id, err: err.message });
+    }
+  }
+  if (expired > 0) {
+    log.info('varredura de expiração concluída', { expired, scanned: users.length });
+  }
+  return { expired, scanned: users.length };
+}
+
 async function migrateExistingUsers(db) {
   const users = await db.listUsers(10_000);
   let updated = 0;
@@ -503,6 +569,7 @@ module.exports = {
   blockUser,
   unblockUser,
   renewSubscription,
+  expireSubscriptions,
   logAdminAction,
   enrichUserForClient,
   attachSubscription,
