@@ -70,17 +70,16 @@
   <div class="bg-aurora"></div>
   <div class="bg-grid"></div>
 
-  <div class="afp-wrap">
-    <div class="afp-top">
-      <div class="afp-brand">
-        <div class="afp-mark">R</div>
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="afiliado"></div>
+
+    <main class="saas-content">
+      <header class="saas-page-header">
         <div>
-          <div class="afp-title">Painel do Afiliado</div>
-          <div class="afp-sub" id="afp-name">Robotrend IA</div>
+          <h1 class="saas-page-title">🤝 Painel do Afiliado</h1>
+          <p class="saas-page-sub" id="afp-name">Acompanhe suas indicações, comissões e dados de recebimento</p>
         </div>
-      </div>
-      <button class="afp-logout" id="afp-logout">Sair</button>
-    </div>
+      </header>
 
     <div class="afp-link-card">
       <div class="afp-link-label">Seu link de indicação · comissão de <span id="afp-pct">—</span></div>
@@ -141,10 +140,13 @@
         <tbody id="afp-payouts"><tr><td colspan="4" class="afp-empty">Carregando…</td></tr></tbody>
       </table>
     </div>
+    </main>
   </div>
 
   <script src="/js/auth.js"></script>
   <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/saas-nav.js"></script>
   <script>
     (function () {
       'use strict';

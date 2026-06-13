@@ -146,6 +146,29 @@
     return !(p === 'PREMIUM' || p === 'VIP' || p === 'PRO' || p === 'TRIAL');
   }
 
+  /** Afiliado = usuário cadastrado manualmente pelo admin (role 'affiliate'). */
+  function isAffiliate(u) {
+    return !!u && String(u.role || '').toLowerCase() === 'affiliate';
+  }
+
+  /**
+   * Retorna o clientNav, injetando a categoria "Afiliado" na seção "Conta"
+   * APENAS quando o usuário é afiliado. Não muta o array original.
+   */
+  function buildClientNav(user) {
+    if (!isAffiliate(user)) return clientNav;
+    return clientNav.map((section) => {
+      if (section.section !== 'Conta') return section;
+      return {
+        ...section,
+        items: [
+          ...section.items,
+          { id: 'afiliado', label: 'Afiliado', icon: '🤝', href: '/afiliado' },
+        ],
+      };
+    });
+  }
+
   /**
    * Decide qual menu mostrar e qual "kind" identificar — PATH-BASED.
    * A intenção é evitar mistura entre UI cliente e sidebar master numa
@@ -164,9 +187,9 @@
     if (isMasterRole(user)) {
       // Master logado vendo a perspectiva cliente: injeta um atalho ao
       // painel master no topo do clientNav (sem reescrever clientNav).
-      return { nav: injectMasterShortcut(clientNav), kind: 'client' };
+      return { nav: injectMasterShortcut(buildClientNav(user)), kind: 'client' };
     }
-    return { nav: clientNav, kind: 'client' };
+    return { nav: buildClientNav(user), kind: 'client' };
   }
 
   /**
