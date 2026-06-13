@@ -195,9 +195,13 @@ async function syncSubscriptionStatus(db, user) {
 }
 
 /**
- * Ativa assinatura após pagamento ou renovação admin.
+ * Ativa assinatura após pagamento aprovado.
+ * Quando `externalId` + `amount` vêm do gateway, registra comissão do afiliado
+ * (se o cliente foi indicado) — ponto único após o plano pago ser persistido.
  */
-async function activateSubscription(db, userId, { plan, provider, externalId, fromDate } = {}) {
+async function activateSubscription(db, userId, {
+  plan, provider, externalId, fromDate, amount,
+} = {}) {
   const existing = await db.findUserById(userId);
   const p = normalizePlan(plan);
   const days = durationDaysForPlan(p);
@@ -222,6 +226,32 @@ async function activateSubscription(db, userId, { plan, provider, externalId, fr
       status: 'active',
       expiresAt,
     });
+  }
+
+  // Comissão de afiliado: só após upgrade pago confirmado (pagamento com ID externo).
+  if (isPaidPlan(p) && externalId && typeof db.getReferralByUserId === 'function') {
+    let paidAmount = Number(amount);
+    if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
+      try {
+        const { getPlan } = require('./plans');
+        paidAmount = Number(getPlan(p)?.priceBRL) || 0;
+      } catch (_) {
+        paidAmount = 0;
+      }
+    }
+    try {
+      const { recordAffiliateCommissionForPayment } = require('./affiliates');
+      await recordAffiliateCommissionForPayment(db, {
+        userId,
+        externalId: String(externalId),
+        plan: p,
+        amount: paidAmount,
+      });
+    } catch (err) {
+      log.warn('comissão de afiliado (activateSubscription) falhou', {
+        err: err.message, userId, externalId,
+      });
+    }
   }
 
   return db.findUserById(userId);

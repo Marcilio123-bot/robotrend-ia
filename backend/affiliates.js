@@ -21,11 +21,19 @@
 
 const crypto = require('crypto');
 const auth = require('./auth');
-const { generateInitialPassword } = require('./payments');
 const { logger } = require('./logger');
 const log = logger.child({ module: 'affiliates' });
 
 const MASTER_ROLES = new Set(['master', 'admin', 'owner', 'super_admin']);
+
+/** Senha inicial para conta de afiliado (evita require circular com payments.js). */
+function generateInitialPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let out = '';
+  const buf = crypto.randomBytes(12);
+  for (let i = 0; i < 12; i++) out += alphabet[buf[i] % alphabet.length];
+  return out;
+}
 
 function sanitizeText(v, max = 80) {
   return String(v ?? '').replace(/[<>]/g, '').trim().slice(0, max);
@@ -94,11 +102,22 @@ function buildReferralLink(req, code) {
    ============================================================ */
 async function recordAffiliateCommissionForPayment(db, { userId, externalId, plan, amount }) {
   try {
-    if (!userId) return null;
+    if (!userId) {
+      log.debug('comissão ignorada — userId ausente', { externalId });
+      return null;
+    }
     const referral = await db.getReferralByUserId(userId);
-    if (!referral || !referral.affiliateId) return null;
+    if (!referral || !referral.affiliateId) {
+      log.debug('comissão ignorada — cliente sem indicação', { userId, externalId });
+      return null;
+    }
     const affiliate = await db.getAffiliateById(referral.affiliateId);
-    if (!affiliate || !affiliate.active) return null;
+    if (!affiliate || !affiliate.active) {
+      log.warn('comissão ignorada — afiliado inativo ou inexistente', {
+        userId, affiliateId: referral.affiliateId, externalId,
+      });
+      return null;
+    }
     const pct = Number(affiliate.commissionPct) || 0;
     const commission = await db.recordAffiliateCommission({
       affiliateId: affiliate.id,

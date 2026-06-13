@@ -343,6 +343,7 @@ async function provisionUserFromPayment(db, payload) {
       plan: safePlan,
       provider,
       externalId: externalId || null,
+      amount: amount || 0,
     });
     subRecord = await db.getSubscription?.(user.id);
   } catch (err) {
@@ -362,19 +363,6 @@ async function provisionUserFromPayment(db, payload) {
     });
   } catch (err) {
     log.warn('savePayment falhou', { err: err.message });
-  }
-
-  // Comissão de afiliado (se o cliente foi indicado) — cálculo automático.
-  try {
-    const { recordAffiliateCommissionForPayment } = require('./affiliates');
-    await recordAffiliateCommissionForPayment(db, {
-      userId: user.id,
-      externalId: externalId || null,
-      plan: safePlan,
-      amount: amount || 0,
-    });
-  } catch (err) {
-    log.warn('comissão de afiliado (provision) falhou', { err: err.message });
   }
 
   // Welcome email + tracking (não bloqueia se falhar)
@@ -847,6 +835,21 @@ function buildPaymentRoutes(app, db, requireAuth) {
         if (existing && existing.status === 'paid') {
           log.info('webhook MP ignorado — payment já marcado paid no DB', { paymentId });
           markProcessed(paymentId);
+          // Backfill: pagamento processado sem comissão (reentrega ou falha anterior).
+          const paidUserId = existing.user_id || existing.userId;
+          if (paidUserId) {
+            try {
+              const { recordAffiliateCommissionForPayment } = require('./affiliates');
+              await recordAffiliateCommissionForPayment(db, {
+                userId: paidUserId,
+                externalId: String(paymentId),
+                plan: existing.plan || 'PREMIUM',
+                amount: Number(existing.amount_brl ?? existing.amount ?? 0),
+              });
+            } catch (err) {
+              log.warn('comissão backfill (webhook idempotente) falhou', { err: err.message, paymentId });
+            }
+          }
           return;
         }
       } catch (err) {
@@ -936,6 +939,7 @@ function buildPaymentRoutes(app, db, requireAuth) {
           plan,
           provider: 'mercadopago',
           externalId: String(paymentInfo.id),
+          amount: paymentInfo.transaction_amount || 0,
         });
         log.info('user upgraded via webhook MP', {
           userId: user.id, email: user.email,
@@ -966,19 +970,6 @@ function buildPaymentRoutes(app, db, requireAuth) {
         });
       } catch (err) {
         log.warn('savePayment paid falhou', { err: err.message });
-      }
-
-      // Comissão de afiliado (cálculo automático conforme % do afiliado)
-      try {
-        const { recordAffiliateCommissionForPayment } = require('./affiliates');
-        await recordAffiliateCommissionForPayment(db, {
-          userId: user.id,
-          externalId: String(paymentInfo.id),
-          plan,
-          amount: paymentInfo.transaction_amount || 0,
-        });
-      } catch (err) {
-        log.warn('comissão de afiliado (webhook MP) falhou', { err: err.message });
       }
 
       // Email de confirmação
