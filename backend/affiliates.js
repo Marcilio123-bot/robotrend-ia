@@ -35,6 +35,20 @@ function isEmail(s) {
   return typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
 
+/** Extrai os dados de recebimento PIX de um afiliado + status de configuração. */
+function payoutInfoOf(aff) {
+  const holder = aff?.payoutHolder || null;
+  const bank = aff?.payoutBank || null;
+  const pixKey = aff?.payoutPixKey || null;
+  return {
+    holder,
+    bank,
+    pixKey,
+    updatedAt: aff?.payoutUpdatedAt || null,
+    configured: !!(holder && bank && pixKey),
+  };
+}
+
 /** Normaliza um percentual: aceita qualquer valor >= 0 (10, 15.5, 30, 50...). */
 function normalizePct(v) {
   const n = Number(v);
@@ -222,6 +236,7 @@ function buildAffiliateRoutes(app, db, requireAuth, requireAdmin, requireAffilia
         ok: true,
         affiliate: { ...aff, link: buildReferralLink(req, aff.code) },
         stats,
+        payoutInfo: payoutInfoOf(aff),
         commissions,
         payouts,
       });
@@ -266,7 +281,7 @@ function buildAffiliateRoutes(app, db, requireAuth, requireAdmin, requireAffilia
         return res.status(400).json({ ok: false, error: 'NO_PENDING_COMMISSIONS' });
       }
       log.info('comissões pagas', { adminId: req.user.id, affiliateId: aff.id, amount: result.amount, count: result.count });
-      res.json({ ok: true, ...result });
+      res.json({ ok: true, ...result, payoutInfo: payoutInfoOf(aff) });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }
@@ -295,11 +310,40 @@ function buildAffiliateRoutes(app, db, requireAuth, requireAdmin, requireAffilia
         },
         stats,
         balanceAvailable: stats.pending,
+        payoutInfo: payoutInfoOf(aff),
         commissions,
         payouts,
       });
     } catch (e) {
       log.error('painel do afiliado falhou', { err: e.message });
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/affiliate/payout — afiliado cadastra/edita os PRÓPRIOS dados PIX.
+   * Apenas titular, banco e chave PIX. O afiliado só altera o próprio registro
+   * (resolvido por req.user.id), nunca o de outro afiliado.
+   */
+  app.post('/api/affiliate/payout', requireAuth(db), requireAffiliate, async (req, res) => {
+    try {
+      const aff = await db.getAffiliateByUserId(req.user.id);
+      if (!aff) return res.status(404).json({ ok: false, error: 'NOT_AN_AFFILIATE' });
+
+      const body = req.body || {};
+      const holder = sanitizeText(body.holder, 80);
+      const bank = sanitizeText(body.bank, 60);
+      const pixKey = sanitizeText(body.pixKey, 140);
+
+      if (!holder) return res.status(400).json({ ok: false, error: 'HOLDER_REQUIRED' });
+      if (!bank) return res.status(400).json({ ok: false, error: 'BANK_REQUIRED' });
+      if (!pixKey) return res.status(400).json({ ok: false, error: 'PIX_KEY_REQUIRED' });
+
+      const updated = await db.updateAffiliatePayoutInfo(aff.id, { holder, bank, pixKey });
+      log.info('dados PIX do afiliado atualizados', { affiliateId: aff.id });
+      res.json({ ok: true, payoutInfo: payoutInfoOf(updated) });
+    } catch (e) {
+      log.error('atualizar dados PIX falhou', { err: e.message });
       res.status(500).json({ ok: false, error: e.message });
     }
   });

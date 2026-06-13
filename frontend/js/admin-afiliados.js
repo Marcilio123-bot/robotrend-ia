@@ -108,9 +108,23 @@
         <td>${escapeHtml(p.note || '—')}</td>
       </tr>`).join('') || `<tr><td colspan="4" style="color:var(--muted);">Nenhum pagamento registrado.</td></tr>`;
 
+    const pi = d.payoutInfo || {};
+    const payoutBlock = pi.configured
+      ? `<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px;">
+           <div><div style="color:var(--muted); font-size:11px; text-transform:uppercase;">Titular</div><div style="font-weight:700;">${escapeHtml(pi.holder)}</div></div>
+           <div><div style="color:var(--muted); font-size:11px; text-transform:uppercase;">Banco</div><div style="font-weight:700;">${escapeHtml(pi.bank)}</div></div>
+           <div><div style="color:var(--muted); font-size:11px; text-transform:uppercase;">Chave PIX</div><div style="font-weight:700; font-family:'JetBrains Mono',monospace;">${escapeHtml(pi.pixKey)}</div></div>
+           <div><div style="color:var(--muted); font-size:11px; text-transform:uppercase;">Atualizado em</div><div>${escapeHtml(fmtDate(pi.updatedAt))}</div></div>
+         </div>`
+      : `<div style="color:#ffb547;">⚠️ O afiliado ainda não cadastrou os dados de recebimento PIX.</div>`;
+
     return `
       <tr class="af-detail"><td colspan="10">
         <div style="padding:14px; display:grid; gap:16px;">
+          <div>
+            <div style="font-weight:800; margin-bottom:6px;">Dados de Recebimento (PIX)</div>
+            ${payoutBlock}
+          </div>
           <div>
             <div style="font-weight:800; margin-bottom:6px;">Histórico de comissões</div>
             <table class="af-sub">
@@ -152,9 +166,9 @@
   async function loadDetails(id) {
     try {
       const data = await RobotrendAuth.api(`/api/master/affiliates/${encodeURIComponent(id)}`);
-      details.set(id, { commissions: data.commissions || [], payouts: data.payouts || [] });
+      details.set(id, { commissions: data.commissions || [], payouts: data.payouts || [], payoutInfo: data.payoutInfo || {} });
     } catch (_) {
-      details.set(id, { commissions: [], payouts: [] });
+      details.set(id, { commissions: [], payouts: [], payoutInfo: {} });
     }
     render();
   }
@@ -223,9 +237,26 @@
       } else if (act === 'pay') {
         const st = item.stats || {};
         if (!st.pending) return feedback('Não há comissões pendentes para este afiliado.', false);
-        if (!confirm(`Marcar ${money(st.pending)} em comissões como PAGAS para ${item.name}?`)) return;
+
+        // Busca os dados PIX para o Master fazer a transferência.
+        let pi = details.get(id)?.payoutInfo;
+        if (!pi) {
+          try {
+            const det = await RobotrendAuth.api(`/api/master/affiliates/${encodeURIComponent(id)}`);
+            pi = det.payoutInfo || {};
+          } catch (_) { pi = {}; }
+        }
+        const pixLines = pi.configured
+          ? `\n\nDADOS PIX PARA TRANSFERÊNCIA:\n• Titular: ${pi.holder}\n• Banco: ${pi.bank}\n• Chave PIX: ${pi.pixKey}`
+          : `\n\n⚠️ O afiliado ainda NÃO cadastrou os dados de recebimento PIX.`;
+
+        if (!confirm(`Marcar ${money(st.pending)} em comissões como PAGAS para ${item.name}?${pixLines}`)) return;
         const r = await RobotrendAuth.api(`/api/master/affiliates/${encodeURIComponent(id)}/pay`, { method: 'POST', body: JSON.stringify({}) });
-        feedback(`Pagamento registrado: ${money(r.amount)} (${r.count} comissão(ões)).`);
+        const piAfter = r.payoutInfo || pi || {};
+        const pixMsg = piAfter.configured
+          ? ` · PIX: ${piAfter.pixKey} (${piAfter.holder} · ${piAfter.bank})`
+          : ' · afiliado sem dados PIX cadastrados';
+        feedback(`Pagamento registrado: ${money(r.amount)} (${r.count} comissão(ões))${pixMsg}.`);
         details.delete(id);
         if (expanded.has(id)) loadDetails(id);
         load();

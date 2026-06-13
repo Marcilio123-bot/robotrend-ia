@@ -48,6 +48,22 @@
     .afp-pill.paid { background:rgba(34,197,94,.16); color:#22c55e; }
     .afp-empty { padding:18px; color:var(--muted); text-align:center; }
     .afp-note { font-size:12px; color:var(--muted); margin-top:6px; }
+
+    .afp-pay-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    .afp-status { font-size:11px; font-weight:800; padding:4px 10px; border-radius:999px; }
+    .afp-status.ok { background:rgba(34,197,94,.16); color:#22c55e; }
+    .afp-status.off { background:rgba(255,181,71,.16); color:#ffb547; }
+    .afp-form { padding:18px; display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+    .afp-field { display:flex; flex-direction:column; gap:6px; }
+    .afp-field label { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+    .afp-input { padding:11px 13px; border-radius:10px; border:1px solid var(--line);
+      background:var(--surface,#0b1a12); color:var(--text,#e6f4ec); font-size:14px; font-family:inherit; }
+    .afp-input:focus { outline:none; border-color:var(--brand,#14b85e); }
+    .afp-form-foot { padding:0 18px 18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .afp-save-btn { padding:11px 22px; border-radius:10px; border:none; cursor:pointer; font-weight:800;
+      background:var(--brand,#14b85e); color:#04140b; }
+    .afp-save-btn:disabled { opacity:.6; cursor:not-allowed; }
+    .afp-save-msg { font-size:13px; font-weight:600; }
   </style>
 </head>
 <body class="font-display antialiased">
@@ -82,6 +98,32 @@
       <div class="afp-card"><div class="afp-card-label">Comissão pendente</div><div class="afp-card-value warn afp-money" id="afp-pending">—</div></div>
       <div class="afp-card"><div class="afp-card-label">Comissão paga</div><div class="afp-card-value brand afp-money" id="afp-paid">—</div></div>
       <div class="afp-card"><div class="afp-card-label">Saldo p/ saque</div><div class="afp-card-value afp-money" id="afp-balance">—</div></div>
+    </div>
+
+    <div class="afp-section">
+      <div class="afp-section-head afp-pay-head">
+        <span>Dados de Recebimento</span>
+        <span id="afp-pay-status" class="afp-status off">⚠️ Não configurado</span>
+      </div>
+      <form id="afp-pay-form" class="afp-form">
+        <div class="afp-field">
+          <label for="afp-holder">Nome do titular</label>
+          <input class="afp-input" id="afp-holder" type="text" maxlength="80" placeholder="Nome completo do titular" autocomplete="name" />
+        </div>
+        <div class="afp-field">
+          <label for="afp-bank">Banco</label>
+          <input class="afp-input" id="afp-bank" type="text" maxlength="60" placeholder="Ex.: Nubank, Itaú, Inter" />
+        </div>
+        <div class="afp-field">
+          <label for="afp-pixkey">Chave PIX</label>
+          <input class="afp-input" id="afp-pixkey" type="text" maxlength="140" placeholder="E-mail, telefone, CPF/CNPJ ou chave aleatória" />
+        </div>
+      </form>
+      <div class="afp-form-foot">
+        <button type="submit" form="afp-pay-form" class="afp-save-btn" id="afp-pay-save">Salvar dados</button>
+        <span class="afp-note" id="afp-pay-updated">Nenhum dado cadastrado ainda.</span>
+        <span class="afp-save-msg" id="afp-pay-msg"></span>
+      </div>
     </div>
 
     <div class="afp-section">
@@ -152,6 +194,29 @@
           </tr>`).join('');
       }
 
+      let payoutLoaded = false;
+      function renderPayoutInfo(info) {
+        info = info || {};
+        const statusEl = $('#afp-pay-status');
+        if (info.configured) {
+          statusEl.className = 'afp-status ok';
+          statusEl.textContent = '✅ Configurado';
+        } else {
+          statusEl.className = 'afp-status off';
+          statusEl.textContent = '⚠️ Não configurado';
+        }
+        // Só preenche os inputs na primeira carga, para não sobrescrever edição em curso.
+        if (!payoutLoaded) {
+          $('#afp-holder').value = info.holder || '';
+          $('#afp-bank').value = info.bank || '';
+          $('#afp-pixkey').value = info.pixKey || '';
+          payoutLoaded = true;
+        }
+        $('#afp-pay-updated').textContent = info.updatedAt
+          ? 'Última atualização: ' + fmtDate(info.updatedAt)
+          : 'Nenhum dado cadastrado ainda.';
+      }
+
       async function load() {
         try {
           const data = await window.RobotrendAuth.api('/api/affiliate/me');
@@ -167,12 +232,55 @@
           $('#afp-pending').textContent = money(st.pending);
           $('#afp-paid').textContent = money(st.paid);
           $('#afp-balance').textContent = money(data.balanceAvailable);
+          renderPayoutInfo(data.payoutInfo);
           renderCommissions(data.commissions);
           renderPayouts(data.payouts);
         } catch (e) {
           $('#afp-commissions').innerHTML = `<tr><td colspan="6" class="afp-empty" style="color:#ef4444;">Erro ao carregar: ${escapeHtml(e.message)}</td></tr>`;
         }
       }
+
+      $('#afp-pay-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = $('#afp-pay-save');
+        const msg = $('#afp-pay-msg');
+        const payload = {
+          holder: $('#afp-holder').value.trim(),
+          bank: $('#afp-bank').value.trim(),
+          pixKey: $('#afp-pixkey').value.trim(),
+        };
+        if (!payload.holder || !payload.bank || !payload.pixKey) {
+          msg.style.color = '#ef4444';
+          msg.textContent = 'Preencha titular, banco e chave PIX.';
+          return;
+        }
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Salvando…';
+        msg.textContent = '';
+        try {
+          const r = await window.RobotrendAuth.api('/api/affiliate/payout', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+          renderPayoutInfo(r.payoutInfo);
+          msg.style.color = 'var(--brand,#14b85e)';
+          msg.textContent = 'Dados salvos com sucesso.';
+          setTimeout(() => { msg.textContent = ''; }, 4000);
+        } catch (err) {
+          const code = err?.payload?.error || err.message;
+          let m = 'Erro ao salvar.';
+          if (code === 'HOLDER_REQUIRED') m = 'Informe o nome do titular.';
+          else if (code === 'BANK_REQUIRED') m = 'Informe o banco.';
+          else if (code === 'PIX_KEY_REQUIRED') m = 'Informe a chave PIX.';
+          else if (code) m = 'Erro: ' + code;
+          msg.style.color = '#ef4444';
+          msg.textContent = m;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+      });
 
       $('#afp-copy')?.addEventListener('click', async () => {
         const val = $('#afp-link').value;

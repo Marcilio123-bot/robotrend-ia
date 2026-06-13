@@ -381,6 +381,17 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_aff_payout_affiliate ON affiliate_payouts(affiliate_id);
     `,
   },
+  {
+    // Dados de recebimento PIX do afiliado (apenas titular, banco e chave).
+    // Sem CPF, conta, agência ou telefone — por requisito do produto.
+    name: '009_affiliate_payout_info',
+    sql: `
+      ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS payout_holder    TEXT;
+      ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS payout_bank      TEXT;
+      ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS payout_pix_key   TEXT;
+      ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS payout_updated_at TIMESTAMPTZ;
+    `,
+  },
 ];
 
 async function init() {
@@ -1362,6 +1373,10 @@ function mapAffiliateRow(r) {
     code: r.code,
     commissionPct: Number(r.commission_pct ?? r.commissionPct ?? 0),
     active: r.active == null ? true : !!r.active,
+    payoutHolder: r.payout_holder ?? r.payoutHolder ?? null,
+    payoutBank: r.payout_bank ?? r.payoutBank ?? null,
+    payoutPixKey: r.payout_pix_key ?? r.payoutPixKey ?? null,
+    payoutUpdatedAt: r.payout_updated_at ?? r.payoutUpdatedAt ?? null,
     createdAt: r.created_at || r.createdAt || null,
     updatedAt: r.updated_at || r.updatedAt || null,
   };
@@ -1488,6 +1503,29 @@ async function updateAffiliate(id, patch = {}) {
   const { rows } = await pool.query(
     `UPDATE affiliates SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${i} RETURNING *`,
     vals
+  );
+  return rows[0] ? mapAffiliateRow(rows[0]) : null;
+}
+
+/**
+ * Atualiza os dados de recebimento PIX do afiliado (titular, banco, chave).
+ * Carimba payout_updated_at automaticamente.
+ */
+async function updateAffiliatePayoutInfo(id, { holder, bank, pixKey } = {}) {
+  if (!useDatabase) {
+    const r = mem.affiliates.get(id);
+    if (!r) return null;
+    r.payout_holder = holder ?? null;
+    r.payout_bank = bank ?? null;
+    r.payout_pix_key = pixKey ?? null;
+    r.payout_updated_at = new Date().toISOString();
+    return mapAffiliateRow(r);
+  }
+  const { rows } = await pool.query(
+    `UPDATE affiliates
+       SET payout_holder=$1, payout_bank=$2, payout_pix_key=$3, payout_updated_at=NOW()
+     WHERE id=$4 RETURNING *`,
+    [holder ?? null, bank ?? null, pixKey ?? null, id]
   );
   return rows[0] ? mapAffiliateRow(rows[0]) : null;
 }
@@ -1855,7 +1893,7 @@ module.exports = {
   markSupportRead, countSupportUnreadForUser, countSupportUnreadForAdmin,
   // afiliados / revendedores
   createAffiliate, getAffiliateById, getAffiliateByUserId, getAffiliateByCode,
-  listAffiliates, updateAffiliate,
+  listAffiliates, updateAffiliate, updateAffiliatePayoutInfo,
   createReferral, getReferralByUserId,
   recordAffiliateCommission, listCommissions, payAffiliateCommissions, listPayouts,
   affiliateStats, affiliatesOverview,
