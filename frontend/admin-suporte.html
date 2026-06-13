@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <title>Suporte · Robotrend IA Master</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .sup-grid { display:grid; grid-template-columns:320px 1fr; gap:16px; align-items:start; }
+    @media (max-width:900px){ .sup-grid { grid-template-columns:1fr; } }
+
+    .sup-threads { display:flex; flex-direction:column; gap:8px; max-height:70vh; overflow:auto; padding:4px; }
+    .sup-thread {
+      display:flex; gap:10px; align-items:flex-start; width:100%; text-align:left;
+      padding:12px; border-radius:12px; border:1px solid var(--line); background:var(--surface-2,#11241a);
+      cursor:pointer; transition:border-color .15s ease, background .15s ease;
+    }
+    .sup-thread:hover { border-color:var(--brand,#14b85e); }
+    .sup-thread.active { border-color:var(--brand,#14b85e); background:rgba(20,184,94,.10); }
+    .sup-thread-ava { width:36px; height:36px; border-radius:10px; flex:0 0 auto; display:grid; place-items:center;
+      font-weight:900; background:rgba(20,184,94,.18); color:#14b85e; }
+    .sup-thread-meta { flex:1; min-width:0; }
+    .sup-thread-name { font-weight:800; font-size:13.5px; color:var(--text,#e6f4ec); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sup-thread-last { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+    .sup-thread-side { display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex:0 0 auto; }
+    .sup-thread-time { font-size:10.5px; color:var(--muted); }
+    .sup-unread { min-width:20px; height:20px; padding:0 6px; border-radius:999px; background:#ef4444; color:#fff;
+      font-size:11px; font-weight:800; display:inline-flex; align-items:center; justify-content:center; }
+
+    .sup-convo { display:flex; flex-direction:column; height:70vh; }
+    .sup-convo-head { display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--line); }
+    .sup-convo-name { font-weight:800; color:var(--text,#e6f4ec); }
+    .sup-convo-email { font-size:12px; color:var(--muted); }
+    .sup-convo-body { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
+    .sup-row { display:flex; flex-direction:column; max-width:78%; }
+    .sup-row.user { align-self:flex-start; align-items:flex-start; }
+    .sup-row.admin { align-self:flex-end; align-items:flex-end; }
+    .sup-bubble { padding:10px 13px; border-radius:14px; font-size:13.5px; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
+    .sup-row.user .sup-bubble { background:var(--surface-2,#11241a); border:1px solid var(--line); color:var(--text,#e6f4ec); border-bottom-left-radius:5px; }
+    .sup-row.admin .sup-bubble { background:linear-gradient(135deg,#14b85e,#0fa653); color:#04140b; font-weight:600; border-bottom-right-radius:5px; }
+    .sup-time { font-size:10.5px; color:var(--muted); margin-top:3px; padding:0 4px; }
+    .sup-convo-foot { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line); align-items:flex-end; }
+    .sup-input { flex:1; resize:none; min-height:44px; max-height:120px; padding:11px 13px; border-radius:12px;
+      font-family:inherit; font-size:13.5px; color:var(--text,#e6f4ec); background:var(--surface-2,#11241a);
+      border:1px solid var(--line); outline:none; }
+    .sup-input:focus { border-color:var(--brand,#14b85e); }
+    .sup-placeholder { display:grid; place-items:center; height:70vh; color:var(--muted); text-align:center; padding:24px; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="admin-suporte"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">✉ Suporte</h1>
+          <p class="saas-page-sub">Mensagens enviadas pelos usuários — responda quando puder</p>
+        </div>
+        <div class="saas-page-actions">
+          <span class="saas-status-pill ok">MASTER</span>
+        </div>
+      </header>
+
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Conversas</div>
+          <div style="color:var(--muted); font-size:12px;"><span id="sup-thread-count">0</span> conversa(s) · <span id="sup-unread-total">0</span> não lida(s)</div>
+        </div>
+
+        <div class="sup-grid">
+          <!-- Lista de conversas -->
+          <div class="saas-card" style="padding:8px;">
+            <div class="sup-threads" id="sup-threads">
+              <div class="sup-placeholder" style="height:auto; padding:24px;">Carregando…</div>
+            </div>
+          </div>
+
+          <!-- Conversa selecionada -->
+          <div class="saas-card" style="padding:0; overflow:hidden;">
+            <div class="sup-convo" id="sup-convo" style="display:none;">
+              <div class="sup-convo-head">
+                <div class="sup-thread-ava" id="sup-convo-ava">?</div>
+                <div>
+                  <div class="sup-convo-name" id="sup-convo-name">—</div>
+                  <div class="sup-convo-email" id="sup-convo-email">—</div>
+                </div>
+              </div>
+              <div class="sup-convo-body" id="sup-convo-body"></div>
+              <form class="sup-convo-foot" id="sup-reply-form">
+                <textarea class="sup-input" id="sup-reply-text" rows="1" maxlength="2000" placeholder="Escreva uma resposta…"></textarea>
+                <button type="submit" class="btn-primary justify-center" id="sup-reply-send" style="padding:11px 18px;">Responder</button>
+              </form>
+            </div>
+            <div class="sup-placeholder" id="sup-empty">Selecione uma conversa à esquerda para visualizar e responder.</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/admin-suporte.js"></script>
+</body>
+</html>

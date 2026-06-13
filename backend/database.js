@@ -140,6 +140,8 @@ const mem = {
   payments: [],
   announcements: [],        // comunicados (avisos) — modo in-memory
   announcementSeq: 0,
+  supportMessages: [],      // chat de suporte — modo in-memory
+  supportSeq: 0,
   stats: { monitored: 0 },
 };
 
@@ -287,6 +289,29 @@ const MIGRATIONS = [
       );
       CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(active);
       CREATE INDEX IF NOT EXISTS idx_announcements_created ON announcements(created_at DESC);
+    `,
+  },
+  {
+    // Chat de suporte — mensagens trocadas entre usuário e administrador.
+    //   sender = 'user'  → enviada pelo usuário (read_by_admin=false até o admin abrir)
+    //   sender = 'admin' → resposta do administrador (read_by_user=false até o user abrir)
+    // Cada usuário tem uma "thread" (agrupada por user_id).
+    name: '007_support_messages',
+    sql: `
+      CREATE TABLE IF NOT EXISTS support_messages (
+        id            SERIAL PRIMARY KEY,
+        user_id       TEXT REFERENCES users(id) ON DELETE CASCADE,
+        user_email    TEXT,
+        user_name     TEXT,
+        sender        TEXT NOT NULL DEFAULT 'user',
+        body          TEXT NOT NULL,
+        read_by_admin BOOLEAN NOT NULL DEFAULT FALSE,
+        read_by_user  BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_support_user ON support_messages(user_id);
+      CREATE INDEX IF NOT EXISTS idx_support_created ON support_messages(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_support_unread_admin ON support_messages(read_by_admin);
     `,
   },
 ];
@@ -1062,6 +1087,191 @@ async function deleteAnnouncement(id) {
 }
 
 /* ============================================================
+   SUPPORT CHAT (mensagens de suporte usuário ⇄ admin)
+   ------------------------------------------------------------
+   Cada usuário tem uma "thread" (agrupada por user_id). O usuário
+   envia dúvidas (sender='user') e o admin responde posteriormente
+   (sender='admin'). Atendimento não-instantâneo: as mensagens ficam
+   armazenadas para o admin responder quando puder.
+   ============================================================ */
+function mapSupportRow(r) {
+  return {
+    id: r.id,
+    userId: r.user_id || r.userId || null,
+    userEmail: r.user_email ?? r.userEmail ?? null,
+    userName: r.user_name ?? r.userName ?? null,
+    sender: r.sender || 'user',
+    body: r.body,
+    readByAdmin: r.read_by_admin == null ? !!r.readByAdmin : !!r.read_by_admin,
+    readByUser: r.read_by_user == null ? !!r.readByUser : !!r.read_by_user,
+    createdAt: r.created_at || r.createdAt || null,
+  };
+}
+
+async function createSupportMessage({ userId, userEmail, userName, sender = 'user', body }) {
+  const isAdmin = sender === 'admin';
+  if (!useDatabase) {
+    const now = new Date().toISOString();
+    const row = {
+      id: ++mem.supportSeq,
+      user_id: userId,
+      user_email: userEmail || null,
+      user_name: userName || null,
+      sender,
+      body,
+      // user envia → admin ainda não leu; admin responde → user ainda não leu
+      read_by_admin: isAdmin ? true : false,
+      read_by_user: isAdmin ? false : true,
+      created_at: now,
+    };
+    mem.supportMessages.push(row);
+    return mapSupportRow(row);
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO support_messages (user_id, user_email, user_name, sender, body, read_by_admin, read_by_user)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [userId, userEmail || null, userName || null, sender, body, isAdmin, !isAdmin]
+  );
+  return mapSupportRow(rows[0]);
+}
+
+/** Conversa completa de um usuário (ordem cronológica). */
+async function listSupportMessages(userId, limit = 200) {
+  const cap = Math.max(1, Math.min(500, Number(limit) || 200));
+  if (!useDatabase) {
+    return mem.supportMessages
+      .filter((m) => String(m.user_id) === String(userId))
+      .slice(-cap)
+      .map(mapSupportRow);
+  }
+  const { rows } = await pool.query(
+    `SELECT * FROM support_messages WHERE user_id=$1 ORDER BY created_at ASC LIMIT $2`,
+    [userId, cap]
+  );
+  return rows.map(mapSupportRow);
+}
+
+/**
+ * Lista as threads para o painel admin: uma por usuário, com a última
+ * mensagem, total de mensagens e quantas mensagens do usuário ainda não
+ * foram lidas pelo admin (unread). Ordenadas pela atividade mais recente.
+ */
+async function listSupportThreads(limit = 200) {
+  const cap = Math.max(1, Math.min(500, Number(limit) || 200));
+  if (!useDatabase) {
+    const byUser = new Map();
+    for (const m of mem.supportMessages) {
+      const key = String(m.user_id);
+      if (!byUser.has(key)) {
+        byUser.set(key, {
+          userId: m.user_id,
+          userEmail: m.user_email,
+          userName: m.user_name,
+          total: 0,
+          unread: 0,
+          lastMessage: null,
+          lastSender: null,
+          lastAt: null,
+        });
+      }
+      const t = byUser.get(key);
+      t.total += 1;
+      if (m.sender === 'user' && !m.read_by_admin) t.unread += 1;
+      // mantém o e-mail/nome mais recente conhecido
+      if (m.user_email) t.userEmail = m.user_email;
+      if (m.user_name) t.userName = m.user_name;
+      if (!t.lastAt || new Date(m.created_at) >= new Date(t.lastAt)) {
+        t.lastMessage = m.body;
+        t.lastSender = m.sender;
+        t.lastAt = m.created_at;
+      }
+    }
+    return Array.from(byUser.values())
+      .sort((a, b) => new Date(b.lastAt || 0) - new Date(a.lastAt || 0))
+      .slice(0, cap);
+  }
+  const { rows } = await pool.query(
+    `SELECT
+       s.user_id,
+       MAX(s.user_email)  AS user_email,
+       MAX(s.user_name)   AS user_name,
+       COUNT(*)::int      AS total,
+       COUNT(*) FILTER (WHERE s.sender='user' AND s.read_by_admin = FALSE)::int AS unread,
+       MAX(s.created_at)  AS last_at,
+       (ARRAY_AGG(s.body  ORDER BY s.created_at DESC))[1] AS last_message,
+       (ARRAY_AGG(s.sender ORDER BY s.created_at DESC))[1] AS last_sender
+     FROM support_messages s
+     GROUP BY s.user_id
+     ORDER BY last_at DESC
+     LIMIT $1`,
+    [cap]
+  );
+  return rows.map((r) => ({
+    userId: r.user_id,
+    userEmail: r.user_email,
+    userName: r.user_name,
+    total: r.total,
+    unread: r.unread,
+    lastMessage: r.last_message,
+    lastSender: r.last_sender,
+    lastAt: r.last_at,
+  }));
+}
+
+/**
+ * Marca as mensagens de uma thread como lidas.
+ *   by='admin' → marca as mensagens do USUÁRIO como lidas pelo admin
+ *   by='user'  → marca as respostas do ADMIN como lidas pelo usuário
+ */
+async function markSupportRead(userId, by = 'admin') {
+  if (!useDatabase) {
+    for (const m of mem.supportMessages) {
+      if (String(m.user_id) !== String(userId)) continue;
+      if (by === 'admin' && m.sender === 'user') m.read_by_admin = true;
+      if (by === 'user' && m.sender === 'admin') m.read_by_user = true;
+    }
+    return;
+  }
+  if (by === 'admin') {
+    await pool.query(
+      `UPDATE support_messages SET read_by_admin = TRUE WHERE user_id=$1 AND sender='user'`,
+      [userId]
+    );
+  } else {
+    await pool.query(
+      `UPDATE support_messages SET read_by_user = TRUE WHERE user_id=$1 AND sender='admin'`,
+      [userId]
+    );
+  }
+}
+
+/** Quantas respostas do admin o usuário ainda não leu (badge no botão). */
+async function countSupportUnreadForUser(userId) {
+  if (!useDatabase) {
+    return mem.supportMessages.filter(
+      (m) => String(m.user_id) === String(userId) && m.sender === 'admin' && !m.read_by_user
+    ).length;
+  }
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM support_messages
+     WHERE user_id=$1 AND sender='admin' AND read_by_user = FALSE`,
+    [userId]
+  );
+  return rows[0].c;
+}
+
+/** Total de mensagens de usuários não lidas pelo admin (badge global). */
+async function countSupportUnreadForAdmin() {
+  if (!useDatabase) {
+    return mem.supportMessages.filter((m) => m.sender === 'user' && !m.read_by_admin).length;
+  }
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM support_messages WHERE sender='user' AND read_by_admin = FALSE`
+  );
+  return rows[0].c;
+}
+
+/* ============================================================
    SUBSCRIPTIONS / PAYMENTS
    ============================================================ */
 async function upsertSubscription(userId, sub) {
@@ -1148,6 +1358,9 @@ module.exports = {
   recordLogin, touchLastSeen, incrementUserMetric, analyticsSummary, analyticsUsers,
   // announcements (avisos)
   createAnnouncement, listAnnouncements, updateAnnouncement, deleteAnnouncement,
+  // support chat (suporte)
+  createSupportMessage, listSupportMessages, listSupportThreads,
+  markSupportRead, countSupportUnreadForUser, countSupportUnreadForAdmin,
   // subs / payments
   upsertSubscription, savePayment, listPayments, findPaymentByExternalId,
   isPostgres: () => useDatabase,

@@ -1082,6 +1082,13 @@
     }
   });
 
+  // Resposta do suporte (admin) → encaminha para o widget de chat (support-chat.js).
+  socket.on('support:reply', (payload) => {
+    try {
+      window.dispatchEvent(new CustomEvent('robotrend:support-reply', { detail: payload }));
+    } catch (_) {}
+  });
+
   // Reage à mudança real de plano para LIBERAR a UI (best-bet, signals).
   // O toast/modal celebratório é responsabilidade do upgrade-celebration.js
   // (que funciona em qualquer página, não só dashboard).
