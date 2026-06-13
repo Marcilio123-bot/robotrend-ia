@@ -152,11 +152,25 @@
   }
 
   /**
+   * A aba "Afiliado" aparece para TODOS os usuários Premium (e afiliados).
+   * Masters usam o painel admin de afiliados, então não veem a aba cliente.
+   * Quem não é afiliado vê uma tela informativa na própria página /afiliado.
+   */
+  function canSeeAffiliateTab(u) {
+    if (!u) return false;
+    const r = String(u.role || '').toLowerCase();
+    if (MASTER_ROLES.has(r)) return false;
+    if (r === 'affiliate' || r === 'premium') return true;
+    const p = String(u.plan || '').toUpperCase();
+    return p === 'PREMIUM' || p === 'VIP' || p === 'PRO' || p === 'TRIAL';
+  }
+
+  /**
    * Retorna o clientNav, injetando a categoria "Afiliado" na seção "Conta"
-   * APENAS quando o usuário é afiliado. Não muta o array original.
+   * para usuários Premium/afiliados. Não muta o array original.
    */
   function buildClientNav(user) {
-    if (!isAffiliate(user)) return clientNav;
+    if (!canSeeAffiliateTab(user)) return clientNav;
     return clientNav.map((section) => {
       if (section.section !== 'Conta') return section;
       return {

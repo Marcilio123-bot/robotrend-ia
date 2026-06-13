@@ -1530,6 +1530,78 @@ async function updateAffiliatePayoutInfo(id, { holder, bank, pixKey } = {}) {
   return rows[0] ? mapAffiliateRow(rows[0]) : null;
 }
 
+/**
+ * Remove SOMENTE a função de afiliado, preservando a conta do usuário,
+ * login, assinatura, plano e demais dados. Apaga todo o histórico do
+ * programa de afiliados (comissões, pagamentos/payouts, indicações/referrals
+ * e o cadastro do afiliado) e reverte o role do usuário: vira 'premium' se o
+ * plano for pago, senão 'user'. Retorna um relatório com as contagens
+ * removidas, ou null se o afiliado não existir.
+ */
+async function deleteAffiliate(id) {
+  if (!useDatabase) {
+    const aff = mem.affiliates.get(id);
+    if (!aff) return null;
+    const removed = {
+      commissions: mem.affiliateCommissions.filter((c) => String(c.affiliateId) === String(id)).length,
+      payouts: mem.affiliatePayouts.filter((p) => String(p.affiliateId) === String(id)).length,
+      referrals: mem.affiliateReferrals.filter((r) => String(r.affiliateId) === String(id)).length,
+    };
+    mem.affiliateCommissions = mem.affiliateCommissions.filter((c) => String(c.affiliateId) !== String(id));
+    mem.affiliatePayouts = mem.affiliatePayouts.filter((p) => String(p.affiliateId) !== String(id));
+    mem.affiliateReferrals = mem.affiliateReferrals.filter((r) => String(r.affiliateId) !== String(id));
+    mem.affiliates.delete(id);
+    const userId = aff.user_id ?? aff.userId ?? null;
+    if (userId) {
+      const u = mem.users.get(String(userId));
+      if (u && String(u.role || '').toLowerCase() === 'affiliate') {
+        u.role = isPaidPlanValue(u.plan) ? 'premium' : 'user';
+      }
+    }
+    return { ok: true, userId, removed };
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query(`SELECT user_id FROM affiliates WHERE id=$1`, [id]);
+    if (!found.rows[0]) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const userId = found.rows[0].user_id || null;
+    // Apaga explicitamente (mesmo havendo ON DELETE CASCADE) para um relatório preciso.
+    const comm = await client.query(`DELETE FROM affiliate_commissions WHERE affiliate_id=$1`, [id]);
+    const pay = await client.query(`DELETE FROM affiliate_payouts WHERE affiliate_id=$1`, [id]);
+    const ref = await client.query(`DELETE FROM affiliate_referrals WHERE affiliate_id=$1`, [id]);
+    await client.query(`DELETE FROM affiliates WHERE id=$1`, [id]);
+    // Reverte o role do usuário sem tocar em plano/assinatura/login.
+    if (userId) {
+      await client.query(
+        `UPDATE users
+           SET role = CASE WHEN UPPER(COALESCE(plan,'FREE')) <> 'FREE' THEN 'premium' ELSE 'user' END,
+               updated_at = NOW()
+         WHERE id = $1 AND LOWER(COALESCE(role,'')) = 'affiliate'`,
+        [userId]
+      );
+    }
+    await client.query('COMMIT');
+    return {
+      ok: true,
+      userId,
+      removed: {
+        commissions: comm.rowCount || 0,
+        payouts: pay.rowCount || 0,
+        referrals: ref.rowCount || 0,
+      },
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 /** Vincula um cliente recém-cadastrado a um afiliado (idempotente por user_id). */
 async function createReferral(affiliateId, userId) {
   if (!affiliateId || !userId) return null;
@@ -1893,7 +1965,7 @@ module.exports = {
   markSupportRead, countSupportUnreadForUser, countSupportUnreadForAdmin,
   // afiliados / revendedores
   createAffiliate, getAffiliateById, getAffiliateByUserId, getAffiliateByCode,
-  listAffiliates, updateAffiliate, updateAffiliatePayoutInfo,
+  listAffiliates, updateAffiliate, updateAffiliatePayoutInfo, deleteAffiliate,
   createReferral, getReferralByUserId,
   recordAffiliateCommission, listCommissions, payAffiliateCommissions, listPayouts,
   affiliateStats, affiliatesOverview,

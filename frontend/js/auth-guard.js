@@ -87,6 +87,9 @@
     if (required === 'admin') return isAdmin(user);
     if (required === 'premium') return isPremium(user);
     if (required === 'affiliate') return isAffiliate(user) || isAdmin(user);
+    // affiliate-panel: a aba aparece para TODOS os Premium; afiliados veem o
+    // painel completo, os demais Premium veem a tela informativa (decidido na página).
+    if (required === 'affiliate-panel') return isAffiliate(user) || isPremium(user);
     return true; // unknown level = permissivo (mas log warn)
   }
 
@@ -95,6 +98,7 @@
     if (required === 'admin') return `/index.html?denied=${back}`;
     if (required === 'premium') return `/pricing.html?upgrade=${back}`;
     if (required === 'affiliate') return `/login.html?next=${back}`;
+    if (required === 'affiliate-panel') return `/pricing.html?upgrade=${back}`;
     return `/login.html?next=${back}`;
   }
 

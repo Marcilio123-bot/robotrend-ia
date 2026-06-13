@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="robotrend-guard" content="affiliate" />
+  <meta name="robotrend-guard" content="affiliate-panel" />
   <title>Painel do Afiliado · Robotrend IA</title>
   <link rel="stylesheet" href="/output.css">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
@@ -64,6 +64,19 @@
       background:var(--brand,#14b85e); color:#04140b; }
     .afp-save-btn:disabled { opacity:.6; cursor:not-allowed; }
     .afp-save-msg { font-size:13px; font-weight:600; }
+
+    /* Tela informativa (Premium ainda não habilitado como afiliado) */
+    .afp-locked { background:var(--surface-2,#11241a); border:1px solid var(--line); border-radius:18px; padding:32px 28px; max-width:680px; }
+    .afp-locked-badge { display:inline-flex; align-items:center; gap:8px; font-size:11px; font-weight:800;
+      letter-spacing:.04em; text-transform:uppercase; padding:5px 12px; border-radius:999px;
+      background:rgba(255,181,71,.16); color:#ffb547; margin-bottom:16px; }
+    .afp-locked h2 { font-size:22px; font-weight:900; margin:0 0 10px; }
+    .afp-locked p { color:var(--muted); font-size:14px; line-height:1.6; margin:0 0 14px; }
+    .afp-locked-note { background:rgba(255,181,71,.08); border:1px solid rgba(255,181,71,.3);
+      border-radius:12px; padding:14px 16px; color:#ffd9a0; font-size:13.5px; font-weight:600; }
+    .afp-locked-perks { list-style:none; padding:0; margin:0 0 18px; display:grid; gap:8px; }
+    .afp-locked-perks li { display:flex; gap:10px; align-items:flex-start; font-size:14px; color:var(--text,#e6f4ec); }
+    .afp-locked-perks li span.dot { color:var(--brand,#14b85e); font-weight:900; }
   </style>
 </head>
 <body class="font-display antialiased">
@@ -81,6 +94,22 @@
         </div>
       </header>
 
+    <!-- Tela informativa: Premium ainda NÃO habilitado como afiliado -->
+    <div class="afp-locked" id="afp-locked" style="display:none;">
+      <span class="afp-locked-badge">● Status: Não habilitado</span>
+      <h2>Programa de Afiliados</h2>
+      <p>Indique a Robotrend IA para outras pessoas e ganhe <b>comissão recorrente</b> sobre cada assinatura realizada através do seu link de indicação. Quanto mais clientes você trouxer, mais você recebe.</p>
+      <ul class="afp-locked-perks">
+        <li><span class="dot">✓</span> Link de indicação exclusivo para divulgar.</li>
+        <li><span class="dot">✓</span> Comissão automática sobre os planos pagos dos indicados.</li>
+        <li><span class="dot">✓</span> Acompanhamento de indicados, comissões e saldo em tempo real.</li>
+        <li><span class="dot">✓</span> Pagamento via PIX com dados cadastrados por você.</li>
+      </ul>
+      <div class="afp-locked-note">Seu acesso ao programa de afiliados ainda não foi liberado pelo administrador.</div>
+    </div>
+
+    <!-- Painel completo: somente afiliados ativados pelo admin -->
+    <div id="afp-panel" style="display:none;">
     <div class="afp-link-card">
       <div class="afp-link-label">Seu link de indicação · comissão de <span id="afp-pct">—</span></div>
       <div class="afp-link-row">
@@ -140,6 +169,7 @@
         <tbody id="afp-payouts"><tr><td colspan="4" class="afp-empty">Carregando…</td></tr></tbody>
       </table>
     </div>
+    </div><!-- /#afp-panel -->
     </main>
   </div>
 
@@ -222,6 +252,19 @@
       async function load() {
         try {
           const data = await window.RobotrendAuth.api('/api/affiliate/me');
+
+          // Premium ainda não habilitado como afiliado → tela informativa.
+          if (!data.enabled) {
+            $('#afp-locked').style.display = '';
+            $('#afp-panel').style.display = 'none';
+            $('#afp-name').textContent = 'Programa de Afiliados';
+            return;
+          }
+
+          // Afiliado ativado → painel completo.
+          $('#afp-locked').style.display = 'none';
+          $('#afp-panel').style.display = '';
+
           const a = data.affiliate || {};
           const st = data.stats || {};
           $('#afp-name').textContent = a.name || 'Afiliado';
@@ -238,6 +281,14 @@
           renderCommissions(data.commissions);
           renderPayouts(data.payouts);
         } catch (e) {
+          const code = e?.payload?.error || '';
+          if (code === 'PREMIUM_REQUIRED') {
+            // Fallback (o guard normalmente já cobre): mostra a tela informativa.
+            $('#afp-locked').style.display = '';
+            $('#afp-panel').style.display = 'none';
+            return;
+          }
+          $('#afp-panel').style.display = '';
           $('#afp-commissions').innerHTML = `<tr><td colspan="6" class="afp-empty" style="color:#ef4444;">Erro ao carregar: ${escapeHtml(e.message)}</td></tr>`;
         }
       }

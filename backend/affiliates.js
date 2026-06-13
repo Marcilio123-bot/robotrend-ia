@@ -287,6 +287,44 @@ function buildAffiliateRoutes(app, db, requireAuth, requireAdmin, requireAffilia
     }
   });
 
+  /**
+   * DELETE /api/master/affiliates/:id — remove SOMENTE a função de afiliado.
+   * A conta do cliente (login, plano, assinatura, dados) é mantida. Apaga todo
+   * o histórico do programa (comissões, pagamentos, indicações) e o cadastro do
+   * afiliado, e reverte o role do usuário. Não exclui o usuário.
+   */
+  app.delete('/api/master/affiliates/:id', ...masterGuard, async (req, res) => {
+    try {
+      const aff = await db.getAffiliateById(req.params.id);
+      if (!aff) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
+
+      const result = await db.deleteAffiliate(aff.id);
+      if (!result) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
+
+      log.info('afiliado excluído', {
+        adminId: req.user.id, affiliateId: aff.id, code: aff.code,
+        userId: result.userId, removed: result.removed,
+      });
+      try {
+        if (db.saveAdminLog) {
+          await db.saveAdminLog({
+            adminId: req.user.id,
+            adminEmail: req.user.email || null,
+            action: 'affiliate.delete',
+            targetUserId: result.userId || null,
+            targetEmail: aff.email || null,
+            details: { affiliateId: aff.id, code: aff.code, removed: result.removed },
+          });
+        }
+      } catch (_) { /* log de auditoria não pode quebrar a exclusão */ }
+
+      res.json({ ok: true, removed: result.removed, userId: result.userId });
+    } catch (e) {
+      log.error('excluir afiliado falhou', { err: e.message });
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   app.post('/api/master/affiliates/:id/pay', ...masterGuard, async (req, res) => {
     try {
       const aff = await db.getAffiliateById(req.params.id);
@@ -307,11 +345,32 @@ function buildAffiliateRoutes(app, db, requireAuth, requireAdmin, requireAffilia
   });
 
   /* ---------------- AFILIADO ---------------- */
-  app.get('/api/affiliate/me', requireAuth(db), requireAffiliate, async (req, res) => {
+
+  /** Premium-like (mesma regra do guard frontend): role premium/admin ou plano pago. */
+  function isPremiumLike(user) {
+    const r = String(user?.role || '').toLowerCase();
+    if (MASTER_ROLES.has(r) || r === 'premium') return true;
+    const p = String(user?.plan || 'FREE').toUpperCase();
+    return p === 'PREMIUM' || p === 'VIP' || p === 'PRO' || p === 'TRIAL';
+  }
+
+  /**
+   * GET /api/affiliate/me — painel do afiliado.
+   * Acessível a qualquer usuário autenticado:
+   *  - Afiliado ativado pelo admin → payload completo ({ enabled: true }).
+   *  - Premium sem ativação        → { ok: true, enabled: false } (tela informativa).
+   *  - Demais (não premium)        → 403 PREMIUM_REQUIRED.
+   */
+  app.get('/api/affiliate/me', requireAuth(db), async (req, res) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
       const aff = await db.getAffiliateByUserId(req.user.id);
-      if (!aff) return res.status(404).json({ ok: false, error: 'NOT_AN_AFFILIATE' });
+      if (!aff) {
+        if (!isPremiumLike(req.user)) {
+          return res.status(403).json({ ok: false, error: 'PREMIUM_REQUIRED', enabled: false });
+        }
+        return res.json({ ok: true, enabled: false });
+      }
       const [stats, commissions, payouts] = await Promise.all([
         db.affiliateStats(aff.id),
         db.listCommissions({ affiliateId: aff.id, limit: 300 }),
@@ -319,6 +378,7 @@ function buildAffiliateRoutes(app, db, requireAuth, requireAdmin, requireAffilia
       ]);
       res.json({
         ok: true,
+        enabled: true,
         affiliate: {
           id: aff.id,
           name: aff.name,

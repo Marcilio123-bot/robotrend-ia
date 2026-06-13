@@ -78,6 +78,7 @@
             <button class="af-btn" data-act="pay" data-id="${escapeHtml(a.id)}">Pagar pendente</button>
             <button class="af-btn" data-act="toggle" data-id="${escapeHtml(a.id)}">${a.active ? 'Desativar' : 'Ativar'}</button>
             <button class="af-btn" data-act="details" data-id="${escapeHtml(a.id)}">${isOpen ? 'Ocultar' : 'Detalhes'}</button>
+            <button class="af-btn danger" data-act="delete" data-id="${escapeHtml(a.id)}">Excluir afiliado</button>
           </div>
         </td>
       </tr>`;
@@ -259,6 +260,17 @@
         feedback(`Pagamento registrado: ${money(r.amount)} (${r.count} comissão(ões))${pixMsg}.`);
         details.delete(id);
         if (expanded.has(id)) loadDetails(id);
+        load();
+        loadOverview();
+      } else if (act === 'delete') {
+        const ok = confirm('ATENÇÃO: Esta ação removerá permanentemente o afiliado e todo o histórico de comissões. A conta do cliente será mantida normalmente. Deseja continuar?');
+        if (!ok) return;
+        const r = await RobotrendAuth.api(`/api/master/affiliates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        const rem = r.removed || {};
+        feedback(`Afiliado "${item.name}" excluído. Removidos: ${rem.commissions || 0} comissão(ões), ${rem.payouts || 0} pagamento(s), ${rem.referrals || 0} indicação(ões). A conta do cliente foi mantida.`);
+        // Limpa estado local do afiliado removido e recalcula os totais.
+        expanded.delete(id);
+        details.delete(id);
         load();
         loadOverview();
       } else if (act === 'details') {
