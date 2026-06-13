@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="affiliate" />
+  <title>Painel do Afiliado · Robotrend IA</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .afp-wrap { max-width:1040px; margin:0 auto; padding:24px 16px 60px; }
+    .afp-top { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:24px; }
+    .afp-brand { display:flex; align-items:center; gap:12px; }
+    .afp-mark { width:42px; height:42px; border-radius:12px; display:grid; place-items:center; font-weight:900; font-size:20px;
+      background:linear-gradient(135deg,#14b85e,#0fa653); color:#04140b; }
+    .afp-title { font-weight:900; font-size:18px; }
+    .afp-sub { font-size:12px; color:var(--muted); }
+    .afp-logout { font-size:13px; font-weight:700; padding:8px 14px; border-radius:10px; border:1px solid var(--line);
+      background:var(--surface-2,#11241a); color:var(--text,#e6f4ec); cursor:pointer; }
+    .afp-logout:hover { border-color:#ef4444; color:#ef4444; }
+
+    .afp-link-card { background:linear-gradient(135deg,rgba(20,184,94,.14),rgba(20,184,94,.04));
+      border:1px solid var(--brand,#14b85e); border-radius:16px; padding:18px 20px; margin-bottom:22px; }
+    .afp-link-label { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--brand,#14b85e); }
+    .afp-link-row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+    .afp-link-input { flex:1; min-width:240px; padding:11px 13px; border-radius:10px; border:1px solid var(--line);
+      background:var(--surface,#0b1a12); color:var(--text,#e6f4ec); font-family:'JetBrains Mono',monospace; font-size:13px; }
+    .afp-copy { padding:11px 18px; border-radius:10px; border:none; cursor:pointer; font-weight:800;
+      background:var(--brand,#14b85e); color:#04140b; }
+    .afp-code { font-family:'JetBrains Mono',monospace; font-weight:700; color:var(--brand,#14b85e); }
+
+    .afp-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:24px; }
+    .afp-card { background:var(--surface-2,#11241a); border:1px solid var(--line); border-radius:14px; padding:16px; }
+    .afp-card-label { font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
+    .afp-card-value { font-size:24px; font-weight:900; margin-top:6px; }
+    .afp-card-value.brand { color:var(--brand,#14b85e); }
+    .afp-card-value.warn { color:#ffb547; }
+    .afp-money { font-family:'JetBrains Mono',monospace; }
+
+    .afp-section { background:var(--surface-2,#11241a); border:1px solid var(--line); border-radius:16px; overflow:hidden; margin-bottom:20px; }
+    .afp-section-head { padding:14px 18px; font-weight:800; border-bottom:1px solid var(--line); }
+    table.afp-table { width:100%; font-size:13px; border-collapse:collapse; }
+    .afp-table th { text-align:left; padding:10px 18px; color:var(--muted); font-weight:700; font-size:12px; }
+    .afp-table td { padding:10px 18px; border-top:1px solid var(--line); }
+    .afp-pill { font-size:10.5px; font-weight:800; padding:2px 8px; border-radius:999px; }
+    .afp-pill.pending { background:rgba(255,181,71,.16); color:#ffb547; }
+    .afp-pill.paid { background:rgba(34,197,94,.16); color:#22c55e; }
+    .afp-empty { padding:18px; color:var(--muted); text-align:center; }
+    .afp-note { font-size:12px; color:var(--muted); margin-top:6px; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="afp-wrap">
+    <div class="afp-top">
+      <div class="afp-brand">
+        <div class="afp-mark">R</div>
+        <div>
+          <div class="afp-title">Painel do Afiliado</div>
+          <div class="afp-sub" id="afp-name">Robotrend IA</div>
+        </div>
+      </div>
+      <button class="afp-logout" id="afp-logout">Sair</button>
+    </div>
+
+    <div class="afp-link-card">
+      <div class="afp-link-label">Seu link de indicação · comissão de <span id="afp-pct">—</span></div>
+      <div class="afp-link-row">
+        <input class="afp-link-input" id="afp-link" readonly value="" />
+        <button class="afp-copy" id="afp-copy">Copiar link</button>
+      </div>
+      <div class="afp-note">Código: <span class="afp-code" id="afp-code">—</span> · Compartilhe o link; clientes que se cadastrarem e assinarem geram sua comissão automaticamente.</div>
+    </div>
+
+    <div class="afp-cards">
+      <div class="afp-card"><div class="afp-card-label">Clientes indicados</div><div class="afp-card-value" id="afp-referrals">—</div></div>
+      <div class="afp-card"><div class="afp-card-label">Premium ativos</div><div class="afp-card-value brand" id="afp-premium">—</div></div>
+      <div class="afp-card"><div class="afp-card-label">Comissão acumulada</div><div class="afp-card-value afp-money" id="afp-accrued">—</div></div>
+      <div class="afp-card"><div class="afp-card-label">Comissão pendente</div><div class="afp-card-value warn afp-money" id="afp-pending">—</div></div>
+      <div class="afp-card"><div class="afp-card-label">Comissão paga</div><div class="afp-card-value brand afp-money" id="afp-paid">—</div></div>
+      <div class="afp-card"><div class="afp-card-label">Saldo p/ saque</div><div class="afp-card-value afp-money" id="afp-balance">—</div></div>
+    </div>
+
+    <div class="afp-section">
+      <div class="afp-section-head">Histórico de comissões</div>
+      <table class="afp-table">
+        <thead><tr><th>Data</th><th>Plano</th><th>Valor pago</th><th>%</th><th>Comissão</th><th>Status</th></tr></thead>
+        <tbody id="afp-commissions"><tr><td colspan="6" class="afp-empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="afp-section">
+      <div class="afp-section-head">Pagamentos recebidos</div>
+      <table class="afp-table">
+        <thead><tr><th>Data</th><th>Valor</th><th>Comissões</th><th>Observação</th></tr></thead>
+        <tbody id="afp-payouts"><tr><td colspan="4" class="afp-empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      const $ = (s) => document.querySelector(s);
+      const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+      const money = (v) => 'R$ ' + Number(v || 0).toFixed(2).replace('.', ',');
+      function fmtDate(iso) {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return '—';
+        return d.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' });
+      }
+
+      $('#afp-logout')?.addEventListener('click', () => {
+        try { window.RobotrendAuth?.logout?.(); } catch { location.href = '/login.html'; }
+      });
+
+      function renderCommissions(list) {
+        const body = $('#afp-commissions');
+        if (!list || !list.length) {
+          body.innerHTML = `<tr><td colspan="6" class="afp-empty">Você ainda não tem comissões registradas.</td></tr>`;
+          return;
+        }
+        body.innerHTML = list.map((c) => `
+          <tr>
+            <td>${escapeHtml(fmtDate(c.createdAt))}</td>
+            <td>${escapeHtml(c.plan || '—')}</td>
+            <td class="afp-money">${money(c.amountPaid)}</td>
+            <td>${Number(c.commissionPct)}%</td>
+            <td class="afp-money">${money(c.commissionAmount)}</td>
+            <td><span class="afp-pill ${c.status}">${c.status === 'paid' ? 'Paga' : 'Pendente'}</span></td>
+          </tr>`).join('');
+      }
+
+      function renderPayouts(list) {
+        const body = $('#afp-payouts');
+        if (!list || !list.length) {
+          body.innerHTML = `<tr><td colspan="4" class="afp-empty">Nenhum pagamento recebido ainda.</td></tr>`;
+          return;
+        }
+        body.innerHTML = list.map((p) => `
+          <tr>
+            <td>${escapeHtml(fmtDate(p.createdAt))}</td>
+            <td class="afp-money">${money(p.amount)}</td>
+            <td>${p.commissionsCount} comissão(ões)</td>
+            <td>${escapeHtml(p.note || '—')}</td>
+          </tr>`).join('');
+      }
+
+      async function load() {
+        try {
+          const data = await window.RobotrendAuth.api('/api/affiliate/me');
+          const a = data.affiliate || {};
+          const st = data.stats || {};
+          $('#afp-name').textContent = a.name || 'Afiliado';
+          $('#afp-pct').textContent = (Number(a.commissionPct) || 0) + '%';
+          $('#afp-code').textContent = a.code || '—';
+          $('#afp-link').value = a.link || (location.origin + '/register.html?ref=' + (a.code || ''));
+          $('#afp-referrals').textContent = st.referrals ?? 0;
+          $('#afp-premium').textContent = st.premiumActive ?? 0;
+          $('#afp-accrued').textContent = money(st.accrued);
+          $('#afp-pending').textContent = money(st.pending);
+          $('#afp-paid').textContent = money(st.paid);
+          $('#afp-balance').textContent = money(data.balanceAvailable);
+          renderCommissions(data.commissions);
+          renderPayouts(data.payouts);
+        } catch (e) {
+          $('#afp-commissions').innerHTML = `<tr><td colspan="6" class="afp-empty" style="color:#ef4444;">Erro ao carregar: ${escapeHtml(e.message)}</td></tr>`;
+        }
+      }
+
+      $('#afp-copy')?.addEventListener('click', async () => {
+        const val = $('#afp-link').value;
+        try { await navigator.clipboard.writeText(val); $('#afp-copy').textContent = 'Copiado!'; setTimeout(() => $('#afp-copy').textContent = 'Copiar link', 1800); }
+        catch { $('#afp-link').select(); }
+      });
+
+      // Aguarda o guard confirmar o acesso antes de buscar dados.
+      if (window.RobotrendGuard?.ready?.then) {
+        window.RobotrendGuard.ready.then((u) => { if (u) load(); });
+      } else {
+        load();
+      }
+    })();
+  </script>
+</body>
+</html>

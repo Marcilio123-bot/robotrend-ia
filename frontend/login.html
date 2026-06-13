@@ -110,6 +110,12 @@
           return;
         }
 
+        // Afiliado/revendedor → painel exclusivo do afiliado.
+        if (role === 'affiliate') {
+          location.href = '/afiliado';
+          return;
+        }
+
         const next = new URLSearchParams(location.search).get('next') || '/';
         location.href = next;
       } catch (ex) {

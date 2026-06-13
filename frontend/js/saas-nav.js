@@ -71,6 +71,7 @@
         { id: 'admin-analytics',label: 'Analytics',      icon: '▲', href: '/admin/analytics' },
         { id: 'admin-avisos',   label: 'Avisos',         icon: '◔', href: '/admin/avisos' },
         { id: 'admin-suporte',  label: 'Suporte',        icon: '✉', href: '/admin/suporte' },
+        { id: 'admin-afiliados',label: 'Afiliados',      icon: '⇪', href: '/admin/afiliados' },
         { id: 'admin-finance',  label: 'Financeiro',     icon: '◈', href: '/admin/finance' },
         { id: 'admin-system',   label: 'Sistema',        icon: '⚙', href: '/admin/system' },
         { id: 'admin-ops',      label: 'Operacional IA', icon: '▤', href: '/ops/live' },

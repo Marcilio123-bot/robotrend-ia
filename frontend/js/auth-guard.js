@@ -77,10 +77,16 @@
     location.href = url;
   }
 
+  function isAffiliate(user) {
+    if (!user) return false;
+    return String(user.role || '').toLowerCase() === 'affiliate';
+  }
+
   function checkAccess(user) {
     if (required === 'user') return !!user;
     if (required === 'admin') return isAdmin(user);
     if (required === 'premium') return isPremium(user);
+    if (required === 'affiliate') return isAffiliate(user) || isAdmin(user);
     return true; // unknown level = permissivo (mas log warn)
   }
 
@@ -88,6 +94,7 @@
     const back = encodeURIComponent(location.pathname + location.search);
     if (required === 'admin') return `/index.html?denied=${back}`;
     if (required === 'premium') return `/pricing.html?upgrade=${back}`;
+    if (required === 'affiliate') return `/login.html?next=${back}`;
     return `/login.html?next=${back}`;
   }
 

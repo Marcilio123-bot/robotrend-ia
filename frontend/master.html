@@ -58,6 +58,25 @@
         <div class="saas-kpi"><div class="saas-kpi-label">Bloqueados</div><div class="saas-kpi-value" id="kpi-blocked" style="color:#ffb547;">—</div></div>
       </section>
 
+      <!-- Afiliados / Revendedores — visão rápida -->
+      <section class="saas-section" id="affiliate-overview-section">
+        <div class="saas-section-head" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div>
+            <h3 class="text-lg font-extrabold">⇪ Afiliados</h3>
+            <p class="text-xs" style="color:var(--muted);">Indicações, conversões e comissões geradas</p>
+          </div>
+          <a href="/admin/afiliados" class="btn-primary text-sm" style="padding:9px 18px; white-space:nowrap;">Gerenciar afiliados →</a>
+        </div>
+        <section class="saas-kpis" style="margin-top:4px;">
+          <div class="saas-kpi"><div class="saas-kpi-label">Afiliados</div><div class="saas-kpi-value" id="aff-ov-affiliates">—</div></div>
+          <div class="saas-kpi"><div class="saas-kpi-label">Indicações</div><div class="saas-kpi-value" id="aff-ov-referrals">—</div></div>
+          <div class="saas-kpi"><div class="saas-kpi-label">Premium convertidos</div><div class="saas-kpi-value" id="aff-ov-premium" style="color:#14b85e;">—</div></div>
+          <div class="saas-kpi"><div class="saas-kpi-label">Receita gerada</div><div class="saas-kpi-value" id="aff-ov-revenue" style="font-family:'JetBrains Mono',monospace;">—</div></div>
+          <div class="saas-kpi"><div class="saas-kpi-label">Comissões pendentes</div><div class="saas-kpi-value" id="aff-ov-pending" style="color:#ffb547; font-family:'JetBrains Mono',monospace;">—</div></div>
+          <div class="saas-kpi"><div class="saas-kpi-label">Comissões pagas</div><div class="saas-kpi-value" id="aff-ov-paid" style="color:#14b85e; font-family:'JetBrains Mono',monospace;">—</div></div>
+        </section>
+      </section>
+
       <!-- Consumo API-Football (mesmo endpoint do Painel Técnico) -->
       <section class="saas-section" id="api-usage-section">
         <div class="saas-section-head">
@@ -162,5 +181,30 @@
   <script src="/layouts/master-layout.js"></script>
   <script src="/js/saas-nav.js"></script>
   <script src="/js/master.js"></script>
+  <script>
+    // Visão rápida de afiliados no dashboard Master.
+    (function () {
+      const money = (v) => 'R$ ' + Number(v || 0).toFixed(2).replace('.', ',');
+      const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+      async function loadAffiliateOverview() {
+        try {
+          const r = await window.RobotrendAuth.api('/api/master/affiliates-overview');
+          const o = r.overview || {};
+          set('aff-ov-affiliates', o.totalAffiliates ?? 0);
+          set('aff-ov-referrals', o.totalReferrals ?? 0);
+          set('aff-ov-premium', o.totalPremium ?? 0);
+          set('aff-ov-revenue', money(o.revenueGenerated));
+          set('aff-ov-pending', money(o.pendingCommissions));
+          set('aff-ov-paid', money(o.paidCommissions));
+        } catch (_) { /* mantém placeholders */ }
+      }
+      if (window.RobotrendGuard?.ready?.then) {
+        window.RobotrendGuard.ready.then((u) => { if (u) loadAffiliateOverview(); });
+      } else {
+        loadAffiliateOverview();
+      }
+      document.getElementById('btn-refresh')?.addEventListener('click', loadAffiliateOverview);
+    })();
+  </script>
 </body>
 </html>

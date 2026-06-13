@@ -20,14 +20,17 @@ const STATUS = {
   BLOCKED: 'blocked',
 };
 
-const PAID_PLANS = new Set(['PREMIUM', 'VIP', 'PRO']);
+const PAID_PLANS = new Set(['PREMIUM', 'VIP', 'PRO', 'SEMESTRAL', 'ANUAL']);
 
 /** Dias de validade por ciclo de cobrança (pagamento ou renovação admin).
- *  Premium é mensal recorrente (30 dias por ciclo). */
+ *  Premium é mensal recorrente (30 dias por ciclo).
+ *  Semestral/Anual são pré-pagos (180/365 dias). */
 const PLAN_DURATION_DAYS = {
   PREMIUM: Number(process.env.PLAN_PREMIUM_DURATION_DAYS || 30),
   VIP: Number(process.env.PLAN_VIP_DURATION_DAYS || 365),
   PRO: Number(process.env.PLAN_PREMIUM_DURATION_DAYS || 30),
+  SEMESTRAL: Number(process.env.PLAN_SEMESTRAL_DURATION_DAYS || 180),
+  ANUAL: Number(process.env.PLAN_ANUAL_DURATION_DAYS || 365),
 };
 
 function normalizePlan(plan) {
@@ -147,7 +150,8 @@ function resolveSubscriptionState(user) {
 
   const hasPaidAccess = isPaidPlan(plan) && status === STATUS.ACTIVE && !blocked;
   const isVip = hasPaidAccess && plan === 'VIP';
-  const isPremium = hasPaidAccess && (plan === 'PREMIUM' || plan === 'VIP' || plan === 'PRO');
+  // Qualquer plano pago ativo (incl. SEMESTRAL/ANUAL) concede acesso Premium.
+  const isPremium = hasPaidAccess;
 
   return {
     subscriptionStatus: status,

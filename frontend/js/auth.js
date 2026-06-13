@@ -62,13 +62,15 @@
     return data;
   }
 
-  async function register(email, password, name) {
+  async function register(email, password, name, ref) {
     // Trim defensivo em cada campo — evita erro se vier undefined
     const payload = {
       email:    (email    ?? '').toString().trim().toLowerCase(),
       password: (password ?? '').toString().trim(),
       name:     (name     ?? '').toString().trim(),
     };
+    const refCode = (ref ?? '').toString().trim();
+    if (refCode) payload.ref = refCode;
     const r = await api('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),

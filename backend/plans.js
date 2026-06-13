@@ -42,7 +42,44 @@ const PLANS = {
     label: 'Premium',
     priceBRL: Number(process.env.PLAN_PREMIUM_PRICE_BRL || 79.9),
     billingCycle: 'monthly',
+    durationDays: Number(process.env.PLAN_PREMIUM_DURATION_DAYS || 30),
     recurring: true,
+    dailySignals: Number(process.env.PLAN_PREMIUM_DAILY_SIGNALS || 999),
+    features: {
+      live: true,
+      btts: true,
+      over25: true,
+      telegramAlerts: true,
+      historyDays: 365,
+      api: true,
+    },
+  },
+  // Ciclos de pré-pagamento do Premium — mesmo acesso, validade maior e preço único.
+  // Geram comissão de afiliado automaticamente (sobre o valor pago).
+  SEMESTRAL: {
+    id: 'SEMESTRAL',
+    label: 'Premium Semestral',
+    priceBRL: Number(process.env.PLAN_SEMESTRAL_PRICE_BRL || 299.99),
+    billingCycle: 'semiannual',
+    durationDays: Number(process.env.PLAN_SEMESTRAL_DURATION_DAYS || 180),
+    recurring: false,
+    dailySignals: Number(process.env.PLAN_PREMIUM_DAILY_SIGNALS || 999),
+    features: {
+      live: true,
+      btts: true,
+      over25: true,
+      telegramAlerts: true,
+      historyDays: 365,
+      api: true,
+    },
+  },
+  ANUAL: {
+    id: 'ANUAL',
+    label: 'Premium Anual',
+    priceBRL: Number(process.env.PLAN_ANUAL_PRICE_BRL || 699.99),
+    billingCycle: 'annual',
+    durationDays: Number(process.env.PLAN_ANUAL_DURATION_DAYS || 365),
+    recurring: false,
     dailySignals: Number(process.env.PLAN_PREMIUM_DAILY_SIGNALS || 999),
     features: {
       live: true,
@@ -64,6 +101,21 @@ function listPlans() {
   // VIP permanece definido para compatibilidade com assinantes legados/admin,
   // mas não é mais ofertado nas telas de planos.
   return [PLANS.FREE, PLANS.PREMIUM];
+}
+
+/**
+ * Ciclos de assinatura Premium ofertados (mensal, semestral, anual).
+ * Todos liberam o mesmo acesso Premium; mudam preço e validade.
+ */
+function listPremiumCycles() {
+  return [PLANS.PREMIUM, PLANS.SEMESTRAL, PLANS.ANUAL].map((p) => ({
+    id: p.id,
+    label: p.label,
+    priceBRL: p.priceBRL,
+    billingCycle: p.billingCycle,
+    durationDays: p.durationDays,
+    recurring: !!p.recurring,
+  }));
 }
 
 /**
@@ -144,6 +196,7 @@ module.exports = {
   PLANS,
   getPlan,
   listPlans,
+  listPremiumCycles,
   requireFeature,
   dailySignalLimiter,
 };

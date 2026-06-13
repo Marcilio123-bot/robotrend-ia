@@ -142,6 +142,13 @@ const mem = {
   announcementSeq: 0,
   supportMessages: [],      // chat de suporte — modo in-memory
   supportSeq: 0,
+  affiliates: new Map(),    // id -> affiliate (modo in-memory)
+  affiliateReferrals: [],   // { id, affiliateId, userId, createdAt }
+  affiliateCommissions: [], // { id, affiliateId, userId, ... }
+  affiliatePayouts: [],     // { id, affiliateId, amount, ... }
+  affiliateRefSeq: 0,
+  affiliateCommSeq: 0,
+  affiliatePayoutSeq: 0,
   stats: { monitored: 0 },
 };
 
@@ -312,6 +319,66 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_support_user ON support_messages(user_id);
       CREATE INDEX IF NOT EXISTS idx_support_created ON support_messages(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_support_unread_admin ON support_messages(read_by_admin);
+    `,
+  },
+  {
+    // Sistema de afiliados/revendedores.
+    //   affiliates           → cadastro do afiliado (comissão % personalizada + código)
+    //   affiliate_referrals  → clientes indicados por cada afiliado (1 afiliado por cliente)
+    //   affiliate_commissions→ comissão gerada por cada pagamento aprovado
+    //   affiliate_payouts    → histórico de pagamentos de comissão ao afiliado
+    name: '008_affiliates',
+    sql: `
+      CREATE TABLE IF NOT EXISTS affiliates (
+        id             TEXT PRIMARY KEY,
+        user_id        TEXT UNIQUE REFERENCES users(id) ON DELETE SET NULL,
+        name           TEXT NOT NULL,
+        email          TEXT,
+        code           TEXT UNIQUE NOT NULL,
+        commission_pct NUMERIC(6,2) NOT NULL DEFAULT 0,
+        active         BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at     TIMESTAMPTZ DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_affiliates_code ON affiliates(code);
+      CREATE INDEX IF NOT EXISTS idx_affiliates_user ON affiliates(user_id);
+
+      CREATE TABLE IF NOT EXISTS affiliate_referrals (
+        id           SERIAL PRIMARY KEY,
+        affiliate_id TEXT REFERENCES affiliates(id) ON DELETE CASCADE,
+        user_id      TEXT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_aff_ref_affiliate ON affiliate_referrals(affiliate_id);
+
+      CREATE TABLE IF NOT EXISTS affiliate_commissions (
+        id                  SERIAL PRIMARY KEY,
+        affiliate_id        TEXT REFERENCES affiliates(id) ON DELETE CASCADE,
+        user_id             TEXT REFERENCES users(id) ON DELETE SET NULL,
+        payment_external_id TEXT,
+        plan                TEXT,
+        amount_paid         NUMERIC(10,2) NOT NULL DEFAULT 0,
+        commission_pct      NUMERIC(6,2) NOT NULL DEFAULT 0,
+        commission_amount   NUMERIC(10,2) NOT NULL DEFAULT 0,
+        status              TEXT NOT NULL DEFAULT 'pending',
+        created_at          TIMESTAMPTZ DEFAULT NOW(),
+        paid_at             TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_aff_comm_affiliate ON affiliate_commissions(affiliate_id);
+      CREATE INDEX IF NOT EXISTS idx_aff_comm_status ON affiliate_commissions(status);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_aff_comm_payment
+        ON affiliate_commissions(payment_external_id) WHERE payment_external_id IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS affiliate_payouts (
+        id                SERIAL PRIMARY KEY,
+        affiliate_id      TEXT REFERENCES affiliates(id) ON DELETE CASCADE,
+        amount            NUMERIC(10,2) NOT NULL DEFAULT 0,
+        commissions_count INTEGER NOT NULL DEFAULT 0,
+        note              TEXT,
+        created_by        TEXT,
+        created_at        TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_aff_payout_affiliate ON affiliate_payouts(affiliate_id);
     `,
   },
 ];
@@ -1272,6 +1339,431 @@ async function countSupportUnreadForAdmin() {
 }
 
 /* ============================================================
+   AFILIADOS / REVENDEDORES
+   ------------------------------------------------------------
+   - affiliates: cadastro + comissão % personalizada + código único
+   - affiliate_referrals: clientes indicados (1 afiliado por cliente)
+   - affiliate_commissions: comissão por pagamento aprovado (snapshot do %)
+   - affiliate_payouts: histórico de pagamentos de comissão ao afiliado
+   O percentual pode ser qualquer valor e é ajustável a qualquer momento;
+   cada comissão guarda o % vigente no momento do pagamento.
+   ============================================================ */
+const PAID_PLAN_SET = new Set(['PREMIUM', 'VIP', 'PRO', 'TRIAL']);
+function isPaidPlanValue(plan) {
+  return PAID_PLAN_SET.has(String(plan || 'FREE').toUpperCase());
+}
+
+function mapAffiliateRow(r) {
+  return {
+    id: r.id,
+    userId: r.user_id ?? r.userId ?? null,
+    name: r.name,
+    email: r.email ?? null,
+    code: r.code,
+    commissionPct: Number(r.commission_pct ?? r.commissionPct ?? 0),
+    active: r.active == null ? true : !!r.active,
+    createdAt: r.created_at || r.createdAt || null,
+    updatedAt: r.updated_at || r.updatedAt || null,
+  };
+}
+
+function mapCommissionRow(r) {
+  return {
+    id: r.id,
+    affiliateId: r.affiliate_id ?? r.affiliateId,
+    userId: r.user_id ?? r.userId ?? null,
+    paymentExternalId: r.payment_external_id ?? r.paymentExternalId ?? null,
+    plan: r.plan ?? null,
+    amountPaid: Number(r.amount_paid ?? r.amountPaid ?? 0),
+    commissionPct: Number(r.commission_pct ?? r.commissionPct ?? 0),
+    commissionAmount: Number(r.commission_amount ?? r.commissionAmount ?? 0),
+    status: r.status || 'pending',
+    createdAt: r.created_at || r.createdAt || null,
+    paidAt: r.paid_at || r.paidAt || null,
+  };
+}
+
+function mapPayoutRow(r) {
+  return {
+    id: r.id,
+    affiliateId: r.affiliate_id ?? r.affiliateId,
+    amount: Number(r.amount || 0),
+    commissionsCount: Number(r.commissions_count ?? r.commissionsCount ?? 0),
+    note: r.note ?? null,
+    createdBy: r.created_by ?? r.createdBy ?? null,
+    createdAt: r.created_at || r.createdAt || null,
+  };
+}
+
+async function createAffiliate({ userId = null, name, email = null, code, commissionPct = 0, active = true }) {
+  const id = uuid();
+  if (!useDatabase) {
+    const now = new Date().toISOString();
+    const row = {
+      id, user_id: userId, name, email, code,
+      commission_pct: Number(commissionPct) || 0,
+      active: !!active, created_at: now, updated_at: now,
+    };
+    mem.affiliates.set(id, row);
+    return mapAffiliateRow(row);
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO affiliates (id, user_id, name, email, code, commission_pct, active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [id, userId, name, email, code, Number(commissionPct) || 0, !!active]
+  );
+  return mapAffiliateRow(rows[0]);
+}
+
+async function getAffiliateById(id) {
+  if (!useDatabase) {
+    const r = mem.affiliates.get(id);
+    return r ? mapAffiliateRow(r) : null;
+  }
+  const { rows } = await pool.query(`SELECT * FROM affiliates WHERE id=$1`, [id]);
+  return rows[0] ? mapAffiliateRow(rows[0]) : null;
+}
+
+async function getAffiliateByUserId(userId) {
+  if (!userId) return null;
+  if (!useDatabase) {
+    for (const r of mem.affiliates.values()) {
+      if (String(r.user_id) === String(userId)) return mapAffiliateRow(r);
+    }
+    return null;
+  }
+  const { rows } = await pool.query(`SELECT * FROM affiliates WHERE user_id=$1`, [userId]);
+  return rows[0] ? mapAffiliateRow(rows[0]) : null;
+}
+
+async function getAffiliateByCode(code) {
+  if (!code) return null;
+  const key = String(code).trim().toUpperCase();
+  if (!useDatabase) {
+    for (const r of mem.affiliates.values()) {
+      if (String(r.code).toUpperCase() === key) return mapAffiliateRow(r);
+    }
+    return null;
+  }
+  const { rows } = await pool.query(`SELECT * FROM affiliates WHERE UPPER(code)=$1`, [key]);
+  return rows[0] ? mapAffiliateRow(rows[0]) : null;
+}
+
+async function listAffiliates(limit = 500) {
+  const cap = Math.max(1, Math.min(2000, Number(limit) || 500));
+  if (!useDatabase) {
+    return Array.from(mem.affiliates.values())
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+      .slice(0, cap)
+      .map(mapAffiliateRow);
+  }
+  const { rows } = await pool.query(`SELECT * FROM affiliates ORDER BY created_at DESC LIMIT $1`, [cap]);
+  return rows.map(mapAffiliateRow);
+}
+
+async function updateAffiliate(id, patch = {}) {
+  if (!useDatabase) {
+    const r = mem.affiliates.get(id);
+    if (!r) return null;
+    if (typeof patch.name === 'string') r.name = patch.name;
+    if (typeof patch.email === 'string') r.email = patch.email;
+    if (patch.commissionPct != null && !Number.isNaN(Number(patch.commissionPct))) {
+      r.commission_pct = Number(patch.commissionPct);
+    }
+    if (typeof patch.active === 'boolean') r.active = patch.active;
+    r.updated_at = new Date().toISOString();
+    return mapAffiliateRow(r);
+  }
+  const map = { name: 'name', email: 'email', commissionPct: 'commission_pct', active: 'active' };
+  const sets = [];
+  const vals = [];
+  let i = 1;
+  for (const [k, v] of Object.entries(patch)) {
+    if (map[k] === undefined) continue;
+    sets.push(`${map[k]}=$${i++}`);
+    vals.push(k === 'commissionPct' ? Number(v) : v);
+  }
+  if (!sets.length) return getAffiliateById(id);
+  vals.push(id);
+  const { rows } = await pool.query(
+    `UPDATE affiliates SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${i} RETURNING *`,
+    vals
+  );
+  return rows[0] ? mapAffiliateRow(rows[0]) : null;
+}
+
+/** Vincula um cliente recém-cadastrado a um afiliado (idempotente por user_id). */
+async function createReferral(affiliateId, userId) {
+  if (!affiliateId || !userId) return null;
+  if (!useDatabase) {
+    const existing = mem.affiliateReferrals.find((r) => String(r.userId) === String(userId));
+    if (existing) return existing;
+    const row = { id: ++mem.affiliateRefSeq, affiliateId, userId, createdAt: new Date().toISOString() };
+    mem.affiliateReferrals.push(row);
+    return row;
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO affiliate_referrals (affiliate_id, user_id) VALUES ($1,$2)
+     ON CONFLICT (user_id) DO NOTHING RETURNING *`,
+    [affiliateId, userId]
+  );
+  return rows[0] || null;
+}
+
+async function getReferralByUserId(userId) {
+  if (!userId) return null;
+  if (!useDatabase) {
+    return mem.affiliateReferrals.find((r) => String(r.userId) === String(userId)) || null;
+  }
+  const { rows } = await pool.query(`SELECT * FROM affiliate_referrals WHERE user_id=$1`, [userId]);
+  if (!rows[0]) return null;
+  return { id: rows[0].id, affiliateId: rows[0].affiliate_id, userId: rows[0].user_id, createdAt: rows[0].created_at };
+}
+
+/**
+ * Registra a comissão de um pagamento aprovado. Idempotente por
+ * payment_external_id — reentrega de webhook não duplica comissão.
+ * Usa o percentual VIGENTE do afiliado no momento do pagamento.
+ */
+async function recordAffiliateCommission({ affiliateId, userId, paymentExternalId, plan, amountPaid, commissionPct }) {
+  const pct = Number(commissionPct) || 0;
+  const amount = Number(amountPaid) || 0;
+  // Trunca para centavos (ex.: 79,99 × 30% = 23,997 → R$ 23,99), conforme spec.
+  const commissionAmount = Math.floor((amount * pct / 100) * 100) / 100;
+
+  if (!useDatabase) {
+    if (paymentExternalId) {
+      const dup = mem.affiliateCommissions.find(
+        (c) => c.paymentExternalId && String(c.paymentExternalId) === String(paymentExternalId)
+      );
+      if (dup) return mapCommissionRow(dup);
+    }
+    const row = {
+      id: ++mem.affiliateCommSeq,
+      affiliateId, userId: userId || null,
+      paymentExternalId: paymentExternalId || null,
+      plan: plan || null,
+      amountPaid: amount,
+      commissionPct: pct,
+      commissionAmount,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      paidAt: null,
+    };
+    mem.affiliateCommissions.push(row);
+    return mapCommissionRow(row);
+  }
+
+  // Idempotência: se já existe comissão para esse pagamento, retorna a existente.
+  if (paymentExternalId) {
+    const ex = await pool.query(`SELECT * FROM affiliate_commissions WHERE payment_external_id=$1`, [paymentExternalId]);
+    if (ex.rows[0]) return mapCommissionRow(ex.rows[0]);
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO affiliate_commissions
+         (affiliate_id, user_id, payment_external_id, plan, amount_paid, commission_pct, commission_amount, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')
+       RETURNING *`,
+      [affiliateId, userId || null, paymentExternalId || null, plan || null, amount, pct, commissionAmount]
+    );
+    return mapCommissionRow(rows[0]);
+  } catch (err) {
+    // Corrida: índice único parcial barrou a duplicata — retorna a existente.
+    if (err.code === '23505' && paymentExternalId) {
+      const ex = await pool.query(`SELECT * FROM affiliate_commissions WHERE payment_external_id=$1`, [paymentExternalId]);
+      if (ex.rows[0]) return mapCommissionRow(ex.rows[0]);
+    }
+    throw err;
+  }
+}
+
+async function listCommissions({ affiliateId = null, status = null, limit = 500 } = {}) {
+  const cap = Math.max(1, Math.min(2000, Number(limit) || 500));
+  if (!useDatabase) {
+    let list = mem.affiliateCommissions.slice();
+    if (affiliateId) list = list.filter((c) => String(c.affiliateId) === String(affiliateId));
+    if (status) list = list.filter((c) => c.status === status);
+    return list
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, cap)
+      .map(mapCommissionRow);
+  }
+  const clauses = [];
+  const vals = [];
+  let i = 1;
+  if (affiliateId) { clauses.push(`affiliate_id=$${i++}`); vals.push(affiliateId); }
+  if (status) { clauses.push(`status=$${i++}`); vals.push(status); }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  vals.push(cap);
+  const { rows } = await pool.query(
+    `SELECT * FROM affiliate_commissions ${where} ORDER BY created_at DESC LIMIT $${i}`,
+    vals
+  );
+  return rows.map(mapCommissionRow);
+}
+
+/**
+ * Marca como pagas TODAS as comissões pendentes de um afiliado e cria
+ * um registro de payout (histórico). Retorna { amount, count, payout }.
+ */
+async function payAffiliateCommissions(affiliateId, { note = null, createdBy = null } = {}) {
+  if (!useDatabase) {
+    const pending = mem.affiliateCommissions.filter(
+      (c) => String(c.affiliateId) === String(affiliateId) && c.status === 'pending'
+    );
+    const amount = Math.round(pending.reduce((s, c) => s + Number(c.commissionAmount || 0), 0) * 100) / 100;
+    const now = new Date().toISOString();
+    pending.forEach((c) => { c.status = 'paid'; c.paidAt = now; });
+    const payout = {
+      id: ++mem.affiliatePayoutSeq, affiliateId, amount,
+      commissionsCount: pending.length, note, createdBy, createdAt: now,
+    };
+    if (pending.length) mem.affiliatePayouts.push(payout);
+    return { amount, count: pending.length, payout: pending.length ? mapPayoutRow(payout) : null };
+  }
+  const client = pool;
+  const sum = await client.query(
+    `SELECT COALESCE(SUM(commission_amount),0)::numeric AS amount, COUNT(*)::int AS count
+     FROM affiliate_commissions WHERE affiliate_id=$1 AND status='pending'`,
+    [affiliateId]
+  );
+  const amount = Number(sum.rows[0].amount || 0);
+  const count = Number(sum.rows[0].count || 0);
+  if (!count) return { amount: 0, count: 0, payout: null };
+  await client.query(
+    `UPDATE affiliate_commissions SET status='paid', paid_at=NOW()
+     WHERE affiliate_id=$1 AND status='pending'`,
+    [affiliateId]
+  );
+  const { rows } = await client.query(
+    `INSERT INTO affiliate_payouts (affiliate_id, amount, commissions_count, note, created_by)
+     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [affiliateId, amount, count, note, createdBy]
+  );
+  return { amount, count, payout: mapPayoutRow(rows[0]) };
+}
+
+async function listPayouts(affiliateId, limit = 200) {
+  const cap = Math.max(1, Math.min(1000, Number(limit) || 200));
+  if (!useDatabase) {
+    return mem.affiliatePayouts
+      .filter((p) => !affiliateId || String(p.affiliateId) === String(affiliateId))
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, cap)
+      .map(mapPayoutRow);
+  }
+  const clause = affiliateId ? `WHERE affiliate_id=$1` : ``;
+  const vals = affiliateId ? [affiliateId, cap] : [cap];
+  const { rows } = await pool.query(
+    `SELECT * FROM affiliate_payouts ${clause} ORDER BY created_at DESC LIMIT $${affiliateId ? 2 : 1}`,
+    vals
+  );
+  return rows.map(mapPayoutRow);
+}
+
+/** Estatísticas consolidadas de um afiliado (indicações, premium, comissões). */
+async function affiliateStats(affiliateId) {
+  if (!useDatabase) {
+    const referrals = mem.affiliateReferrals.filter((r) => String(r.affiliateId) === String(affiliateId));
+    const referredUserIds = new Set(referrals.map((r) => String(r.userId)));
+    let premiumActive = 0;
+    for (const uid of referredUserIds) {
+      const u = mem.users.get(uid);
+      if (u && isPaidPlanValue(u.plan) && u.blocked !== true) premiumActive++;
+    }
+    const comms = mem.affiliateCommissions.filter((c) => String(c.affiliateId) === String(affiliateId));
+    const sum = (arr) => Math.round(arr.reduce((s, c) => s + Number(c.commissionAmount || 0), 0) * 100) / 100;
+    const pendingComms = comms.filter((c) => c.status === 'pending');
+    const paidComms = comms.filter((c) => c.status === 'paid');
+    return {
+      referrals: referrals.length,
+      premiumActive,
+      revenueGenerated: Math.round(comms.reduce((s, c) => s + Number(c.amountPaid || 0), 0) * 100) / 100,
+      accrued: sum(comms),
+      pending: sum(pendingComms),
+      paid: sum(paidComms),
+      conversions: comms.length,
+    };
+  }
+  const [ref, prem, comm] = await Promise.all([
+    pool.query(`SELECT COUNT(*)::int AS c FROM affiliate_referrals WHERE affiliate_id=$1`, [affiliateId]),
+    pool.query(
+      `SELECT COUNT(*)::int AS c
+       FROM affiliate_referrals r JOIN users u ON u.id = r.user_id
+       WHERE r.affiliate_id=$1 AND UPPER(COALESCE(u.plan,'FREE')) <> 'FREE'
+         AND COALESCE(u.blocked,false) = false`,
+      [affiliateId]
+    ),
+    pool.query(
+      `SELECT
+         COALESCE(SUM(amount_paid),0)::numeric AS revenue,
+         COALESCE(SUM(commission_amount),0)::numeric AS accrued,
+         COALESCE(SUM(commission_amount) FILTER (WHERE status='pending'),0)::numeric AS pending,
+         COALESCE(SUM(commission_amount) FILTER (WHERE status='paid'),0)::numeric AS paid,
+         COUNT(*)::int AS conversions
+       FROM affiliate_commissions WHERE affiliate_id=$1`,
+      [affiliateId]
+    ),
+  ]);
+  const c = comm.rows[0];
+  return {
+    referrals: ref.rows[0].c,
+    premiumActive: prem.rows[0].c,
+    revenueGenerated: Number(c.revenue || 0),
+    accrued: Number(c.accrued || 0),
+    pending: Number(c.pending || 0),
+    paid: Number(c.paid || 0),
+    conversions: c.conversions,
+  };
+}
+
+/** Agregados globais do sistema de afiliados (dashboard Master). */
+async function affiliatesOverview() {
+  if (!useDatabase) {
+    const comms = mem.affiliateCommissions;
+    const sum = (arr, k) => Math.round(arr.reduce((s, c) => s + Number(c[k] || 0), 0) * 100) / 100;
+    const premiumUserIds = new Set();
+    for (const r of mem.affiliateReferrals) {
+      const u = mem.users.get(String(r.userId));
+      if (u && isPaidPlanValue(u.plan) && u.blocked !== true) premiumUserIds.add(String(r.userId));
+    }
+    return {
+      totalAffiliates: mem.affiliates.size,
+      totalReferrals: mem.affiliateReferrals.length,
+      totalPremium: premiumUserIds.size,
+      revenueGenerated: sum(comms, 'amountPaid'),
+      pendingCommissions: sum(comms.filter((c) => c.status === 'pending'), 'commissionAmount'),
+      paidCommissions: sum(comms.filter((c) => c.status === 'paid'), 'commissionAmount'),
+    };
+  }
+  const [aff, ref, prem, comm] = await Promise.all([
+    pool.query(`SELECT COUNT(*)::int AS c FROM affiliates`),
+    pool.query(`SELECT COUNT(*)::int AS c FROM affiliate_referrals`),
+    pool.query(
+      `SELECT COUNT(DISTINCT r.user_id)::int AS c
+       FROM affiliate_referrals r JOIN users u ON u.id = r.user_id
+       WHERE UPPER(COALESCE(u.plan,'FREE')) <> 'FREE' AND COALESCE(u.blocked,false) = false`
+    ),
+    pool.query(
+      `SELECT
+         COALESCE(SUM(amount_paid),0)::numeric AS revenue,
+         COALESCE(SUM(commission_amount) FILTER (WHERE status='pending'),0)::numeric AS pending,
+         COALESCE(SUM(commission_amount) FILTER (WHERE status='paid'),0)::numeric AS paid
+       FROM affiliate_commissions`
+    ),
+  ]);
+  return {
+    totalAffiliates: aff.rows[0].c,
+    totalReferrals: ref.rows[0].c,
+    totalPremium: prem.rows[0].c,
+    revenueGenerated: Number(comm.rows[0].revenue || 0),
+    pendingCommissions: Number(comm.rows[0].pending || 0),
+    paidCommissions: Number(comm.rows[0].paid || 0),
+  };
+}
+
+/* ============================================================
    SUBSCRIPTIONS / PAYMENTS
    ============================================================ */
 async function upsertSubscription(userId, sub) {
@@ -1361,6 +1853,12 @@ module.exports = {
   // support chat (suporte)
   createSupportMessage, listSupportMessages, listSupportThreads,
   markSupportRead, countSupportUnreadForUser, countSupportUnreadForAdmin,
+  // afiliados / revendedores
+  createAffiliate, getAffiliateById, getAffiliateByUserId, getAffiliateByCode,
+  listAffiliates, updateAffiliate,
+  createReferral, getReferralByUserId,
+  recordAffiliateCommission, listCommissions, payAffiliateCommissions, listPayouts,
+  affiliateStats, affiliatesOverview,
   // subs / payments
   upsertSubscription, savePayment, listPayments, findPaymentByExternalId,
   isPostgres: () => useDatabase,

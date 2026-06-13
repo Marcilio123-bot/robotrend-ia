@@ -54,6 +54,11 @@
           <h2 class="text-lg font-extrabold">Forma de pagamento</h2>
           <button onclick="document.getElementById('payment-modal').classList.add('hidden')" class="btn-icon">✕</button>
         </div>
+        <div id="cycle-select" class="mb-4 hidden">
+          <label class="text-xs" style="color: var(--muted);">Escolha o ciclo</label>
+          <div id="cycle-options" class="grid grid-cols-3 gap-2 mt-1"></div>
+          <div id="cycle-savings" class="text-xs mt-2" style="color: var(--brand);"></div>
+        </div>
         <div class="mb-3">
           <label class="text-xs" style="color: var(--muted);">Cupom de desconto (opcional)</label>
           <div class="flex gap-2 mt-1">
@@ -64,9 +69,9 @@
         </div>
         <div class="mb-3">
           <button id="btn-virar-premium" class="btn-primary w-full justify-center py-3" style="font-weight:800;font-size:15px">
-            🚀 Assinar com Mercado Pago — <span id="btn-mp-price">R$ 79,90</span>/mês
+            🚀 Assinar com Mercado Pago — <span id="btn-mp-label">R$ 79,90/mês</span>
           </button>
-          <div class="text-xs mt-2 text-center" style="color: var(--muted);">
+          <div id="btn-mp-note" class="text-xs mt-2 text-center" style="color: var(--muted);">
             Cobrança mensal · Premium liberado em segundos · Cancele quando quiser
           </div>
         </div>
@@ -89,6 +94,76 @@
     let currentPlan = null;
     let appliedCoupon = null;
     let basePriceByPlan = {};
+    let premiumCycles = [];
+
+    const CYCLE_SUFFIX = { PREMIUM: '/mês', SEMESTRAL: ' /6 meses', ANUAL: '/ano' };
+    const CYCLE_NOTE = {
+      PREMIUM: 'Cobrança mensal · Premium liberado em segundos · Cancele quando quiser',
+      SEMESTRAL: 'Pagamento único · 180 dias de Premium · liberado em segundos',
+      ANUAL: 'Pagamento único · 365 dias de Premium · liberado em segundos',
+    };
+
+    async function loadCycles() {
+      try {
+        const r = await fetch('/api/plans/cycles');
+        const { cycles } = await r.json();
+        premiumCycles = cycles || [];
+        premiumCycles.forEach((c) => { basePriceByPlan[c.id] = c.priceBRL; });
+      } catch (_) { premiumCycles = []; }
+    }
+
+    function monthlyEquivalent(c) {
+      const months = (c.durationDays || 30) / 30;
+      return c.priceBRL / months;
+    }
+
+    function renderCycleSelector() {
+      const wrap = document.getElementById('cycle-select');
+      const opts = document.getElementById('cycle-options');
+      if (!premiumCycles.length) { wrap.classList.add('hidden'); return; }
+      wrap.classList.remove('hidden');
+      const monthly = premiumCycles.find((c) => c.id === 'PREMIUM');
+      opts.innerHTML = premiumCycles.map((c) => {
+        const active = c.id === currentPlan;
+        const shortLabel = c.id === 'PREMIUM' ? 'Mensal' : (c.id === 'SEMESTRAL' ? 'Semestral' : 'Anual');
+        return `
+          <button type="button" data-cycle="${c.id}"
+            class="rounded-xl px-2 py-3 text-center border ${active ? 'cycle-active' : ''}"
+            style="background:${active ? 'rgba(20,184,94,.12)' : 'var(--surface-2)'}; border-color:${active ? 'var(--brand)' : 'var(--line)'}; cursor:pointer;">
+            <div class="text-xs font-bold">${shortLabel}</div>
+            <div class="text-sm font-extrabold mt-1">R$ ${fmtBRL(c.priceBRL)}</div>
+          </button>`;
+      }).join('');
+      opts.querySelectorAll('button[data-cycle]').forEach((b) => {
+        b.addEventListener('click', () => selectCycle(b.dataset.cycle));
+      });
+      // Texto de economia vs. mensal
+      const savings = document.getElementById('cycle-savings');
+      const cur = premiumCycles.find((c) => c.id === currentPlan);
+      if (cur && monthly && cur.id !== 'PREMIUM') {
+        const eqMonthly = monthlyEquivalent(cur);
+        const pct = Math.round((1 - eqMonthly / monthly.priceBRL) * 100);
+        savings.textContent = pct > 0
+          ? `Equivale a R$ ${fmtBRL(eqMonthly)}/mês · economize ${pct}% vs. mensal`
+          : '';
+      } else {
+        savings.textContent = '';
+      }
+    }
+
+    function selectCycle(planId) {
+      currentPlan = planId;
+      appliedCoupon = null;
+      const statusEl = document.getElementById('coupon-status');
+      if (statusEl) statusEl.textContent = '';
+      const c = premiumCycles.find((x) => x.id === planId);
+      const price = c ? c.priceBRL : (basePriceByPlan[planId] || 79.90);
+      const label = document.getElementById('btn-mp-label');
+      if (label) label.textContent = 'R$ ' + fmtBRL(price) + (CYCLE_SUFFIX[planId] || '');
+      const note = document.getElementById('btn-mp-note');
+      if (note) note.textContent = CYCLE_NOTE[planId] || CYCLE_NOTE.PREMIUM;
+      renderCycleSelector();
+    }
 
     document.getElementById('coupon-apply').addEventListener('click', async () => {
       const code = (document.getElementById('coupon-input')?.value || '').trim().toUpperCase();
@@ -178,12 +253,19 @@
         location.href = '/login.html?next=/pricing.html';
         return;
       }
-      currentPlan = plan;
-      const price = basePriceByPlan[plan] || 79.90;
-      const priceEl = document.getElementById('btn-mp-price');
-      if (priceEl) priceEl.textContent = 'R$ ' + fmtBRL(price);
       document.getElementById('payment-modal').classList.remove('hidden');
       document.getElementById('checkout-result').innerHTML = '';
+      // Plano pago → oferece os ciclos (mensal/semestral/anual). Default: o escolhido.
+      const isPaid = plan === 'PREMIUM' || plan === 'SEMESTRAL' || plan === 'ANUAL';
+      if (isPaid && premiumCycles.length) {
+        selectCycle(premiumCycles.some((c) => c.id === plan) ? plan : 'PREMIUM');
+      } else {
+        currentPlan = plan;
+        const price = basePriceByPlan[plan] || 79.90;
+        const label = document.getElementById('btn-mp-label');
+        if (label) label.textContent = 'R$ ' + fmtBRL(price);
+        document.getElementById('cycle-select').classList.add('hidden');
+      }
     }
 
     document.getElementById('btn-virar-premium').addEventListener('click', () => {
@@ -226,6 +308,7 @@
     });
 
     loadPlans();
+    loadCycles();
   </script>
 </body>
 </html>

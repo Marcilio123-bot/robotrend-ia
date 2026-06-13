@@ -58,6 +58,21 @@
     const errEl = document.getElementById('err');
     const btn   = form.querySelector('button[type="submit"]');
 
+    // Código de indicação (afiliado): captura de ?ref= e persiste em localStorage.
+    const REF_KEY = 'robotrend_ref';
+    (function captureRef() {
+      try {
+        const ref = new URLSearchParams(location.search).get('ref');
+        if (ref) localStorage.setItem(REF_KEY, ref.trim());
+      } catch (_) {}
+    })();
+    function getRef() {
+      try {
+        return new URLSearchParams(location.search).get('ref')
+          || localStorage.getItem(REF_KEY) || '';
+      } catch (_) { return ''; }
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       errEl.classList.add('hidden');
@@ -87,7 +102,8 @@
       btn.innerHTML = 'Criando conta…';
 
       try {
-        await RobotrendAuth.register(email, password, name);
+        await RobotrendAuth.register(email, password, name, getRef());
+        try { localStorage.removeItem(REF_KEY); } catch (_) {}
         location.href = '/';
       } catch (ex) {
         const code = ex?.payload?.error || ex?.message || '';

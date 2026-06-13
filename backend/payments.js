@@ -278,7 +278,7 @@ function generateInitialPassword() {
 
 function planToRole(plan) {
   const p = String(plan || '').toUpperCase();
-  if (p === 'PREMIUM' || p === 'VIP' || p === 'PRO') return 'premium';
+  if (['PREMIUM', 'VIP', 'PRO', 'SEMESTRAL', 'ANUAL'].includes(p)) return 'premium';
   return 'user';
 }
 
@@ -307,7 +307,7 @@ async function provisionUserFromPayment(db, payload) {
   }
 
   const normalizedEmail = String(email ?? '').trim().toLowerCase();
-  const safePlan = ['FREE', 'VIP', 'PREMIUM'].includes(String(plan).toUpperCase())
+  const safePlan = ['FREE', 'VIP', 'PREMIUM', 'SEMESTRAL', 'ANUAL'].includes(String(plan).toUpperCase())
     ? String(plan).toUpperCase()
     : 'PREMIUM';
   const role = planToRole(safePlan);
@@ -362,6 +362,19 @@ async function provisionUserFromPayment(db, payload) {
     });
   } catch (err) {
     log.warn('savePayment falhou', { err: err.message });
+  }
+
+  // Comissão de afiliado (se o cliente foi indicado) — cálculo automático.
+  try {
+    const { recordAffiliateCommissionForPayment } = require('./affiliates');
+    await recordAffiliateCommissionForPayment(db, {
+      userId: user.id,
+      externalId: externalId || null,
+      plan: safePlan,
+      amount: amount || 0,
+    });
+  } catch (err) {
+    log.warn('comissão de afiliado (provision) falhou', { err: err.message });
   }
 
   // Welcome email + tracking (não bloqueia se falhar)
@@ -484,6 +497,12 @@ function buildPaymentRoutes(app, db, requireAuth) {
     res.json({ plans: listPlans() });
   });
 
+  // Ciclos de assinatura Premium (mensal, semestral, anual) — mesmo acesso.
+  app.get('/api/plans/cycles', (req, res) => {
+    const { listPremiumCycles } = require('./plans');
+    res.json({ cycles: listPremiumCycles() });
+  });
+
   // Status do gateway (útil pro frontend exibir badge "ativo"/"mock")
   app.get('/api/payments/status', (req, res) => {
     res.json({
@@ -510,7 +529,7 @@ function buildPaymentRoutes(app, db, requireAuth) {
     try {
       const user = req.user;
       const requestedPlan = (req.body?.plan || 'PREMIUM').toUpperCase();
-      const plan = ['PREMIUM', 'VIP'].includes(requestedPlan) ? requestedPlan : 'PREMIUM';
+      const plan = ['PREMIUM', 'VIP', 'SEMESTRAL', 'ANUAL'].includes(requestedPlan) ? requestedPlan : 'PREMIUM';
       const def = getPlan(plan);
 
       if (!mp.enabled) {
@@ -562,7 +581,7 @@ function buildPaymentRoutes(app, db, requireAuth) {
         items: [{
           id: `plan-${plan.toLowerCase()}`,
           title: `Plano ${def.label} - Robotrend IA`,
-          description: `Assinatura mensal Robotrend IA · plano ${def.label}`,
+          description: `Robotrend IA · plano ${def.label}${def.recurring ? ' · cobrança recorrente' : ` · ${def.durationDays || 30} dias`}`,
           quantity: 1,
           unit_price: finalAmount,
           currency_id: 'BRL',
@@ -633,7 +652,7 @@ function buildPaymentRoutes(app, db, requireAuth) {
   app.post('/api/payments/checkout', requireAuth(db), async (req, res) => {
     try {
       const { plan, provider, coupon } = req.body || {};
-      if (!['VIP', 'PREMIUM'].includes(plan)) return res.status(400).json({ error: 'plan inválido' });
+      if (!['VIP', 'PREMIUM', 'SEMESTRAL', 'ANUAL'].includes(plan)) return res.status(400).json({ error: 'plan inválido' });
 
       // Em produção, sem o gateway selecionado configurado, NÃO cair em mock.
       // Retorna 503 explícito para o frontend e impede geração de URLs mock-success.
@@ -949,6 +968,19 @@ function buildPaymentRoutes(app, db, requireAuth) {
         log.warn('savePayment paid falhou', { err: err.message });
       }
 
+      // Comissão de afiliado (cálculo automático conforme % do afiliado)
+      try {
+        const { recordAffiliateCommissionForPayment } = require('./affiliates');
+        await recordAffiliateCommissionForPayment(db, {
+          userId: user.id,
+          externalId: String(paymentInfo.id),
+          plan,
+          amount: paymentInfo.transaction_amount || 0,
+        });
+      } catch (err) {
+        log.warn('comissão de afiliado (webhook MP) falhou', { err: err.message });
+      }
+
       // Email de confirmação
       try {
         await onboarding.paymentReceivedEmail(user, {
@@ -1247,7 +1279,7 @@ function buildPaymentRoutes(app, db, requireAuth) {
       const t0 = Date.now();
       try {
         const { plan, provider } = req.query;
-        if (!['VIP', 'PREMIUM'].includes(plan)) {
+        if (!['VIP', 'PREMIUM', 'SEMESTRAL', 'ANUAL'].includes(plan)) {
           return res.status(400).send('plan inválido');
         }
         await provisionUserFromPayment(db, {

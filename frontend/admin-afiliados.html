@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robotrend-guard" content="admin" />
+  <title>Afiliados · Robotrend IA Master</title>
+  <link rel="stylesheet" href="/output.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .af-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+    .af-card { background:var(--surface-2,#11241a); border:1px solid var(--line); border-radius:14px; padding:16px; }
+    .af-card-label { font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+    .af-card-value { font-size:24px; font-weight:900; color:var(--text,#e6f4ec); margin-top:6px; }
+    .af-card-value.brand { color:var(--brand,#14b85e); }
+    .af-card-value.warn { color:#ffb547; }
+
+    .af-status { font-size:11px; font-weight:800; padding:3px 10px; border-radius:999px; letter-spacing:.04em; }
+    .af-on { background:rgba(34,197,94,.16); color:#22c55e; }
+    .af-off { background:rgba(148,163,184,.16); color:#94a3b8; }
+    .af-btn {
+      font-size:12px; font-weight:700; padding:6px 12px; border-radius:8px;
+      border:1px solid var(--line); background:var(--surface-2,#11241a);
+      color:var(--text,#e6f4ec); cursor:pointer; transition:all .15s ease;
+    }
+    .af-btn:hover { border-color:var(--brand,#14b85e); color:var(--brand,#14b85e); }
+    .af-btn.brand { background:var(--brand,#14b85e); color:#04140b; border-color:var(--brand,#14b85e); }
+    .af-pct-input { width:80px; padding:5px 8px; border-radius:8px; border:1px solid var(--line);
+      background:var(--surface,#0b1a12); color:var(--text,#e6f4ec); font-weight:700; font-family:inherit; }
+    .af-code { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--brand,#14b85e); }
+    .af-money { font-family:'JetBrains Mono',monospace; font-weight:700; }
+    .af-detail { background:var(--surface,#0b1a12); }
+    .af-detail td { padding:0 !important; }
+    .af-sub { width:100%; font-size:12.5px; }
+    .af-sub th { text-align:left; padding:8px 12px; color:var(--muted); font-weight:700; border-bottom:1px solid var(--line); }
+    .af-sub td { padding:8px 12px !important; border-bottom:1px solid var(--line); }
+    .af-pill { font-size:10.5px; font-weight:800; padding:2px 8px; border-radius:999px; }
+    .af-pill.pending { background:rgba(255,181,71,.16); color:#ffb547; }
+    .af-pill.paid { background:rgba(34,197,94,.16); color:#22c55e; }
+    textarea.input-field, input.input-field { font-family:inherit; }
+    .af-access { margin-top:12px; padding:12px 14px; border-radius:12px; border:1px solid var(--brand,#14b85e);
+      background:rgba(20,184,94,.08); font-size:13px; line-height:1.6; display:none; }
+    .af-access code { background:var(--surface-2,#11241a); padding:2px 8px; border-radius:6px; font-weight:700; }
+  </style>
+</head>
+<body class="font-display antialiased">
+  <div class="bg-aurora"></div>
+  <div class="bg-grid"></div>
+
+  <div class="saas-shell">
+    <div id="saas-nav" data-active="admin-afiliados"></div>
+    <main class="saas-content">
+      <header class="saas-page-header">
+        <div>
+          <h1 class="saas-page-title">⇪ Afiliados</h1>
+          <p class="saas-page-sub">Revendedores, comissões personalizadas e controle financeiro</p>
+        </div>
+        <div class="saas-page-actions">
+          <span class="saas-status-pill ok">MASTER</span>
+        </div>
+      </header>
+
+      <!-- Dashboard -->
+      <section class="saas-section">
+        <div class="saas-section-head"><div class="saas-section-title">Visão geral</div></div>
+        <div class="af-cards" id="af-overview">
+          <div class="af-card"><div class="af-card-label">Afiliados</div><div class="af-card-value" id="ov-affiliates">—</div></div>
+          <div class="af-card"><div class="af-card-label">Indicações</div><div class="af-card-value" id="ov-referrals">—</div></div>
+          <div class="af-card"><div class="af-card-label">Premium convertidos</div><div class="af-card-value brand" id="ov-premium">—</div></div>
+          <div class="af-card"><div class="af-card-label">Receita gerada</div><div class="af-card-value af-money" id="ov-revenue">—</div></div>
+          <div class="af-card"><div class="af-card-label">Comissões pendentes</div><div class="af-card-value warn af-money" id="ov-pending">—</div></div>
+          <div class="af-card"><div class="af-card-label">Comissões pagas</div><div class="af-card-value brand af-money" id="ov-paid">—</div></div>
+        </div>
+      </section>
+
+      <!-- Cadastrar afiliado -->
+      <section class="saas-section">
+        <div class="saas-section-head"><div class="saas-section-title">+ Cadastrar afiliado</div></div>
+        <div class="saas-card">
+          <form id="form-affiliate" class="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div class="md:col-span-1">
+              <label class="text-xs uppercase tracking-wider font-bold" style="color:var(--muted);">Nome</label>
+              <input id="af-name" type="text" required maxlength="80" class="input-field w-full mt-1" placeholder="Nome do afiliado" />
+            </div>
+            <div class="md:col-span-1">
+              <label class="text-xs uppercase tracking-wider font-bold" style="color:var(--muted);">E-mail (login)</label>
+              <input id="af-email" type="email" required class="input-field w-full mt-1" placeholder="afiliado@email.com" />
+            </div>
+            <div class="md:col-span-1">
+              <label class="text-xs uppercase tracking-wider font-bold" style="color:var(--muted);">Senha (opcional)</label>
+              <input id="af-password" type="text" class="input-field w-full mt-1" placeholder="Auto-gerada se vazio" />
+            </div>
+            <div class="md:col-span-1">
+              <label class="text-xs uppercase tracking-wider font-bold" style="color:var(--muted);">Comissão (%)</label>
+              <input id="af-pct" type="number" required min="0" step="0.01" class="input-field w-full mt-1" placeholder="Ex.: 30" />
+            </div>
+            <div class="md:col-span-4">
+              <button type="submit" class="btn-primary justify-center py-3 px-6" id="af-submit">+ Criar afiliado</button>
+            </div>
+          </form>
+          <div id="af-feedback" class="mt-3 text-sm" style="display:none;"></div>
+          <div id="af-access" class="af-access"></div>
+        </div>
+      </section>
+
+      <!-- Lista de afiliados -->
+      <section class="saas-section">
+        <div class="saas-section-head">
+          <div class="saas-section-title">Afiliados</div>
+          <div style="color:var(--muted); font-size:12px;"><span id="af-count">0</span> afiliado(s)</div>
+        </div>
+        <div class="saas-card" style="padding:0; overflow:auto;">
+          <table class="w-full text-sm">
+            <thead><tr class="table-head">
+              <th class="py-3 px-4 text-left">Afiliado</th>
+              <th class="py-3 px-4 text-left">Código / Link</th>
+              <th class="py-3 px-4 text-left">Comissão</th>
+              <th class="py-3 px-4 text-left">Indic.</th>
+              <th class="py-3 px-4 text-left">Premium</th>
+              <th class="py-3 px-4 text-left">Receita</th>
+              <th class="py-3 px-4 text-left">Pendente</th>
+              <th class="py-3 px-4 text-left">Pago</th>
+              <th class="py-3 px-4 text-left">Status</th>
+              <th class="py-3 px-4 text-left">Ações</th>
+            </tr></thead>
+            <tbody id="af-body"><tr><td colspan="10" class="py-6 text-center" style="color:var(--muted);">Carregando…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/auth-guard.js"></script>
+  <script src="/js/user-state.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/saas-nav.js"></script>
+  <script src="/js/admin-afiliados.js"></script>
+</body>
+</html>

@@ -183,6 +183,15 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+/** Exige role 'affiliate' — painel do afiliado/revendedor. */
+function requireAffiliate(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
+  if (String(req.user.role || '').toLowerCase() !== 'affiliate') {
+    return res.status(403).json({ error: 'Acesso negado: apenas afiliados', code: 'AFFILIATE_REQUIRED' });
+  }
+  next();
+}
+
 /** Exige role master/super_admin — restrito a operações destrutivas. */
 function requireMaster(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
@@ -323,6 +332,20 @@ function buildAuthRoutes(app, db) {
         plan: 'FREE',
         role: 'user',
       });
+
+      // Atribuição de indicação (afiliado) — nunca quebra o cadastro.
+      try {
+        const ref = String(body.ref ?? '').trim();
+        if (ref && db.getAffiliateByCode && db.createReferral) {
+          const affiliate = await db.getAffiliateByCode(ref);
+          if (affiliate && affiliate.active && affiliate.userId !== user.id) {
+            await db.createReferral(affiliate.id, user.id);
+            logger.info('indicação registrada', { affiliateId: affiliate.id, userId: user.id, code: ref });
+          }
+        }
+      } catch (refErr) {
+        logger.warn('atribuição de indicação falhou', { err: refErr.message });
+      }
 
       // Trial Premium opt-in (default OFF). Ative com TRIAL_ON_SIGNUP=true.
       const trialOnSignup = String(process.env.TRIAL_ON_SIGNUP || 'false').toLowerCase() === 'true';
@@ -534,6 +557,7 @@ module.exports = {
   optionalAuth,
   requireAdmin,
   requireMaster,
+  requireAffiliate,
   requirePremium,
   requireSystemToggle,
   isDevToggleBypass,
