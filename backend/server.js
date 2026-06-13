@@ -891,6 +891,43 @@ buildSupportRoutes(app, db, auth.requireAuth, auth.requireAdmin);
 buildAffiliateRoutes(app, db, auth.requireAuth, auth.requireAdmin, auth.requireAffiliate);
 
 /* ============================================================
+   POST /api/admin/backfill-affiliate-commissions
+   Recupera comissões de afiliados para pagamentos MP sem comissão.
+   Body opcional: { "dryRun": true } — simula sem gravar.
+   ============================================================ */
+app.post('/api/admin/backfill-affiliate-commissions',
+  auth.requireAuth(db),
+  auth.requireAdmin,
+  async (req, res) => {
+    try {
+      const dryRun = !!(req.body?.dryRun);
+      const { runBackfill } = require('./scripts/backfill-affiliate-commissions');
+      const report = await runBackfill({ dryRun });
+      log.info('backfill-affiliate-commissions via API', {
+        adminId: req.user?.id,
+        dryRun,
+        scanned: report.scanned,
+        created: report.created,
+        skipped: report.skipped,
+        errors: report.errors,
+      });
+      res.json({
+        ok: true,
+        dryRun: report.dryRun,
+        encontradas: report.scanned,
+        criadas: report.created,
+        ignoradas: report.skipped,
+        erros: report.errors,
+        items: report.items,
+      });
+    } catch (e) {
+      log.error('backfill-affiliate-commissions falhou', { err: e.message });
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
+/* ============================================================
    /api/admin/ops — central operacional (Operacional IA)
    ------------------------------------------------------------
    Aggrega health + bot + poller + processo num único payload
