@@ -622,7 +622,7 @@
     const insightHtml = isLocked
       ? `<div class="mt-3 text-[11px]" style="color: #ffb547; line-height:1.5;background:rgba(255,181,71,.08);padding:8px 10px;border-radius:6px;border-left:2px solid #ffb547;">
            🔒 ${s.justification || 'Análise completa disponível no Premium.'}
-           <a href="#" onclick="window.virarPremium();event.preventDefault();" style="color:#ffb547;font-weight:700;text-decoration:underline;">Upgrade →</a>
+           <a href="#" onclick="window.virarPremium();event.preventDefault();" style="color:#ffb547;font-weight:700;text-decoration:underline;">Escolher plano Premium →</a>
          </div>`
       : (s.premiumInsight || s.justification)
         ? `<div class="mt-3 text-[11px]" style="color: var(--muted); line-height:1.5;">${escapeHtml(s.premiumInsight || s.justification)}</div>`

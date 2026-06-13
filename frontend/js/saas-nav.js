@@ -212,11 +212,11 @@
       <div class="saas-upgrade-card">
         <div class="promo-pill" style="margin-bottom:8px;">
           <span class="promo-pill-badge">PREMIUM</span>
-          <span class="promo-pill-text">Plano Premium mensal · <b>R$ 79,90/mês</b></span>
+          <span class="promo-pill-text">Planos a partir de <b>R$ 79,90</b></span>
         </div>
         <div class="saas-upgrade-title">💎 Desbloqueie o Premium</div>
-        <div class="saas-upgrade-desc">Sinais sem delay, Melhor Aposta do Momento e análise IA completa. Cancele quando quiser.</div>
-        <button type="button" class="saas-upgrade-btn" id="saas-upgrade-btn">Assinar Premium — R$ 79,90/mês →</button>
+        <div class="saas-upgrade-desc">Mensal, Semestral ou Anual · sinais sem delay, Melhor Aposta do Momento e análise IA completa.</div>
+        <button type="button" class="saas-upgrade-btn" id="saas-upgrade-btn">Escolher plano Premium →</button>
       </div>
     `;
   }
@@ -313,12 +313,30 @@
     });
 
     const upgrade = host.querySelector('#saas-upgrade-btn');
-    upgrade?.addEventListener('click', () => {
+    upgrade?.addEventListener('click', async () => {
+      if (typeof window.virarPremium !== 'function') {
+        await loadScriptOnce('/js/plan-picker.js');
+        await loadScriptOnce('/js/payments.js');
+      }
       if (typeof window.virarPremium === 'function') {
         window.virarPremium({ button: upgrade });
       } else {
-        location.href = '/account.html';
+        location.href = '/pricing.html';
       }
+    });
+  }
+
+  const _loadedScripts = new Set();
+  function loadScriptOnce(src) {
+    if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve();
+    if (_loadedScripts.has(src)) return Promise.resolve();
+    _loadedScripts.add(src);
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error('failed to load ' + src));
+      document.head.appendChild(s);
     });
   }
 

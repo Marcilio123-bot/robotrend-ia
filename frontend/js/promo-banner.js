@@ -1,17 +1,13 @@
 /**
  * Robotrend IA — Promo Banner Global
  *
- * Renderiza o banner do Plano Premium mensal (R$ 79,90/mês)
- * em qualquer container com [data-promo-banner] OU como primeiro filho
- * do elemento [data-promo-banner-mount].
- *
- * Visibilidade: TODOS os usuários FREE + visitantes não-logados.
- * Esconde automaticamente para usuários PREMIUM/admin.
+ * Banner de upgrade Premium — planos a partir de R$ 79,90.
+ * Visibilidade: usuários FREE + visitantes. Esconde para Premium/admin.
  */
 (function () {
   'use strict';
 
-  const PRICE_MONTHLY = 79.9;
+  const PRICE_FROM = 79.9;
 
   function fmtBRL(n) {
     try {
@@ -35,17 +31,17 @@
 
   function buildBannerHTML() {
     return `
-      <div class="promo-banner" role="region" aria-label="Plano Premium mensal">
+      <div class="promo-banner" role="region" aria-label="Planos Premium">
         <span class="promo-banner-badge">💎 Premium</span>
         <div class="promo-banner-main">
-          <div class="promo-banner-title">Plano Premium mensal</div>
+          <div class="promo-banner-title">Escolha seu plano Premium</div>
           <div class="promo-banner-prices">
-            <span class="new">Acesso completo por R$ ${fmtBRL(PRICE_MONTHLY)}/mês</span>
+            <span class="new">Planos a partir de R$ ${fmtBRL(PRICE_FROM)}</span>
           </div>
-          <div class="promo-banner-sub">Cobrança mensal · liberação imediata · cancele quando quiser</div>
+          <div class="promo-banner-sub">Mensal, Semestral ou Anual · liberação imediata · cancele quando quiser</div>
         </div>
         <button type="button" class="promo-banner-cta" data-promo-cta>
-          👉 Assinar por R$ ${fmtBRL(PRICE_MONTHLY)}/mês
+          👉 Escolher plano Premium
         </button>
       </div>
     `;
@@ -93,5 +89,5 @@
     init();
   }
 
-  window.RobotrendPromo = { mount, PRICE_MONTHLY, fmtBRL };
+  window.RobotrendPromo = { mount, PRICE_FROM, fmtBRL };
 })();

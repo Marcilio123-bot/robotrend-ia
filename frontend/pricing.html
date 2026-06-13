@@ -7,6 +7,21 @@
   <link rel="stylesheet" href="/output.css">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
+  <style>
+    .pricing-free-wrap { margin-bottom: 28px; }
+    .pricing-premium-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+    .pricing-card { border-radius: 20px; padding: 24px; border: 1px solid var(--line); background: var(--card-bg); position: relative; }
+    .pricing-card.featured { border-color: var(--brand); box-shadow: var(--shadow-glow); transform: scale(1.02); }
+    .pricing-card.best { border-color: #ffb547; }
+    .pricing-badge { display: inline-block; font-size: 10px; font-weight: 800; padding: 4px 10px; border-radius: 999px; margin-bottom: 10px; }
+    .pricing-badge.hot { background: rgba(20,184,94,.16); color: var(--brand); }
+    .pricing-badge.save { background: rgba(255,181,71,.16); color: #ffb547; }
+    .pricing-price { font-size: 2.25rem; font-weight: 900; margin-top: 8px; line-height: 1.1; }
+    .pricing-cycle { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .pricing-save { font-size: 12px; font-weight: 800; color: #ffb547; margin-top: 8px; }
+    .pricing-features { margin-top: 16px; font-size: 13px; color: var(--text-2); }
+    .pricing-features li { margin-bottom: 6px; }
+  </style>
 </head>
 <body class="font-display antialiased min-h-screen px-4 py-8">
   <div class="bg-aurora"></div>
@@ -27,37 +42,32 @@
       </div>
     </header>
 
-    <div class="text-center mb-6">
+    <div class="text-center mb-8">
       <div class="text-xs font-extrabold uppercase tracking-[0.35em]" style="color: var(--brand);">Planos & Preços</div>
-      <h1 class="text-4xl lg:text-5xl font-extrabold tracking-tight mt-2">Escolha seu plano</h1>
-      <p class="mt-2 text-sm" style="color: var(--muted);">Cancele quando quiser. Sem fidelidade.</p>
+      <h1 class="text-4xl lg:text-5xl font-extrabold tracking-tight mt-2">Escolha seu plano Premium</h1>
+      <p class="mt-2 text-sm" style="color: var(--muted);">Planos a partir de R$ 79,90 · mesmo acesso completo em todos os ciclos</p>
       <div id="upgrade-notice" class="hidden mt-4 inline-block px-4 py-2 rounded-lg text-sm" style="background: rgba(255, 181, 71, .12); color: var(--warn); border: 1px solid rgba(255, 181, 71, .3);">
-        ⚠️ Esta funcionalidade é exclusiva para assinantes Premium. Atualize seu plano abaixo.
+        ⚠️ Esta funcionalidade é exclusiva para assinantes Premium. Escolha um plano abaixo.
       </div>
     </div>
 
-    <div data-promo-banner-mount></div>
-    <script>
-      (function () {
-        const u = new URLSearchParams(location.search).get('upgrade');
-        if (u) document.getElementById('upgrade-notice')?.classList.remove('hidden');
-      })();
-    </script>
+    <div class="pricing-free-wrap">
+      <div id="free-plan-card"></div>
+    </div>
 
-    <div id="plans-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div id="plans-grid" class="pricing-premium-grid">
       <div class="card-skeleton"></div><div class="card-skeleton"></div><div class="card-skeleton"></div>
     </div>
 
+    <!-- Modal de pagamento (após escolher plano + login) -->
     <div id="payment-modal" class="hidden fixed inset-0 z-50 grid place-items-center px-4" style="background: rgba(3,8,5,0.85); backdrop-filter: blur(6px);">
       <div class="w-full max-w-md rounded-2xl p-6 border" style="background: var(--card-bg); border-color: var(--card-border);">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-lg font-extrabold">Forma de pagamento</h2>
-          <button onclick="document.getElementById('payment-modal').classList.add('hidden')" class="btn-icon">✕</button>
-        </div>
-        <div id="cycle-select" class="mb-4 hidden">
-          <label class="text-xs" style="color: var(--muted);">Escolha o ciclo</label>
-          <div id="cycle-options" class="grid grid-cols-3 gap-2 mt-1"></div>
-          <div id="cycle-savings" class="text-xs mt-2" style="color: var(--brand);"></div>
+          <div>
+            <h2 class="text-lg font-extrabold">Finalizar assinatura</h2>
+            <p id="checkout-plan-label" class="text-xs" style="color:var(--muted);">—</p>
+          </div>
+          <button type="button" onclick="document.getElementById('payment-modal').classList.add('hidden')" class="btn-icon">✕</button>
         </div>
         <div class="mb-3">
           <label class="text-xs" style="color: var(--muted);">Cupom de desconto (opcional)</label>
@@ -69,16 +79,15 @@
         </div>
         <div class="mb-3">
           <button id="btn-virar-premium" class="btn-primary w-full justify-center py-3" style="font-weight:800;font-size:15px">
-            🚀 Assinar com Mercado Pago — <span id="btn-mp-label">R$ 79,90/mês</span>
+            🚀 Pagar com Mercado Pago — <span id="btn-mp-label">—</span>
           </button>
-          <div id="btn-mp-note" class="text-xs mt-2 text-center" style="color: var(--muted);">
-            Cobrança mensal · Premium liberado em segundos · Cancele quando quiser
-          </div>
+          <div id="btn-mp-note" class="text-xs mt-2 text-center" style="color: var(--muted);">—</div>
         </div>
         <div class="grid grid-cols-2 gap-2 mb-4 text-xs">
           <button class="btn-ghost provider-btn" data-provider="stripe">💳 Stripe</button>
           <button class="btn-ghost provider-btn" data-provider="pix">⚡ PIX direto</button>
         </div>
+        <button type="button" id="btn-change-plan" class="btn-ghost w-full text-xs mb-2">← Escolher outro plano</button>
         <div id="checkout-result" class="text-sm" style="color: var(--text-2);"></div>
       </div>
     </div>
@@ -87,89 +96,134 @@
   <script src="/js/auth.js"></script>
   <script src="/js/user-state.js"></script>
   <script src="/js/upgrade-celebration.js"></script>
+  <script src="/js/plan-picker.js"></script>
   <script src="/js/payments.js"></script>
-  <script src="/js/promo-banner.js"></script>
   <script src="/js/support-chat.js"></script>
   <script>
     let currentPlan = null;
     let appliedCoupon = null;
-    let basePriceByPlan = {};
     let premiumCycles = [];
+    let freePlan = null;
 
     const CYCLE_SUFFIX = { PREMIUM: '/mês', SEMESTRAL: ' /6 meses', ANUAL: '/ano' };
     const CYCLE_NOTE = {
-      PREMIUM: 'Cobrança mensal · Premium liberado em segundos · Cancele quando quiser',
+      PREMIUM: 'Renovação mensal · Premium liberado em segundos · Cancele quando quiser',
       SEMESTRAL: 'Pagamento único · 180 dias de Premium · liberado em segundos',
       ANUAL: 'Pagamento único · 365 dias de Premium · liberado em segundos',
     };
 
-    async function loadCycles() {
-      try {
-        const r = await fetch('/api/plans/cycles');
-        const { cycles } = await r.json();
-        premiumCycles = cycles || [];
-        premiumCycles.forEach((c) => { basePriceByPlan[c.id] = c.priceBRL; });
-      } catch (_) { premiumCycles = []; }
+    const PREMIUM_FEATURES = [
+      '✅ Análise ao vivo',
+      '✅ Over 2.5 automático',
+      '✅ Alertas no Telegram',
+      '📊 Sinais ilimitados',
+      '📅 Histórico 365 dias',
+      '✅ Acesso à API REST',
+    ];
+
+    function fmtBRL(n) {
+      return Number(n).toFixed(2).replace('.', ',');
     }
 
-    function monthlyEquivalent(c) {
-      const months = (c.durationDays || 30) / 30;
-      return c.priceBRL / months;
+    async function loadPlansData() {
+      const [plansRes, cycles] = await Promise.all([
+        fetch('/api/plans').then((r) => r.json()).catch(() => ({ plans: [] })),
+        window.RobotrendPlanPicker?.fetchCycles?.() || fetch('/api/plans/cycles').then((r) => r.json()).then((d) => d.cycles || []).catch(() => []),
+      ]);
+      freePlan = (plansRes.plans || []).find((p) => p.id === 'FREE') || null;
+      premiumCycles = cycles || [];
     }
 
-    function renderCycleSelector() {
-      const wrap = document.getElementById('cycle-select');
-      const opts = document.getElementById('cycle-options');
-      if (!premiumCycles.length) { wrap.classList.add('hidden'); return; }
-      wrap.classList.remove('hidden');
+    function renderFreeCard() {
+      const host = document.getElementById('free-plan-card');
+      if (!freePlan || !host) return;
+      host.innerHTML = `
+        <div class="pricing-card" style="max-width:420px;">
+          <div class="text-xs uppercase tracking-widest" style="color: var(--muted);">${freePlan.label}</div>
+          <div class="pricing-price">Grátis</div>
+          <div class="pricing-cycle">3 sinais por dia · sem cartão</div>
+          <button type="button" data-plan="FREE" class="btn-ghost w-full justify-center mt-5 py-3 plan-btn">Começar grátis</button>
+        </div>`;
+      host.querySelector('.plan-btn')?.addEventListener('click', () => onPickPlan('FREE'));
+    }
+
+    function renderPremiumCards() {
+      const grid = document.getElementById('plans-grid');
       const monthly = premiumCycles.find((c) => c.id === 'PREMIUM');
-      opts.innerHTML = premiumCycles.map((c) => {
-        const active = c.id === currentPlan;
-        const shortLabel = c.id === 'PREMIUM' ? 'Mensal' : (c.id === 'SEMESTRAL' ? 'Semestral' : 'Anual');
-        return `
-          <button type="button" data-cycle="${c.id}"
-            class="rounded-xl px-2 py-3 text-center border ${active ? 'cycle-active' : ''}"
-            style="background:${active ? 'rgba(20,184,94,.12)' : 'var(--surface-2)'}; border-color:${active ? 'var(--brand)' : 'var(--line)'}; cursor:pointer;">
-            <div class="text-xs font-bold">${shortLabel}</div>
-            <div class="text-sm font-extrabold mt-1">R$ ${fmtBRL(c.priceBRL)}</div>
-          </button>`;
-      }).join('');
-      opts.querySelectorAll('button[data-cycle]').forEach((b) => {
-        b.addEventListener('click', () => selectCycle(b.dataset.cycle));
-      });
-      // Texto de economia vs. mensal
-      const savings = document.getElementById('cycle-savings');
-      const cur = premiumCycles.find((c) => c.id === currentPlan);
-      if (cur && monthly && cur.id !== 'PREMIUM') {
-        const eqMonthly = monthlyEquivalent(cur);
-        const pct = Math.round((1 - eqMonthly / monthly.priceBRL) * 100);
-        savings.textContent = pct > 0
-          ? `Equivale a R$ ${fmtBRL(eqMonthly)}/mês · economize ${pct}% vs. mensal`
-          : '';
-      } else {
-        savings.textContent = '';
+      if (!premiumCycles.length) {
+        grid.innerHTML = `<div class="col-span-full text-center py-12" style="color: var(--danger);">Não foi possível carregar os planos.</div>`;
+        return;
       }
+      grid.innerHTML = premiumCycles.map((c) => {
+        const meta = window.RobotrendPlanPicker?.cycleMeta?.(c) || { short: c.label, sub: '' };
+        const pct = window.RobotrendPlanPicker?.savingsPct?.(c, monthly) || 0;
+        const featured = c.id === 'PREMIUM';
+        const best = c.id === 'ANUAL';
+        let badge = '';
+        if (featured) badge = '<span class="pricing-badge hot">Mais popular</span>';
+        else if (best) badge = '<span class="pricing-badge save">Melhor economia</span>';
+        else if (pct > 0) badge = `<span class="pricing-badge save">Economize ${pct}%</span>`;
+        return `
+          <div class="pricing-card plan-card ${featured ? 'featured' : ''} ${best ? 'best' : ''}">
+            ${badge}
+            <div class="text-xs uppercase tracking-widest" style="color: var(--muted);">Premium ${meta.short}</div>
+            <div class="pricing-price">R$ ${fmtBRL(c.priceBRL)}</div>
+            <div class="pricing-cycle">${meta.sub}${c.id === 'PREMIUM' ? ' · cobrança recorrente' : ''}</div>
+            ${pct > 0 ? `<div class="pricing-save">Equivale a R$ ${fmtBRL(window.RobotrendPlanPicker.monthlyEquivalent(c))}/mês</div>` : ''}
+            <ul class="pricing-features">${PREMIUM_FEATURES.map((f) => `<li>${f}</li>`).join('')}</ul>
+            <button type="button" data-plan="${c.id}" class="btn-${featured || best ? 'primary' : 'ghost'} w-full justify-center mt-5 py-3 plan-btn">
+              Assinar Premium ${meta.short} →
+            </button>
+          </div>`;
+      }).join('');
+      grid.querySelectorAll('.plan-btn').forEach((btn) => {
+        btn.addEventListener('click', () => onPickPlan(btn.dataset.plan));
+      });
     }
 
-    function selectCycle(planId) {
-      currentPlan = planId;
+    function updateCheckoutUI() {
+      const c = premiumCycles.find((x) => x.id === currentPlan);
+      const meta = c ? window.RobotrendPlanPicker?.cycleMeta?.(c) : null;
+      const price = c?.priceBRL || 0;
+      document.getElementById('checkout-plan-label').textContent = c
+        ? `Premium ${meta?.short || c.id} · R$ ${fmtBRL(price)}`
+        : '—';
+      document.getElementById('btn-mp-label').textContent = c
+        ? `R$ ${fmtBRL(price)}${CYCLE_SUFFIX[c.id] || ''}`
+        : '—';
+      document.getElementById('btn-mp-note').textContent = CYCLE_NOTE[currentPlan] || '';
+    }
+
+    function openCheckout(planId) {
+      currentPlan = String(planId || 'PREMIUM').toUpperCase();
       appliedCoupon = null;
-      const statusEl = document.getElementById('coupon-status');
-      if (statusEl) statusEl.textContent = '';
-      const c = premiumCycles.find((x) => x.id === planId);
-      const price = c ? c.priceBRL : (basePriceByPlan[planId] || 79.90);
-      const label = document.getElementById('btn-mp-label');
-      if (label) label.textContent = 'R$ ' + fmtBRL(price) + (CYCLE_SUFFIX[planId] || '');
-      const note = document.getElementById('btn-mp-note');
-      if (note) note.textContent = CYCLE_NOTE[planId] || CYCLE_NOTE.PREMIUM;
-      renderCycleSelector();
+      document.getElementById('coupon-status').textContent = '';
+      document.getElementById('checkout-result').innerHTML = '';
+      updateCheckoutUI();
+      document.getElementById('payment-modal').classList.remove('hidden');
+    }
+
+    window.RobotrendPricing = { openCheckout };
+
+    async function onPickPlan(plan) {
+      if (plan === 'FREE') {
+        if (!RobotrendAuth.getToken()) location.href = '/register.html';
+        else location.href = '/';
+        return;
+      }
+      if (!RobotrendAuth.getToken()) {
+        location.href = `/login.html?next=${encodeURIComponent('/pricing.html?checkout=' + plan)}`;
+        return;
+      }
+      openCheckout(plan);
     }
 
     document.getElementById('coupon-apply').addEventListener('click', async () => {
       const code = (document.getElementById('coupon-input')?.value || '').trim().toUpperCase();
       const status = document.getElementById('coupon-status');
       if (!code || !currentPlan) return;
-      const basePrice = basePriceByPlan[currentPlan] || 0;
+      const c = premiumCycles.find((x) => x.id === currentPlan);
+      const basePrice = c?.priceBRL || 0;
       try {
         const r = await fetch('/api/beta/coupons/apply', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -190,94 +244,23 @@
       }
     });
 
-    function fmtBRL(n) {
-      return Number(n).toFixed(2).replace('.', ',');
-    }
-
-    async function loadPlans() {
-      const grid = document.getElementById('plans-grid');
-      try {
-        const r = await fetch('/api/plans');
-        const { plans } = await r.json();
-        plans.forEach(p => { basePriceByPlan[p.id] = p.priceBRL; });
-        grid.innerHTML = plans.map((p, i) => {
-          const isPremium = p.id === 'PREMIUM';
-          const featured = isPremium || p.id === 'VIP';
-          const features = [
-            p.features.live ? '✅ Análise ao vivo' : '❌ Análise ao vivo',
-            p.features.over25 ? '✅ Over 2.5 automático' : '🔒 Over 2.5 automático',
-            p.features.telegramAlerts ? '✅ Alertas no Telegram' : '🔒 Alertas Telegram',
-            `📊 ${p.dailySignals === 999 ? 'Sinais ilimitados' : p.dailySignals + ' sinais/dia'}`,
-            `📅 Histórico ${p.features.historyDays} dias`,
-            p.features.api ? '✅ Acesso à API REST' : '🔒 API REST',
-          ];
-          const priceBlock = p.priceBRL === 0
-            ? `<div class="text-4xl font-extrabold mt-1">Grátis</div>`
-            : `
-                <div class="text-4xl font-extrabold mt-1">R$ ${fmtBRL(p.priceBRL)}</div>
-                <div class="text-xs" style="color: var(--muted);">/ mês · cobrança recorrente</div>
-              `;
-          const ctaLabel = p.id === 'FREE'
-            ? 'Começar grátis'
-            : `Assinar ${p.label} — R$ ${fmtBRL(p.priceBRL)}/mês →`;
-          return `
-            <div class="rounded-2xl p-6 border ${featured ? 'pricing-featured' : ''}" style="background: var(--card-bg); border-color: ${featured ? 'var(--brand)' : 'var(--line)'}; ${featured ? 'box-shadow: var(--shadow-glow); transform: scale(1.02);' : ''}">
-              ${featured ? '<div class="badge hot mb-2">⭐ Plano Premium mensal</div>' : ''}
-              <div class="text-xs uppercase tracking-widest" style="color: var(--muted);">${p.label}</div>
-              ${priceBlock}
-              <ul class="mt-4 space-y-2 text-sm" style="color: var(--text-2);">
-                ${features.map(f => `<li>${f}</li>`).join('')}
-              </ul>
-              <button data-plan="${p.id}" class="btn-${featured ? 'primary' : 'ghost'} w-full justify-center mt-5 py-3 plan-btn">
-                ${ctaLabel}
-              </button>
-            </div>
-          `;
-        }).join('');
-
-        document.querySelectorAll('.plan-btn').forEach(btn => {
-          btn.addEventListener('click', () => onPickPlan(btn.dataset.plan));
-        });
-      } catch (e) {
-        grid.innerHTML = `<div class="col-span-full text-center py-12" style="color: var(--danger);">${e.message}</div>`;
-      }
-    }
-
-    async function onPickPlan(plan) {
-      if (plan === 'FREE') {
-        if (!RobotrendAuth.getToken()) location.href = '/register.html';
-        else location.href = '/';
-        return;
-      }
-      if (!RobotrendAuth.getToken()) {
-        location.href = '/login.html?next=/pricing.html';
-        return;
-      }
-      document.getElementById('payment-modal').classList.remove('hidden');
-      document.getElementById('checkout-result').innerHTML = '';
-      // Plano pago → oferece os ciclos (mensal/semestral/anual). Default: o escolhido.
-      const isPaid = plan === 'PREMIUM' || plan === 'SEMESTRAL' || plan === 'ANUAL';
-      if (isPaid && premiumCycles.length) {
-        selectCycle(premiumCycles.some((c) => c.id === plan) ? plan : 'PREMIUM');
-      } else {
-        currentPlan = plan;
-        const price = basePriceByPlan[plan] || 79.90;
-        const label = document.getElementById('btn-mp-label');
-        if (label) label.textContent = 'R$ ' + fmtBRL(price);
-        document.getElementById('cycle-select').classList.add('hidden');
-      }
-    }
-
     document.getElementById('btn-virar-premium').addEventListener('click', () => {
       const btn = document.getElementById('btn-virar-premium');
       window.virarPremium({
         plan: currentPlan || 'PREMIUM',
         coupon: appliedCoupon,
         button: btn,
+        skipPicker: true,
       });
     });
 
-    document.querySelectorAll('.provider-btn').forEach(btn => {
+    document.getElementById('btn-change-plan').addEventListener('click', async () => {
+      document.getElementById('payment-modal').classList.add('hidden');
+      const picked = await window.RobotrendPlanPicker.open({ preselected: currentPlan });
+      if (picked) openCheckout(picked);
+    });
+
+    document.querySelectorAll('.provider-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const provider = btn.dataset.provider;
         const result = document.getElementById('checkout-result');
@@ -293,8 +276,7 @@
                 <div class="text-sm" style="color: var(--muted);">PIX · R$ ${r.amount}</div>
                 <img src="${r.qrUrl}" alt="QR Code PIX" class="mx-auto my-3 rounded-lg border" style="border-color: var(--line);" />
                 <textarea readonly class="w-full text-xs font-mono p-2 rounded border" style="background: var(--surface-2); border-color: var(--line); color: var(--text);">${r.code}</textarea>
-              </div>
-            `;
+              </div>`;
           } else if (r.url) {
             result.innerHTML = `<a href="${r.url}" class="btn-primary w-full justify-center">${r.mock ? '🧪 Ativar (mock)' : 'Ir para checkout →'}</a>`;
             if (!r.mock) location.href = r.url;
@@ -307,8 +289,21 @@
       });
     });
 
-    loadPlans();
-    loadCycles();
+    (async function init() {
+      const u = new URLSearchParams(location.search).get('upgrade');
+      if (u) document.getElementById('upgrade-notice')?.classList.remove('hidden');
+      try {
+        await loadPlansData();
+        renderFreeCard();
+        renderPremiumCards();
+        const checkout = new URLSearchParams(location.search).get('checkout');
+        if (checkout && ['PREMIUM', 'SEMESTRAL', 'ANUAL'].includes(checkout.toUpperCase())) {
+          if (RobotrendAuth.getToken()) openCheckout(checkout.toUpperCase());
+        }
+      } catch (e) {
+        document.getElementById('plans-grid').innerHTML = `<div class="text-center py-12" style="color:var(--danger);">${e.message}</div>`;
+      }
+    })();
   </script>
 </body>
 </html>

@@ -214,6 +214,7 @@
   <script src="/js/saas-nav.js"></script>
   <script src="/js/announcements-banner.js"></script>
   <script src="/js/support-chat.js"></script>
+  <script src="/js/plan-picker.js"></script>
   <script src="/js/payments.js"></script>
   <script src="/js/promo-banner.js"></script>
   <script>
@@ -231,6 +232,8 @@
       const PLAN_DESC = {
         FREE: 'Acesso ao dashboard com sinais limitados e delay. Faça upgrade pra desbloquear a Melhor Aposta do Momento, sinais em tempo real, análise IA completa e mais.',
         PREMIUM: 'Acesso completo aos sinais em tempo real, Melhor Aposta do Momento exclusiva, análise IA detalhada e filtros avançados.',
+        SEMESTRAL: 'Premium completo por 180 dias — sinais em tempo real, Melhor Aposta do Momento e análise IA detalhada.',
+        ANUAL: 'Premium completo por 365 dias — sinais em tempo real, Melhor Aposta do Momento e análise IA detalhada.',
         VIP: 'Tudo do Premium + suporte prioritário e features experimentais.',
       };
 
@@ -307,7 +310,10 @@
               <span>Sua assinatura expirou. Renove para recuperar o acesso Premium.</span>
               <button type="button" id="alert-renew-btn" class="btn-primary" style="padding:10px 18px;font-weight:800;">Renovar Assinatura</button>
             `;
-            $('#alert-renew-btn')?.addEventListener('click', () => window.virarPremium?.({ plan: plan === 'VIP' ? 'VIP' : 'PREMIUM' }));
+            $('#alert-renew-btn')?.addEventListener('click', () => {
+              if (plan === 'VIP') window.virarPremium?.({ plan: 'VIP', skipPicker: true });
+              else window.virarPremium?.();
+            });
           } else if (d.warningExpiry) {
             alertEl.style.display = 'block';
             alertEl.className = 'sub-alert warn';
@@ -334,23 +340,31 @@
         if (isPrem && !d.renewRequired && d.subscriptionStatus !== 'expired') {
           ctaZone.innerHTML = `
             <a href="/" class="btn-primary justify-center" style="text-align:center; padding: 12px 24px;">Ir para o dashboard →</a>
-            <span class="text-xs" style="color: var(--muted); text-align: center;">${plan === 'VIP' ? 'VIP · 365 dias por ciclo' : 'Premium mensal · cobrança recorrente · cancele quando quiser'}</span>
+            <span class="text-xs" style="color: var(--muted); text-align: center;">${
+              plan === 'VIP' ? 'VIP · 365 dias por ciclo'
+              : plan === 'SEMESTRAL' ? 'Premium Semestral · 180 dias de acesso'
+              : plan === 'ANUAL' ? 'Premium Anual · 365 dias de acesso'
+              : 'Premium · cobrança recorrente · cancele quando quiser'
+            }</span>
           `;
         } else if (isPrem && (d.renewRequired || d.subscriptionStatus === 'expired')) {
           ctaZone.innerHTML = `
             <button type="button" id="cta-renew-expired" class="btn-primary justify-center" style="padding: 14px 28px; font-weight: 800;">Renovar Assinatura</button>
           `;
-          $('#cta-renew-expired')?.addEventListener('click', () => window.virarPremium?.({ plan: plan === 'VIP' ? 'VIP' : 'PREMIUM' }));
+          $('#cta-renew-expired')?.addEventListener('click', () => {
+            if (plan === 'VIP') window.virarPremium?.({ plan: 'VIP', skipPicker: true });
+            else window.virarPremium?.();
+          });
         } else {
           ctaZone.innerHTML = `
             <div class="promo-pill" style="margin-bottom:8px;">
               <span class="promo-pill-badge">PREMIUM</span>
-              <span class="promo-pill-text">Plano Premium mensal · <b>R$ ${fmtBRL(79.90)}/mês</b></span>
+              <span class="promo-pill-text">Planos a partir de <b>R$ ${fmtBRL(79.90)}</b></span>
             </div>
             <button type="button" id="cta-upgrade" class="btn-primary justify-center" style="padding: 14px 28px; font-weight: 800;">
-              🚀 Assinar Premium — R$ ${fmtBRL(79.90)}/mês
+              🚀 Escolher plano Premium
             </button>
-            <span class="text-xs" style="color: var(--muted); text-align: center;">Acesso completo · cancele quando quiser</span>
+            <span class="text-xs" style="color: var(--muted); text-align: center;">Mensal, Semestral ou Anual · liberação imediata</span>
           `;
           $('#cta-upgrade').addEventListener('click', () => {
             window.virarPremium({ button: $('#cta-upgrade') });
