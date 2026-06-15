@@ -13,7 +13,7 @@ const PLANS = {
     id: 'FREE',
     label: 'Free',
     priceBRL: 0,
-    dailySignals: Number(process.env.PLAN_FREE_DAILY_SIGNALS || 3),
+    dailySignals: Number(process.env.PLAN_FREE_DAILY_SIGNALS || 4),
     features: {
       live: true,
       btts: true,

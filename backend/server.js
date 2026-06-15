@@ -739,6 +739,10 @@ app.get('/api/me/subscription',
         paymentHistory,
         features: planDef.features,
         dailySignalsLimit: planDef.dailySignals,
+        // Contador diário de sinais do FREE (X/limite). Planos pagos = ilimitado.
+        dailySignalsUsed: isPremium ? 0 : (signalAccess.freeQuotaSnapshot(fresh.id)?.used ?? 0),
+        dailySignalsRemaining: isPremium ? null : (signalAccess.freeQuotaSnapshot(fresh.id)?.remaining ?? planDef.dailySignals),
+        dailySignalsUnlimited: !!isPremium,
         serverTime: new Date().toISOString(),
       });
     } catch (err) {
@@ -1175,9 +1179,19 @@ io.on('connection', async (socket) => {
   socket.emit('signals:list', signalAccess.projectSignalsForUser(await db.listSignals(20), socketIsPremium));
   // Snapshot do betSignalEngine (painel "Sinais em tempo real" / #live-signals).
   try {
-    const betRecent = betSignalEngine.listRecent({ limit: 12, minConfidence: 0 });
-    const projected = signalAccess.projectSignalsForUser(betRecent, socketIsPremium);
+    let betRecent = betSignalEngine.listRecent({ limit: 12, minConfidence: 0 });
+    const quotaCtx = (!socketIsPremium && socket.user?.id != null) ? { userId: socket.user.id } : undefined;
+    // Para FREE, a cota é consumida na projeção; restringe aos mercados que a UI
+    // realmente exibe para que o contador reflita apenas sinais visíveis (evita
+    // consumo "fantasma" em mercados legados filtrados no cliente).
+    if (quotaCtx) {
+      const ALLOWED_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder', 'cards', 'cardsUnder']);
+      betRecent = betRecent.filter((s) => ALLOWED_MARKETS.has(s.market));
+    }
+    const projected = signalAccess.projectSignalsForUser(betRecent, socketIsPremium, quotaCtx);
     socket.emit('bet-signals:list', projected);
+    // Contador diário do FREE ("X/limite") já no snapshot inicial.
+    if (quotaCtx) signalAccess.emitFreeQuota(socket, quotaCtx.userId);
     console.log('[LIVE SOCKET EMIT] bet-signals:list', { count: projected.length, premium: socketIsPremium, socketId: socket.id });
     if (projected.length) {
       log.debug('ws bet-signals:list snapshot', { count: projected.length, socketId: socket.id });

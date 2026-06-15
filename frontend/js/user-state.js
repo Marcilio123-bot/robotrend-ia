@@ -159,6 +159,9 @@
       paymentHistory: d.paymentHistory || [],
       features: d.features || {},
       dailySignalsLimit: d.dailySignalsLimit || 0,
+      dailySignalsUsed: d.dailySignalsUsed ?? 0,
+      dailySignalsRemaining: d.dailySignalsRemaining,
+      dailySignalsUnlimited: !!d.dailySignalsUnlimited,
       serverTime: d.serverTime || new Date().toISOString(),
       _localTime: Date.now(),
     };

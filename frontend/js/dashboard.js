@@ -553,6 +553,40 @@
   }
 
   /* ============================================================
+     FREE DAILY SIGNAL COUNTER — "Sinais utilizados hoje: X/limite"
+     ------------------------------------------------------------
+     Mostrado apenas para usuários FREE. Atualizado por:
+       - evento socket 'signal:quota'
+       - campo `quota` da resposta REST /api/football/bet-signals
+       - /api/me/subscription (via user-state)
+     ============================================================ */
+  let freeQuota = { used: 0, limit: 4, remaining: 4 };
+  function renderFreeCounter() {
+    const el = $('#free-signal-counter');
+    if (!el) return;
+    // Premium/admin → ilimitado, contador oculto.
+    if (isPremiumUser()) { el.style.display = 'none'; return; }
+    const used = Math.min(Number(freeQuota.used || 0), Number(freeQuota.limit || 4));
+    const limit = Number(freeQuota.limit || 4);
+    el.textContent = `Sinais utilizados hoje: ${used}/${limit}`;
+    el.style.display = '';
+    // Realça quando o limite foi atingido.
+    const reached = used >= limit;
+    el.style.background = reached ? 'rgba(239,68,68,.14)' : 'rgba(255,181,71,.12)';
+    el.style.color = reached ? '#f87171' : '#ffb547';
+    el.style.borderColor = reached ? 'rgba(239,68,68,.32)' : 'rgba(255,181,71,.30)';
+  }
+  function updateFreeQuota(q) {
+    if (!q || typeof q !== 'object') return;
+    freeQuota = {
+      used: Number(q.used ?? freeQuota.used ?? 0),
+      limit: Number(q.limit ?? freeQuota.limit ?? 4),
+      remaining: Number(q.remaining ?? freeQuota.remaining ?? 0),
+    };
+    renderFreeCounter();
+  }
+
+  /* ============================================================
      BET SIGNALS (corners / btts / win) — cards compactos
      ============================================================ */
   // Mercados ativos exibidos no painel (WIN/1X2 removido)
@@ -967,6 +1001,7 @@
       }
       const data = await r.json();
       console.log('[LIVE SIGNAL REST]', { count: data?.signals?.length ?? 0, tier: data?.tier });
+      if (data && data.quota) updateFreeQuota(data.quota);
       const incoming = data.signals || [];
       if (incoming.length) {
         lastBetSignals = incoming;
@@ -1141,6 +1176,12 @@
     renderSignals();
   });
 
+  // Contador diário do FREE ("X/limite") — emitido no connect e a cada sinal.
+  socket.on('signal:quota', (q) => {
+    window.RobotrendHeartbeat?.markSocketActivity('signal:quota');
+    updateFreeQuota(q);
+  });
+
   // Snapshot inicial do betSignalEngine ao conectar (painel #live-signals).
   socket.on('bet-signals:list', (signals) => {
     window.RobotrendHeartbeat?.markSocketActivity('bet-signals:list');
@@ -1176,11 +1217,21 @@
       // preditivo (palpite, odd, confiança, times). Mostramos só o upgrade.
       const isLocked = signal.locked === true;
       if (isLocked) {
-        pushToast({
-          title: '💎 Sinal Premium disponível',
-          body: '🔒 Faça upgrade para desbloquear a análise completa da IA.',
-          accent: 'warn',
-        });
+        if (signal.limitReached) {
+          // Limite diário do FREE atingido — mensagem de upgrade específica.
+          if (freeQuota) { freeQuota.used = freeQuota.limit; freeQuota.remaining = 0; renderFreeCounter(); }
+          pushToast({
+            title: '🔒 Limite diário atingido',
+            body: signal.message || 'Você atingiu o limite diário de sinais da versão gratuita. Assine o Premium para acesso completo.',
+            accent: 'warn',
+          });
+        } else {
+          pushToast({
+            title: '💎 Sinal Premium disponível',
+            body: '🔒 Faça upgrade para desbloquear a análise completa da IA.',
+            accent: 'warn',
+          });
+        }
       } else {
         const teamsTxt = `${signal.match?.home || signal.home} × ${signal.match?.away || signal.away}`;
         if (isPrem) {
@@ -1264,6 +1315,16 @@
   // que dependem do tier (best-bet, signal cards locked/unlocked).
   if (window.RobotrendUser?.onChange) {
     window.RobotrendUser.onChange((u, prev) => {
+      // Sincroniza o contador diário do FREE com o estado do servidor.
+      if (u && !u.isPremium && !u.isAdmin && u.dailySignalsLimit) {
+        updateFreeQuota({
+          used: u.dailySignalsUsed ?? freeQuota.used,
+          limit: u.dailySignalsLimit ?? freeQuota.limit,
+          remaining: u.dailySignalsRemaining ?? freeQuota.remaining,
+        });
+      } else {
+        renderFreeCounter();
+      }
       const tierChanged = !!u?.isPremium !== !!prev?.isPremium;
       if (tierChanged) {
         try { loadBestSignal(); } catch (_) {}
@@ -1272,4 +1333,7 @@
       }
     });
   }
+
+  // Render inicial do contador (mostra/oculta conforme o tier já em cache).
+  try { renderFreeCounter(); } catch (_) {}
 })();

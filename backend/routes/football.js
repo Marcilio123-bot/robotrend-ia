@@ -868,9 +868,12 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     const minConfidence = Number(req.query.minConfidence || 0);
     const sinceMs = req.query.sinceMs ? Number(req.query.sinceMs) : 0;
     const raw = signalsEngine.listRecent({ limit, type, markets, minConfidence, sinceMs });
-    // Validação obrigatória por plano: FREE só vê sinais FREE.
+    // Validação obrigatória por plano: FREE só vê sinais FREE e respeita a cota
+    // diária (anti-contorno — mesmo gating do feed principal /bet-signals).
     const signalAccess = require('../signalAccess');
-    const signals = signalAccess.projectSignalsForUser(raw, isPremiumRequester(req));
+    const isPrem = isPremiumRequester(req);
+    const ctx = (!isPrem && req.user?.id != null) ? { userId: req.user.id } : undefined;
+    const signals = signalAccess.projectSignalsForUser(raw, isPrem, ctx);
     res.json({ ok: true, count: signals.length, signals, engine: signalsEngine.snapshot() });
   }));
 
@@ -1031,11 +1034,16 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     const ALLOWED_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder', 'cards', 'cardsUnder']);
     signals = signals.filter((s) => ALLOWED_MARKETS.has(s.market));
 
+    let quota = null;
     if (!isPrem) {
       // FREE: sinais PREMIUM viram placeholder de upgrade (nenhum dado preditivo
-      // vaza) e sinais FREE perdem só a análise profunda. Fonte única: signalAccess.
+      // vaza) e sinais FREE perdem só a análise profunda. Além disso, aplica a
+      // COTA DIÁRIA (máx. N sinais/dia) — sinais além do limite são bloqueados.
+      // Fonte única do gating: signalAccess (REST e socket compartilham a cota).
       const signalAccess = require('../signalAccess');
-      signals = signalAccess.projectSignalsForUser(signals, false);
+      const ctx = req.user?.id != null ? { userId: req.user.id } : undefined;
+      signals = signalAccess.projectSignalsForUser(signals, false, ctx);
+      quota = signalAccess.freeQuotaSnapshot(req.user?.id);
     }
 
     res.json({
@@ -1043,6 +1051,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       count: signals.length,
       signals,
       tier: isPrem ? 'premium' : 'free',
+      quota,
       engine: isPrem ? betSignalEngine.snapshot() : { tier: 'free' },
       generatedAt: new Date().toISOString(),
     });

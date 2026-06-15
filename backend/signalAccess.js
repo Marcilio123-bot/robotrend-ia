@@ -20,6 +20,9 @@
 let subscription = null;
 try { subscription = require('./subscription'); } catch (_) { subscription = null; }
 
+let freeQuota = null;
+try { freeQuota = require('./services/freeSignalQuota'); } catch (_) { freeQuota = null; }
+
 const DEFAULT_PREMIUM_MIN_CONFIDENCE = 75;
 let _premiumMin = null;
 
@@ -36,6 +39,54 @@ function premiumMinConfidence() {
 }
 
 const UPGRADE_MESSAGE = 'Sinal exclusivo Premium. Faça upgrade para desbloquear a análise completa.';
+
+/**
+ * Mensagem exibida quando um usuário FREE atinge o limite diário de sinais.
+ * O número do limite é interpolado a partir da cota corrente (default 4).
+ */
+function freeLimitMessage() {
+  const limit = freeQuota ? freeQuota.dailyLimit() : 4;
+  return `Você atingiu o limite diário de ${limit} sinais da versão gratuita.\n\n`
+    + 'Desbloqueie acesso completo assinando o Plano Premium e receba todos os sinais, '
+    + 'análises avançadas da IA, probabilidades, recomendações e recursos exclusivos.';
+}
+
+/**
+ * Placeholder de um sinal FREE bloqueado por LIMITE DIÁRIO atingido.
+ * Não vaza nenhum dado preditivo — apenas o suficiente para a UI renderizar
+ * um card bloqueado com a chamada de upgrade e o aviso do limite.
+ */
+function lockFreeLimitSignal(signal) {
+  const s = signal || {};
+  const msg = freeLimitMessage();
+  return {
+    id: s.id ?? null,
+    type: s.type || 'bet:opportunity',
+    market: s.market || null,
+    tier: 'free',
+    locked: true,
+    upgrade: true,
+    limitReached: true,
+    message: msg,
+    justification: msg,
+    createdAt: s.createdAt || s.created_at || new Date().toISOString(),
+  };
+}
+
+/**
+ * Aplica a cota diária do FREE a um sinal FREE-tier.
+ *   - sem ctx.userId (anônimo) → entrega normal (sem rastreio de cota)
+ *   - dentro da cota → conteúdo FREE (sem insight premium)
+ *   - cota estourada → placeholder de limite diário
+ */
+function projectFreeTierSignal(signal, ctx) {
+  const userId = ctx && ctx.userId != null ? ctx.userId : null;
+  if (userId != null && freeQuota) {
+    const allowed = freeQuota.tryConsume(userId, signal);
+    if (!allowed) return lockFreeLimitSignal(signal);
+  }
+  return stripFreeInsight(signal);
+}
 
 /**
  * O requester (usuário autenticado OU socket.user) tem acesso PREMIUM?
@@ -119,19 +170,23 @@ function lockPremiumSignal(signal) {
  *   - premium  → sinal completo
  *   - free + sinal premium → placeholder de upgrade (oculta tudo)
  *   - free + sinal free    → sinal com conteúdo, sem insight premium
+ *
+ * `ctx` (opcional) habilita a COTA DIÁRIA do FREE: passe `{ userId }` para que
+ * sinais FREE além do limite diário sejam bloqueados. Sem ctx, mantém o
+ * comportamento histórico (sem limite — usado em logs/histórico de sinais).
  */
-function projectSignalForUser(signal, isPremium) {
+function projectSignalForUser(signal, isPremium, ctx) {
   if (!signal) return null;
   if (isPremium) return signal;
   if (isPremiumSignal(signal)) return lockPremiumSignal(signal);
-  return stripFreeInsight(signal);
+  return projectFreeTierSignal(signal, ctx);
 }
 
 /** Projeta uma lista de sinais para o que o usuário pode ver. */
-function projectSignalsForUser(signals, isPremium) {
+function projectSignalsForUser(signals, isPremium, ctx) {
   if (!Array.isArray(signals)) return [];
   if (isPremium) return signals;
-  return signals.map((s) => projectSignalForUser(s, false)).filter(Boolean);
+  return signals.map((s) => projectSignalForUser(s, false, ctx)).filter(Boolean);
 }
 
 /**
@@ -144,10 +199,26 @@ function broadcastSignalToRoot(io, event, signal) {
   try {
     for (const [, s] of io.sockets.sockets) {
       if (!s) continue;
-      const payload = projectSignalForUser(signal, isPremiumUser(s.user));
+      const premium = isPremiumUser(s.user);
+      const ctx = (!premium && s.user?.id != null) ? { userId: s.user.id } : undefined;
+      const payload = projectSignalForUser(signal, premium, ctx);
       if (payload) s.emit(event, payload);
+      // Atualiza o contador "X/limite" do FREE após cada novo sinal.
+      if (ctx) emitFreeQuota(s, ctx.userId);
     }
   } catch (_) { /* nunca quebra o pipeline de emissão */ }
+}
+
+/** Emite o estado do contador diário do FREE para um socket específico. */
+function emitFreeQuota(socket, userId) {
+  if (!socket || !freeQuota || userId == null) return;
+  try { socket.emit('signal:quota', freeQuota.snapshot(userId)); } catch (_) {}
+}
+
+/** Snapshot do contador diário do FREE (para REST/API). */
+function freeQuotaSnapshot(userId) {
+  if (!freeQuota || userId == null) return null;
+  try { return freeQuota.snapshot(userId); } catch (_) { return null; }
 }
 
 /* ============================================================
@@ -319,6 +390,11 @@ module.exports = {
   isPremiumSignal,
   stripFreeInsight,
   lockPremiumSignal,
+  freeLimitMessage,
+  lockFreeLimitSignal,
+  projectFreeTierSignal,
+  freeQuotaSnapshot,
+  emitFreeQuota,
   projectSignalForUser,
   projectSignalsForUser,
   broadcastSignalToRoot,

@@ -514,7 +514,6 @@ function attachFootballRealtime(io, opts = {}) {
     if (!sockets) return;
     const premiumSig = signalAccess.isPremiumSignal(signal);
     const lockedPayload = premiumSig ? signalAccess.lockPremiumSignal(signal) : null;
-    const freePayload = premiumSig ? null : signalAccess.stripFreeInsight(signal);
     const opts = {
       market: signal.market,
       confidence: signal.confidence,
@@ -534,6 +533,10 @@ function attachFootballRealtime(io, opts = {}) {
         // FREE NUNCA recebe sinal premium — apenas o placeholder de upgrade.
         s.emit(evt, lockedPayload);
       } else {
+        // FREE + sinal free: aplica a cota diária (decide/consome agora).
+        const userId = s.user?.id ?? null;
+        const freePayload = signalAccess.projectFreeTierSignal(signal, userId != null ? { userId } : undefined);
+        signalAccess.emitFreeQuota(s, userId);
         setTimeout(() => {
           try { s.connected && s.emit(evt, freePayload); } catch (_) {}
         }, betEngineCfg.FREE_DELAY_MS || 8000);
@@ -566,7 +569,12 @@ function attachFootballRealtime(io, opts = {}) {
         } else if (premiumSig) {
           s.emit('signal:new', signalAccess.lockPremiumSignal(signal));
         } else {
-          const freePayload = signalAccess.stripFreeInsight(signal);
+          // FREE: aplica a COTA DIÁRIA. Decide AGORA (consome a cota) e entrega
+          // o payload — conteúdo FREE se dentro do limite, ou placeholder de
+          // limite atingido. O atraso (edge premium) é mantido para o conteúdo.
+          const userId = s.user?.id ?? null;
+          const freePayload = signalAccess.projectFreeTierSignal(signal, userId != null ? { userId } : undefined);
+          signalAccess.emitFreeQuota(s, userId);
           setTimeout(() => {
             try { s.connected && s.emit('signal:new', freePayload); } catch (_) {}
           }, betEngineCfg.FREE_DELAY_MS || 8000);
