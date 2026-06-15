@@ -711,7 +711,7 @@ function buildPaymentRoutes(app, db, requireAuth) {
          name:     "Nome Cliente",         // opcional
          provider: "stripe" | "mercadopago" | "pix" | "manual",
          externalId: "evt_xxx",
-         amount:   79.90,
+         amount:   49.99,
          status:   "approved"              // só processa se aprovado
        }
 

@@ -249,7 +249,7 @@
       <div class="saas-upgrade-card">
         <div class="promo-pill" style="margin-bottom:8px;">
           <span class="promo-pill-badge">PREMIUM</span>
-          <span class="promo-pill-text">Planos a partir de <b>R$ 79,90</b></span>
+          <span class="promo-pill-text">Planos a partir de <b>R$ 49,99</b></span>
         </div>
         <div class="saas-upgrade-title">💎 Desbloqueie o Premium</div>
         <div class="saas-upgrade-desc">Mensal, Semestral ou Anual · sinais sem delay, Melhor Aposta do Momento e análise IA completa.</div>

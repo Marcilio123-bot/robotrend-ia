@@ -41,7 +41,7 @@ Admin pré-criado: `admin@robotrend.local` / `admin123` (troque em produção!)
 
 ### 💳 SaaS — assinatura mensal
 - **FREE** — 3 sinais/dia, live + BTTS básico
-- **PREMIUM** (R$ 79,90/mês — assinatura mensal recorrente, cancele quando quiser) — sinais ilimitados, API REST, histórico 1 ano
+- **PREMIUM** (R$ 49,99/mês — assinatura mensal recorrente, cancele quando quiser) — sinais ilimitados, API REST, histórico 1 ano
 - Middleware `requireFeature('over25')` e `dailySignalLimiter` automáticos
 
 ### 💰 Pagamentos
@@ -224,7 +224,7 @@ BOOTSTRAP_ADMIN_PASSWORD=admin123
 
 # Planos (Premium = assinatura mensal recorrente)
 PLAN_VIP_PRICE_BRL=49.90
-PLAN_PREMIUM_PRICE_BRL=79.90
+PLAN_PREMIUM_PRICE_BRL=49.99
 PLAN_PREMIUM_DURATION_DAYS=30
 
 # Pagamentos (opcionais)

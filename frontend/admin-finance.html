@@ -36,7 +36,7 @@
         <div class="saas-kpi">
           <div class="saas-kpi-label">MRR estimado</div>
           <div class="saas-kpi-value" id="kpi-mrr" style="color:#22c55e;">—</div>
-          <div class="saas-kpi-foot">premium × R$ 79,90/mês</div>
+          <div class="saas-kpi-foot">premium × R$ 49,99/mês</div>
         </div>
         <div class="saas-kpi">
           <div class="saas-kpi-label">Assinantes ativos</div>
@@ -110,7 +110,7 @@
         const premium = Number(o.paidUsers || 0);
         const revenue = Number(o.revenue || 0);
         const payments = Number(o.payments || 0);
-        const PREMIUM_PRICE = 79.90;
+        const PREMIUM_PRICE = 49.99;
         document.getElementById('kpi-mrr').textContent =
           'R$ ' + (premium * PREMIUM_PRICE).toFixed(2);
         document.getElementById('kpi-premium').textContent = String(premium);

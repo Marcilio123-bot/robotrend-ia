@@ -1,13 +1,13 @@
 /**
  * Robotrend IA — Promo Banner Global
  *
- * Banner de upgrade Premium — planos a partir de R$ 79,90.
+ * Banner de upgrade Premium — planos a partir de R$ 49,99.
  * Visibilidade: usuários FREE + visitantes. Esconde para Premium/admin.
  */
 (function () {
   'use strict';
 
-  const PRICE_FROM = 79.9;
+  const PRICE_FROM = 49.99;
 
   function fmtBRL(n) {
     try {

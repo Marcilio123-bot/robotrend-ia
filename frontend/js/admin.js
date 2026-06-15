@@ -27,7 +27,7 @@
   document.getElementById('btn-logout')?.addEventListener('click', RobotrendAuth.logout);
 
   // Preço mensal do PREMIUM (usado para estimativa de receita FREE→PREMIUM)
-  const PREMIUM_PRICE = 79.90;
+  const PREMIUM_PRICE = 49.99;
 
   /** Helper defensivo: páginas admin sub-rota nem sempre tem todos os IDs. */
   function setText(id, val) {

@@ -40,7 +40,7 @@ const PLANS = {
   PREMIUM: {
     id: 'PREMIUM',
     label: 'Premium',
-    priceBRL: Number(process.env.PLAN_PREMIUM_PRICE_BRL || 79.9),
+    priceBRL: Number(process.env.PLAN_PREMIUM_PRICE_BRL || 49.99),
     billingCycle: 'monthly',
     durationDays: Number(process.env.PLAN_PREMIUM_DURATION_DAYS || 30),
     recurring: true,
@@ -59,7 +59,7 @@ const PLANS = {
   SEMESTRAL: {
     id: 'SEMESTRAL',
     label: 'Premium Semestral',
-    priceBRL: Number(process.env.PLAN_SEMESTRAL_PRICE_BRL || 299.99),
+    priceBRL: Number(process.env.PLAN_SEMESTRAL_PRICE_BRL || 249.99),
     billingCycle: 'semiannual',
     durationDays: Number(process.env.PLAN_SEMESTRAL_DURATION_DAYS || 180),
     recurring: false,
@@ -76,7 +76,7 @@ const PLANS = {
   ANUAL: {
     id: 'ANUAL',
     label: 'Premium Anual',
-    priceBRL: Number(process.env.PLAN_ANUAL_PRICE_BRL || 699.99),
+    priceBRL: Number(process.env.PLAN_ANUAL_PRICE_BRL || 499.99),
     billingCycle: 'annual',
     durationDays: Number(process.env.PLAN_ANUAL_DURATION_DAYS || 365),
     recurring: false,
@@ -97,7 +97,7 @@ function getPlan(planId) {
 }
 
 function listPlans() {
-  // Oferta pública: modelo 100% mensal — apenas Free + Premium (R$ 79,90/mês).
+  // Oferta pública: modelo 100% mensal — apenas Free + Premium (R$ 49,99/mês).
   // VIP permanece definido para compatibilidade com assinantes legados/admin,
   // mas não é mais ofertado nas telas de planos.
   return [PLANS.FREE, PLANS.PREMIUM];

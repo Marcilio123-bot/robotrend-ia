@@ -123,7 +123,7 @@
           <div class="rb-pp-head">
             <div>
               <div class="rb-pp-title">Escolha seu plano Premium</div>
-              <div class="rb-pp-sub">Planos a partir de R$ ${fmtBRL(monthly?.priceBRL || 79.9)} · mesmo acesso completo</div>
+              <div class="rb-pp-sub">Planos a partir de R$ ${fmtBRL(monthly?.priceBRL || 49.99)} · mesmo acesso completo</div>
             </div>
             <button type="button" class="rb-pp-close" aria-label="Fechar">✕</button>
           </div>
@@ -180,6 +180,6 @@
     cycleMeta,
     proceedAfterPlanPick,
     PREMIUM_PLANS,
-    PRICE_FROM: 79.9,
+    PRICE_FROM: 49.99,
   };
 })();
