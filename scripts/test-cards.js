@@ -154,7 +154,7 @@ setTimeout(() => {
   assert(cards.length >= 1, 'PELO MENOS 1 sinal de cartões no recent buffer (dashboard/websocket/API)');
 
   // Simula filtro REST /bet-signals (mesmas regras de routes/football.js)
-  const ALLOWED = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder', 'cards', 'cardsUnder']);
+  const ALLOWED = new Set(['btts', 'over25', 'under25', 'corners', 'cards', 'cardsUnder']);
   const restVisible = recent.filter((s) => ALLOWED.has(s.market));
   assert(restVisible.some((s) => s.market === 'cards' || s.market === 'cardsUnder'),
     'cartões sobrevivem ao filtro ALLOWED_MARKETS do /bet-signals');

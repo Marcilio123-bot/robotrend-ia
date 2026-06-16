@@ -1,0 +1,8 @@
+SENTINELA DE ESCRITA DO AGENTE
+==============================
+Se você está vendo este arquivo no seu diretório real C:\sites\Robotrend
+(via Explorer ou `git status` mostrando-o como untracked), então as
+escritas do agente ESTÃO chegando no seu disco real.
+
+Gerado em: 2026-06-15 (sessão de diagnóstico).
+Pode apagar este arquivo depois do teste.

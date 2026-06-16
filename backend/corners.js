@@ -172,11 +172,6 @@ function analyzeCorners(match, history) {
     verdict = 'TENDÊNCIA OVER';
     suggestion = `Over ${Math.floor(projected) - 0.5} Escanteios`;
     asianLine = `Linha asiática: ${Math.floor(projected) - 0.75}`;
-  } else if (projected <= 7 && minute >= 30) {
-    verdict = 'TENDÊNCIA UNDER';
-    suggestion = `Under ${Math.ceil(projected) + 0.5} Escanteios`;
-    asianLine = `Linha asiática: ${Math.ceil(projected) + 0.25}`;
-    score += 5;
   } else if (pressure < 30 && minute >= 45) {
     verdict = 'JOGO FRIO';
   }

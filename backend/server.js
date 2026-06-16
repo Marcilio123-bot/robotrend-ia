@@ -85,6 +85,10 @@ const log = logger.child({ module: 'server' });
 const PORT = Number(process.env.PORT || 3010);
 const app = express();
 
+// Render (e outros reverse proxies) enviam X-Forwarded-For; sem isso o
+// express-rate-limit lança ERR_ERL_UNEXPECTED_X_FORWARDED_FOR e o IP fica errado.
+app.set('trust proxy', 1);
+
 /* ============================================================
    COMPRESSION (sem deps externas — usa zlib nativo)
    ============================================================ */
@@ -1185,7 +1189,7 @@ io.on('connection', async (socket) => {
     // realmente exibe para que o contador reflita apenas sinais visíveis (evita
     // consumo "fantasma" em mercados legados filtrados no cliente).
     if (quotaCtx) {
-      const ALLOWED_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder', 'cards', 'cardsUnder']);
+      const ALLOWED_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cards', 'cardsUnder']);
       betRecent = betRecent.filter((s) => ALLOWED_MARKETS.has(s.market));
     }
     const projected = signalAccess.projectSignalsForUser(betRecent, socketIsPremium, quotaCtx);

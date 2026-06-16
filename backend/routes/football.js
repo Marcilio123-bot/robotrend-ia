@@ -1031,7 +1031,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
 
     // Painel restrito aos 5 mercados ativos (remove WIN/1X2 legado que possa
     // ainda estar no ring buffer de sinais anteriores ao corte).
-    const ALLOWED_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder', 'cards', 'cardsUnder']);
+    const ALLOWED_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cards', 'cardsUnder']);
     signals = signals.filter((s) => ALLOWED_MARKETS.has(s.market));
 
     let quota = null;
@@ -1364,7 +1364,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
    * GET /api/football/bet-signals/diag/markets
    *
    * Funil de sinais separado pelos 5 mercados de produto:
-   *   btts | over25 | under25 | cornersOver | cornersUnder
+   *   btts | over25 | under25 | cornersOver
    *
    * Para cada mercado:
    *   {
@@ -1417,7 +1417,6 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       over25:       funnel?.markets?.over25       || { candidates: 0, emitted: 0, drops: {} },
       under25:      funnel?.markets?.under25      || { candidates: 0, emitted: 0, drops: {} },
       cornersOver:  funnel?.markets?.cornersOver  || { candidates: 0, emitted: 0, drops: {} },
-      cornersUnder: funnel?.markets?.cornersUnder || { candidates: 0, emitted: 0, drops: {} },
       cardsOver:    funnel?.markets?.cardsOver    || { candidates: 0, emitted: 0, drops: {} },
       cardsUnder:   funnel?.markets?.cardsUnder   || { candidates: 0, emitted: 0, drops: {} },
 

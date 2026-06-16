@@ -590,11 +590,10 @@
      BET SIGNALS (corners / btts / win) — cards compactos
      ============================================================ */
   // Mercados ativos exibidos no painel (WIN/1X2 removido)
-  const ALLOWED_BET_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cornersUnder', 'cards', 'cardsUnder']);
+  const ALLOWED_BET_MARKETS = new Set(['btts', 'over25', 'under25', 'corners', 'cards', 'cardsUnder']);
   function marketLabel(m) {
     return ({
       corners: 'Over escanteios',
-      cornersUnder: 'Under escanteios',
       btts: 'Ambas marcam',
       goals: 'Gols',
       over25: 'Over 2.5 gols',
@@ -606,7 +605,6 @@
   function marketAccent(m) {
     return ({
       corners: '#facc15',
-      cornersUnder: '#eab308',
       btts: '#06b6d4',
       goals: '#a855f7',
       over25: '#a855f7',
