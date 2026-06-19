@@ -428,15 +428,14 @@ function attachFootballRealtime(io, opts = {}) {
       });
     });
 
-  // Status / quota / breaker — eventos TÉCNICOS, restritos a admins.
-  // Cliente comum não recebe — separa o CLIENT da camada ADMIN.
+  // Status / quota / breaker — eventos TÉCNICOS, só admin_master (+ roles master legadas).
+  const { canViewSystemMessages } = require('../utils/systemAccess');
   function emitAdminOnly(event, payload) {
     const sockets = ns.adapter.rooms.get('lobby');
     if (!sockets) return;
     for (const sid of sockets) {
       const s = ns.sockets.get(sid);
-      const role = String(s?.user?.role || '').toLowerCase();
-      if (role === 'admin' || role === 'owner') s.emit(event, payload);
+      if (canViewSystemMessages(s?.user)) s.emit(event, payload);
     }
   }
   events.on('quota',        (p) => emitAdminOnly('quota', p));

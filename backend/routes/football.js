@@ -55,6 +55,7 @@ const { normalizeFixture, statName, ensureAllMinimal } = require('../services/fi
 const { logger } = require('../logger');
 // Gating por plano (FREE x PREMIUM) — análise ao vivo é Premium.
 const signalAccess = require('../signalAccess');
+const { canViewSystemMessages, projectPublicLivePayload } = require('../utils/systemAccess');
 
 const log = logger.child({ module: 'football-routes' });
 
@@ -133,6 +134,9 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   router.get('/status', (req, res) => {
     noStore(res);
     const s = af.status();
+    if (!canViewSystemMessages(req.user)) {
+      return res.json({ ok: true, configured: !!s.configured });
+    }
     res.json({
       ok: true,
       configured: s.configured,
@@ -146,11 +150,13 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
   });
 
   /**
-   * Endpoint público de safe-mode — frontend usa para mostrar banner amarelo
-   * "quota baixa — exibindo dados cacheados".
+   * Safe-mode — detalhes técnicos só para admin_master.
    */
   router.get('/safe-mode', (req, res) => {
     noStore(res);
+    if (!canViewSystemMessages(req.user)) {
+      return res.json({ ok: true, active: false });
+    }
     const snap = af.safeMode ? af.safeMode() : { active: false };
     res.json({
       ok: true,
@@ -344,7 +350,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       }
     } catch (_) { /* defensivo */ }
 
-    res.json({
+    res.json(projectPublicLivePayload({
       ok: true,
       count: matches.length,
       // Validação obrigatória por plano: FREE só recebe dados básicos da partida.
@@ -355,7 +361,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       reason: computeLiveReason(matches.length),
       meta: buildLiveMeta(allLive, matches),
       consensus: { mode: consensus.CONSENSUS_MODE },
-    });
+    }, req.user));
   }));
 
   /* ============================================================
@@ -385,7 +391,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
     const matches = annotateMatches(filtered);
     console.log(`[RENDERED MATCHES] /scanner — devolvendo ${matches.length} matches anotados ao frontend`);
 
-    res.json({
+    res.json(projectPublicLivePayload({
       ok: true,
       mode: 'scanner',
       count: matches.length,
@@ -401,7 +407,7 @@ function buildFootballRoutes(app, requireAuth, db, requireAdmin, io = null) {
       },
       hint: 'Modo SCANNER — todos os jogos ao vivo, sem filtros IA, sem consensus. ' +
             'Use /api/football/live para o feed com filtros + score IA.',
-    });
+    }, req.user));
   }));
 
   /**

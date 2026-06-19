@@ -849,6 +849,7 @@
   <script src="/js/auth.js"></script>
   <script src="/js/auth-guard.js"></script>
   <script src="/js/user-state.js"></script>
+  <script src="/core/system-access.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/upgrade-celebration.js"></script>
   <script src="/js/pwa.js"></script>
@@ -876,7 +877,8 @@
         }
         let opted = false;
         try { opted = localStorage.getItem('fbDebug') === '1'; } catch (_) {}
-        if (!opted) return; // produção: nunca renderiza
+        if (!opted) return;
+        if (!window.RobotrendSystemAccess?.canViewSystemMessages?.()) return;
         const dbg = document.getElementById('fb-debug');
         if (!dbg) return;
         dbg.hidden = false;

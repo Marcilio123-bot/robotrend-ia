@@ -275,6 +275,7 @@
   <script src="/js/auth.js"></script>
   <script src="/js/auth-guard.js"></script>
   <script src="/js/user-state.js"></script>
+  <script src="/core/system-access.js"></script>
   <script src="/js/upgrade-celebration.js"></script>
   <script src="/js/pwa.js"></script>
   <!-- COMPONENTES UI globais -->
@@ -298,7 +299,7 @@
   <script>
     (function () {
       'use strict';
-      const MASTER_ROLES = new Set(['master', 'admin', 'owner', 'super_admin']);
+      const MASTER_ROLES = new Set(['master', 'admin', 'owner', 'super_admin', 'admin_master']);
 
       function fmtBRL(n) {
         if (!Number.isFinite(n)) return '—';
@@ -336,11 +337,14 @@
       const asClientOverride = location.search.includes('asClient=1');
 
       function applyRole(role) {
+        const isSysAdmin = window.RobotrendSystemAccess?.canViewSystemMessages?.(role) && !asClientOverride;
         const isMaster = MASTER_ROLES.has(String(role || '').toLowerCase()) && !asClientOverride;
         const snap = document.getElementById('master-snapshot');
         const best = document.getElementById('best-bet-section');
+        const dataBanner = document.getElementById('data-unavailable-banner');
         if (snap) snap.style.display = isMaster ? '' : 'none';
         if (best) best.style.display = isMaster ? 'none' : '';
+        if (dataBanner && !isSysAdmin) dataBanner.style.display = 'none';
         // NÃO mexemos em .saas-mode-master aqui — quem manda é o
         // saas-nav.js + layouts/{client,master}-layout.js. Em /index.html
         // o body fica sempre em saas-mode-client (a sidebar é cliente).

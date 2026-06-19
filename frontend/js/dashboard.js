@@ -169,14 +169,25 @@
   }
 
   /**
+   * Mensagens técnicas (API, provider, debug) — só admin_master.
+   */
+  function canViewSystemMessages() {
+    return window.RobotrendSystemAccess?.canViewSystemMessages?.() ?? false;
+  }
+
+  /**
    * Mostra/esconde o banner "Dados indisponíveis no momento.".
-   * Critério: mostra quando NÃO há provider real configurado OU quando o
-   * último snapshot do poller veio em fallback E o painel está vazio.
+   * Clientes Free/Premium não veem avisos de API — apenas estado vazio amigável.
    */
   let dataUnavailable = false;
   function setDataUnavailableBanner(visible) {
     const banner = document.getElementById('data-unavailable-banner');
-    if (banner) banner.style.display = visible ? '' : 'none';
+    if (!banner) return;
+    if (!canViewSystemMessages()) {
+      banner.style.display = 'none';
+      return;
+    }
+    banner.style.display = visible ? '' : 'none';
   }
   async function detectFootballAvailability() {
     try {
@@ -258,7 +269,11 @@
   function renderEmptyState() {
     const root = document.querySelector('#matches') || document.querySelector('[data-matches-mount]');
     if (!root) return;
-    if (lastMatches.length > 0) return; // não sobrescreve renders normais
+    if (lastMatches.length > 0) return;
+    if (!canViewSystemMessages()) {
+      renderNoLiveGames();
+      return;
+    }
     root.innerHTML =
       '<div class="saas-card" style="text-align:center; padding:32px; opacity:.85;">' +
       '<div style="font-size:15px; font-weight:600; margin-bottom:6px;">Dados indisponíveis no momento.</div>' +

@@ -509,8 +509,17 @@
     sock.on('fixture:pressure',  (p) => {
       if (state.filters.pressureOnly) render(); // mostra na lista de "alta pressão"
     });
-    sock.on('quota:low',         (p) => { toast('btts', `⚠️ Quota API baixa`, `restam ${p.remaining}/${p.limit}`); logEvent('quota:low', p); });
-    sock.on('circuit:open',      (p) => { updateConn('stale', `API instável (${p.name})`); logEvent('circuit:open', p); });
+    sock.on('quota:low',         (p) => {
+      if (canViewSystemMessages()) {
+        toast('btts', `⚠️ Quota API baixa`, `restam ${p.remaining}/${p.limit}`);
+      }
+      logEvent('quota:low', p);
+    });
+    sock.on('circuit:open',      (p) => {
+      if (canViewSystemMessages()) updateConn('stale', `API instável (${p.name})`);
+      else updateConn('stale', 'ao vivo');
+      logEvent('circuit:open', p);
+    });
     sock.on('circuit:close',     ()  => { updateConn('online',  `realtime online · ${state.runtime.transport}`); logEvent('circuit:close'); });
     sock.on('signal:fire', (s) => {
       logEvent('signal:fire', { type: s.type, conf: s.confidence, market: s.market });
@@ -563,7 +572,12 @@
       logEvent('match:enrich-fail', { id: fixtureId, reason });
       if (state.activeMatchId === String(fixtureId)) {
         const el = document.querySelector('#detail-tab-content .fb-skeleton');
-        if (el) el.innerHTML = `<div class="fb-empty">não foi possível carregar (${escapeHtml(reason || 'erro')})</div>`;
+        if (el) {
+          const msg = canViewSystemMessages()
+            ? `não foi possível carregar (${escapeHtml(reason || 'erro')})`
+            : 'não foi possível carregar os detalhes desta partida';
+          el.innerHTML = `<div class="fb-empty">${msg}</div>`;
+        }
       }
     });
 
@@ -647,7 +661,7 @@
               :                                 'off';
     pill.classList.add(cls);
     const lbl = $('#rt-pill-label');
-    if (lbl) lbl.textContent = label;
+    if (lbl) lbl.textContent = connLabelForUser(label, connState);
   }
 
   /* ============================================================
@@ -766,6 +780,7 @@
    *   - últimos eventos socket
    */
   function renderDebugPanel() {
+    if (!canViewSystemMessages()) return;
     if (!window.__ROBOTREND_DEBUG) return; // produção: skip silencioso
     const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
     const setHtml = (id, v) => { const el = document.getElementById(id); if (el) el.innerHTML = v; };
@@ -825,6 +840,11 @@
    * O usuário NÃO pode ignorar — ocupa o lugar dos cards/signals.
    */
   function renderPipelineBanner() {
+    if (!canViewSystemMessages()) {
+      const old = document.getElementById('pipe-banner');
+      if (old) old.remove();
+      return;
+    }
     const main = document.getElementById('matches');
     if (!main) return;
     const p = state.runtime.pipeline;
@@ -882,6 +902,7 @@
    * reveal visual acidental por CSS de terceiros.
    */
   function bindDebugPanel() {
+    if (!canViewSystemMessages()) return;
     if (!window.__ROBOTREND_DEBUG) return;
     const el = document.getElementById('fb-debug');
     if (!el) return;
@@ -920,6 +941,20 @@
   }
   function isMasterRoleFb(role) {
     return MASTER_ROLES_FB.has(String(role || '').toLowerCase());
+  }
+  function canViewSystemMessages() {
+    return window.RobotrendSystemAccess?.canViewSystemMessages?.() ?? false;
+  }
+  function connLabelForUser(technicalLabel, connState) {
+    if (canViewSystemMessages()) return technicalLabel;
+    const map = {
+      online: 'ao vivo',
+      stale: 'ao vivo',
+      connecting: 'conectando…',
+      reconnecting: 'reconectando…',
+      offline: 'offline',
+    };
+    return map[connState] || 'conectando…';
   }
   /**
    * Master sempre vê tudo. Cliente regular respeita o toggle "Mostrar tudo"
@@ -1324,16 +1359,22 @@
       }
     }
 
-    // Contador "tick há Xs"
+    // Contador "tick há Xs" — só admin_master
     const ageEl = document.getElementById('last-tick-age');
     if (ageEl) {
-      const lp = state.runtime.lastPollAt;
-      if (lp) {
-        const sec = Math.round((Date.now() - lp) / 1000);
-        ageEl.textContent = `tick há ${sec}s`;
-        ageEl.style.color = sec > 30 ? 'var(--rt-red, #ef4444)' : '';
+      if (!canViewSystemMessages()) {
+        ageEl.textContent = '';
+        ageEl.style.display = 'none';
       } else {
-        ageEl.textContent = 'aguardando tick…';
+        ageEl.style.display = '';
+        const lp = state.runtime.lastPollAt;
+        if (lp) {
+          const sec = Math.round((Date.now() - lp) / 1000);
+          ageEl.textContent = `tick há ${sec}s`;
+          ageEl.style.color = sec > 30 ? 'var(--rt-red, #ef4444)' : '';
+        } else {
+          ageEl.textContent = 'aguardando tick…';
+        }
       }
     }
 
@@ -1454,6 +1495,10 @@
   function renderModeMeta() {
     const bar = document.getElementById('fb-mode-meta');
     if (!bar) return;
+    if (!canViewSystemMessages()) {
+      bar.hidden = true;
+      return;
+    }
     syncFeedMetaFromState({ source: 'renderModeMeta' });
     const meta = state.runtime.feedMeta || {};
     const rt = state.runtime;
@@ -1612,6 +1657,7 @@
   }
 
   function providerLimitedBannerHTML() {
+    if (!canViewSystemMessages()) return '';
     return `
       <div class="fb-provider-limited" role="status" style="margin-bottom:12px;padding:10px 14px;border-radius:10px;border:1px solid rgba(251,191,36,.35);background:rgba(251,191,36,.08);font-size:13px;color:#fbbf24">
         ⚠ Dados limitados da API-Football — exibindo placar/minuto; stats IA podem ser parciais.
@@ -1647,9 +1693,9 @@
         || Number(state.runtime.feedMeta?.totalReceived) || 0;
       const totalEnriched = Array.from(state.matches.values()).filter((m) => m.enriched).length;
       const filterActive = !!(state.filters.search || state.filters.scored || state.filters.minute || state.filters.pressureOnly || state.filters.onlyFavorites || state.filters.bttsNear || state.activeLeague);
-      const tech = buildTechReason({ totalLive, totalEnriched, filterActive });
+      const tech = buildEmptyReason({ totalLive, totalEnriched, filterActive });
       const inlineMatches = totalLive ? buildInlineMatchGridHTML() : '';
-      const providerGap = pollerRaw > 0 && totalLive === 0
+      const providerGap = canViewSystemMessages() && pollerRaw > 0 && totalLive === 0
         ? `<br><span style="opacity:.85;display:block;margin-top:8px">O poller recebeu <strong>${pollerRaw}</strong> jogo(s) do provider, mas o gate ao vivo removeu todos. Aguarde o próximo tick ou force ↻ resync.</span>`
         : '';
       root.innerHTML = `
@@ -1712,7 +1758,9 @@
         },
       ];
     }
-    toast('card', '⚠ Modo fallback ativo', 'Sinais parciais gerados localmente — enrichment API indisponível.');
+    if (canViewSystemMessages()) {
+      toast('card', '⚠ Modo fallback ativo', 'Sinais parciais gerados localmente — enrichment API indisponível.');
+    }
     render();
     bumpRuntime({ enriched: true });
   }
@@ -1799,7 +1847,7 @@
     if (!all.length) {
       // Nada que mostrar pelo board → cai para o grid de matches inline (nunca vazio).
       const filterActive = state.markets.size > 0 || state.profile !== 'balanced' || state.minConfidence > 50;
-      const techReason = buildTechReason({ totalLive, totalEnriched, filterActive });
+      const techReason = buildEmptyReason({ totalLive, totalEnriched, filterActive });
       const inlineMatches = buildInlineMatchGridHTML();
       const limitedBanner = totalLive ? providerLimitedBannerHTML() : '';
       root.innerHTML = `
@@ -2046,6 +2094,44 @@
     };
   }
 
+  /** Mensagens amigáveis para clientes Free/Premium (sem detalhes técnicos). */
+  function buildClientEmptyReason({ totalLive, totalEnriched, filterActive }) {
+    if (totalLive === 0) {
+      return {
+        icon: '😴',
+        title: 'Nenhum jogo ao vivo no momento',
+        body: 'Assim que uma partida começar, ela aparece aqui automaticamente.',
+        action: '↻ Atualizar',
+      };
+    }
+    if (totalEnriched === 0) {
+      return {
+        icon: '⏳',
+        title: 'Carregando partidas…',
+        body: `${totalLive} partida${totalLive !== 1 ? 's' : ''} detectada${totalLive !== 1 ? 's' : ''}. Aguarde alguns instantes.`,
+        action: '↻ Atualizar',
+      };
+    }
+    if (filterActive) {
+      return {
+        icon: '🔍',
+        title: 'Nenhum resultado com os filtros atuais',
+        body: 'Ajuste os filtros ou aguarde novas oportunidades.',
+        action: null,
+      };
+    }
+    return {
+      icon: '🎯',
+      title: 'Nenhum sinal operável agora',
+      body: 'A IA está monitorando as partidas. Novos sinais aparecem aqui em tempo real.',
+      action: null,
+    };
+  }
+
+  function buildEmptyReason(opts) {
+    return canViewSystemMessages() ? buildTechReason(opts) : buildClientEmptyReason(opts);
+  }
+
   /**
    * "FT" só é exibido se o status REAL da partida for FT/AET/PEN. Caso
    * contrário (jogo em andamento), os ranges são PROJEÇÕES IA — rotulamos
@@ -2081,6 +2167,7 @@
    * `match.consensus` (sources que confirmaram, score, missing, modo).
    */
   function sourceQualityBadgeHTML(m) {
+    if (!canViewSystemMessages()) return '';
     const q = m.sourceQuality;
     if (!q) return '';
     const c = m.consensus || {};
@@ -2112,7 +2199,7 @@
     const sigBadge = top
       ? `<div class="fb-sig-badge" title="${escapeHtml(top.suggestion)} · ${escapeHtml(top.type)}">${top.classification?.emoji || '⚡'} ${top.confidence}%</div>`
       : '';
-    const partialBadge = (m.dataQuality === 'partial')
+    const partialBadge = (canViewSystemMessages() && m.dataQuality === 'partial')
       ? `<span class="fb-data-partial" title="Provider gratuito (${escapeHtml(m.provider || '')}) — sem stats avançadas (corners, posse, finalizações)">🟡 Dados limitados</span>`
       : '';
     const sourceBadge = sourceQualityBadgeHTML(m);
@@ -2207,9 +2294,17 @@
   }
 
   function renderPollerMeta() {
+    const el = $('#poller-meta');
+    if (!el) return;
+    if (!canViewSystemMessages()) {
+      el.textContent = '';
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = '';
     const p = state.poller;
     if (!p) return;
-    $('#poller-meta').textContent = `poll ${p.intervalMs}ms · ${p.tracked || 0} tracked`;
+    el.textContent = `poll ${p.intervalMs}ms · ${p.tracked || 0} tracked`;
   }
 
   // ============================================================
@@ -2919,8 +3014,16 @@
         if (r !== state.role) {
           state.role = r;
           updateShowAllButton();
+          bindDebugPanel();
+          renderPollerMeta();
+          renderModeMeta();
           render();
         }
+      });
+      window.addEventListener('robotrend:user-ready', () => {
+        bindDebugPanel();
+        renderPollerMeta();
+        renderModeMeta();
       });
     } catch (_) {}
 
