@@ -7,6 +7,7 @@
 
 const subscription = require('./subscription');
 const { logger } = require('./logger');
+const youtubeClicks = require('./services/youtubeClicks');
 const log = logger.child({ module: 'master' });
 
 const VALID_PLANS = ['FREE', 'VIP', 'PREMIUM'];
@@ -147,6 +148,11 @@ function buildMasterRoutes(app, db, requireAuth, requireAdmin) {
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  /** GET /api/master/youtube-clicks — total global (?src=youtube) */
+  app.get('/api/master/youtube-clicks', (_req, res) => {
+    res.json({ ok: true, total: youtubeClicks.getTotal() });
   });
 
   /** GET /api/master/logs — auditoria administrativa */

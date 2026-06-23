@@ -309,6 +309,18 @@
     }
   }
 
+  async function loadYoutubeClicks() {
+    const el = $('kpi-youtube-clicks');
+    if (!el) return;
+    try {
+      const data = await RobotrendAuth.api('/api/master/youtube-clicks');
+      el.textContent = String(data.total ?? 0);
+    } catch (e) {
+      console.warn('[loadYoutubeClicks]', e.message);
+      el.textContent = '—';
+    }
+  }
+
   async function boot() {
     try {
       if (window.RobotrendGuard?.ready) me = await RobotrendGuard.ready;
@@ -316,12 +328,14 @@
     } catch (_) {}
     $('btn-filter')?.addEventListener('click', loadUsers);
     $('filter-q')?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') loadUsers(); });
-    $('btn-refresh')?.addEventListener('click', () => { loadUsers(); loadLogs(); loadApiUsage(); });
+    $('btn-refresh')?.addEventListener('click', () => { loadUsers(); loadLogs(); loadApiUsage(); loadYoutubeClicks(); });
     await loadUsers();
     await loadLogs();
     loadApiUsage();
+    loadYoutubeClicks();
     setInterval(loadUsers, 60000);
     setInterval(loadApiUsage, 30000);
+    setInterval(loadYoutubeClicks, 30000);
   }
 
   if (window.RobotrendGuard?.ready) {

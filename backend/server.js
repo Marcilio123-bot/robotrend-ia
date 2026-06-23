@@ -128,6 +128,7 @@ app.use(
 app.use(express.json({ limit: '1mb' }));
 app.use(httpMiddleware);
 app.use(metrics.httpMetricsMiddleware);
+app.use(require('./services/youtubeClicks').trackMiddleware);
 
 const frontendDir = path.join(__dirname, '..', 'frontend');
 
